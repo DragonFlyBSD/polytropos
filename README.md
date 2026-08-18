@@ -32,22 +32,24 @@ This repo was split out of DeltaPorts, which still holds a working copy of
 everything here. **Nothing has been deleted there**, so DeltaPorts continues to
 work exactly as before while this is finished.
 
-This repo does **not** run standalone yet. The code still discovers its inputs by
-walking up out of its own directory, which worked only because it lived inside the
-ports checkout. Running the suite from here gives **2006 passed, 53 failed**, from
-exactly two causes:
+This repo does **not** run standalone yet. The code still discovers some of its
+inputs by walking up out of its own directory, which worked only because it lived
+inside the ports checkout. The suite is at **2051 passed, 11 failed** (from 53).
 
-1. **37** — `ModuleNotFoundError: dports_dev_env`. The generator and the dev-env
-   import each other by mutating `sys.path`, assuming they are siblings under one
-   `scripts/` directory. Neither declares the other as a dependency.
-2. **16** — missing files: `config/`, `hooks/dsynth/`, `tools/snippet-extractor`
-   are resolved via `Path(__file__).parents[N]`, which used to land in the
-   DeltaPorts root.
+**Done — the two packages no longer import each other through `sys.path`.**
+`dportsv3` now declares `dports-dev-env` as a real dependency, and that edge
+points one way only. The one import going back the other way was the
+`dev-env health` subcommand, a thin CLI shim over generator code; it moved to
+where its implementation lives and is now `dportsv3 env-health NAME`. The
+runtime-profile manifest both packages read moved inside `dports_dev_env/`, so
+it ships in a wheel instead of being found by a guessed path.
 
-Both are tracked, and fixing them is the remaining work. The most dangerous case
-is `playbooks.py`, which locates `docs/agent-playbooks/` by walking ancestors and
-returns `None` on failure — so the agent would silently lose all of its pattern
-knowledge rather than error.
+**Remaining — 11 failures, all path discovery.** `config/`,
+`hooks/dsynth/`, and `tools/snippet-extractor` are still resolved via
+`Path(__file__).parents[N]`, which used to land in the DeltaPorts root and now
+walks clean out of the repo. The most dangerous case is `playbooks.py`, which
+locates `docs/agent-playbooks/` that way and returns `None` on failure — so the
+agent would silently lose all of its pattern knowledge rather than error.
 
 ## Naming
 

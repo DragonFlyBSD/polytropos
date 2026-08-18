@@ -8,7 +8,12 @@ from pathlib import Path
 from .errors import ConfigError
 
 
-MANIFEST_PATH = Path(__file__).resolve().parents[1] / "runtime-profiles.toml"
+# Package data, deliberately: the generator reads this same manifest (the
+# agent's `python_runtime` health check compares it against what is actually
+# installed in a chroot), and it can only reach it through the installed
+# package. Keeping it inside `dports_dev_env/` is what makes that legal —
+# a wheel carries it, and no caller has to guess a path.
+MANIFEST_PATH = Path(__file__).resolve().parent / "runtime-profiles.toml"
 
 
 @dataclass(frozen=True)

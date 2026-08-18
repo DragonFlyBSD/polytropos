@@ -45,19 +45,23 @@ def list_available_envs() -> tuple[str, ...]:
     can't be loaded (no cache root, not running as root, etc.) —
     callers treat that as "no envs known".
     """
+    # Deferred import of a *declared* dependency (see pyproject). It stays
+    # inside the function so importing the agent stays cheap, and so a
+    # generator venv that predates the dependency degrades loudly rather
+    # than failing at import time.
     try:
-        # Local import: dportsv3 package shouldn't hard-depend on the
-        # dev-env CLI package at import time (tests import the agent
-        # without dev-env on sys.path).
-        import sys  # noqa: PLC0415
-        from pathlib import Path  # noqa: PLC0415
-        dev_env_pkg = (
-            Path(__file__).resolve().parents[3] / "tools" / "dev-env"
-        )
-        if dev_env_pkg.is_dir() and str(dev_env_pkg) not in sys.path:
-            sys.path.insert(0, str(dev_env_pkg))
         from dports_dev_env.config import load_config  # noqa: PLC0415
         from dports_dev_env.store import EnvironmentStore  # noqa: PLC0415
+    except ImportError as exc:
+        # A broken install, not an empty machine. Say so — the operator
+        # action ("reinstall the generator venv") has nothing to do with
+        # the one they'd infer from "no envs exist" ("create an env").
+        _log.error("list_available_envs: dports_dev_env is not importable "
+                   "(%s) — the generator venv is missing its dev-env "
+                   "dependency; reinstall it", exc)
+        return ()
+
+    try:
         store = EnvironmentStore(load_config())
         return tuple(sorted(info.name for _, info in store.list_infos()))
     except Exception as exc:

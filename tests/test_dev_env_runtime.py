@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 
-_DEV_ENV_PKG = Path(__file__).resolve().parents[2] / "tools" / "dev-env"
-if _DEV_ENV_PKG.is_dir() and str(_DEV_ENV_PKG) not in sys.path:
-    sys.path.insert(0, str(_DEV_ENV_PKG))
 
 
 def test_mount_env_root_rejects_long_mount_target(monkeypatch, tmp_path):

@@ -25,9 +25,6 @@ from types import SimpleNamespace
 import pytest
 
 
-_DEV_ENV_PKG = Path(__file__).resolve().parents[2] / "tools" / "dev-env"
-if _DEV_ENV_PKG.is_dir() and str(_DEV_ENV_PKG) not in sys.path:
-    sys.path.insert(0, str(_DEV_ENV_PKG))
 
 
 @pytest.fixture

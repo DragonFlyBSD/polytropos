@@ -36,7 +36,54 @@ def create_parser() -> argparse.ArgumentParser:
     _register_agent_queue_runner_parser(subparsers)
     from dportsv3.verify_fix import register_parser as _reg_verify_fix
     _reg_verify_fix(subparsers)
+    _register_env_health_parser(subparsers)
     return parser
+
+
+def _register_env_health_parser(subparsers: argparse._SubParsersAction) -> None:
+    """Register the dev-env health probe.
+
+    This lives here, not in the dev-env CLI, because the probe itself is
+    generator code (`dportsv3.agent.health`, which reaches into
+    `dportsv3.agent.worker`). Hosting the command over there meant the
+    dev-env package importing the generator back.
+    """
+    p = subparsers.add_parser(
+        "env-health",
+        help="Probe a dev-env chroot (python_runtime, writable_overlay, "
+             "dports_compose); exits 0=ready, 1=broken, 2=degraded",
+    )
+    p.add_argument("name", help="Environment name")
+    p.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="Run only this check (repeatable). Names: python_runtime, "
+             "writable_overlay, dports_compose.",
+    )
+    p.add_argument(
+        "--no-indent",
+        action="store_true",
+        help="Compact JSON output (single line).",
+    )
+
+
+def cmd_env_health(args: argparse.Namespace) -> int:
+    """Probe one env and emit the EnvHealth JSON.
+
+    Exit codes: 0 = ready, 1 = broken, 2 = degraded.
+    """
+    import json
+
+    from dportsv3.agent import health
+
+    eh = health.check(args.name, only=args.only)
+    print(json.dumps(eh.to_dict(), indent=None if args.no_indent else 2))
+    if eh.status == "ready":
+        return 0
+    if eh.status == "broken":
+        return 1
+    return 2  # degraded
 
 
 def _register_compose_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -704,6 +751,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify-fix":
         from dportsv3.verify_fix import cmd_verify_fix
         return cmd_verify_fix(args)
+
+    if args.command == "env-health":
+        return cmd_env_health(args)
 
     print(f"Unknown command: {args.command}", file=sys.stderr)
     return 1

@@ -168,7 +168,10 @@ print(f"{profile}:{digest}")
 PY
 }
 
-STAMP_VALUE=$(compute_stamp)
+# The generator venv now contains dev-env too, so a dev-env source change has
+# to invalidate this venv as well — otherwise the generator keeps running
+# against a stale editable copy of its own dependency.
+STAMP_VALUE="$(compute_stamp)+$(compute_dev_env_stamp)"
 
 needs_install=0
 if [ ! -x "$VENV_DIR/bin/dportsv3" ]; then
@@ -204,6 +207,15 @@ if [ "$needs_install" -eq 1 ]; then
         printf '%s\n' "dportsv3: creating virtual environment at $VENV_DIR" >&2
         "$PYTHON_BIN" -m venv --system-site-packages "$VENV_DIR"
     fi
+
+    # The generator declares `dports-dev-env` as a dependency (it resolves
+    # and health-probes envs through that package). It is a sibling source
+    # tree, not a PyPI distribution, so install it FIRST: pip then sees the
+    # requirement already satisfied and never reaches for an index. Order
+    # matters — reverse it and the generator install fails resolving a name
+    # that does not exist upstream.
+    printf '%s\n' "dportsv3: installing dev-env (generator dependency)" >&2
+    "$VENV_DIR/bin/python" -m pip install -e "$DEV_ENV_DIR"
 
     printf '%s\n' "dportsv3: installing generator ($INSTALL_PROFILE)" >&2
     "$VENV_DIR/bin/python" -m pip install -e "$INSTALL_TARGET"

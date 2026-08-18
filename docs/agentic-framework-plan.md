@@ -56,8 +56,13 @@ suspicious pattern force a cache re-probe but never set state — the
 probe is authoritative. **Operator no longer has to restart the
 runner after fixing the chroot**; the next gate cycle picks it up.
 
-New operator-facing CLI: `dportsv3 dev-env health NAME` emits JSON
+New operator-facing CLI: `dportsv3 env-health NAME` emits JSON
 and exits 0/1/2 (ready/broken/degraded).
+
+(Spelled `dportsv3 dev-env health NAME` until the repository split. The probe
+is generator code, so hosting its CLI in the dev-env package made that package
+import the generator back; the command moved to where its implementation
+already lived.)
 
 Commits: `b47918ba311` (module) · `93dd9f5244d` (cutover) ·
 `f221a0a154f` (CLI subcommand) · `f11fe8d1c6b` (cache integration

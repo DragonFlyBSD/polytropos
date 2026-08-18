@@ -118,7 +118,11 @@ By default the helper stores state under `~/.cache/dports-dev/`:
 
 The provisioned base cache is keyed by the Avalon world asset and configured
 tool package lists, including the selected runtime profile from
-`scripts/tools/dev-env/runtime-profiles.toml`. Fresh envs mount this
+`dev-env/dports_dev_env/runtime-profiles.toml`. It sits inside the package
+rather than beside it because the generator reads the same manifest — the
+agent's `python_runtime` health check compares it against what is actually
+installed in the chroot — and can only reach it through the installed
+package. Fresh envs mount this
 provisioned root read-only and layer small writable per-env directories over the
 paths that need mutation, avoiding both repeated `pkg-bootstrap` work and full
 root copies.

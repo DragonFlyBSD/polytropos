@@ -30,19 +30,16 @@ table. Aggregation logic stays put.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import tomllib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Literal
 
-# Imported lazily inside check functions to avoid heavyweight
-# dportsv3 worker imports for callers that only want one check.
+# `dportsv3.agent.worker` and `dports_dev_env.runtime_profiles` are imported
+# lazily inside the check functions: callers that want only one check should
+# not pay for the worker's imports, and this module stays importable with the
+# dev-env package absent (the affected check reports `broken` instead).
 
-
-RUNTIME_PROFILES_PATH = Path(__file__).resolve().parents[3] / "tools/dev-env/runtime-profiles.toml"
 
 CheckStatus = Literal["ok", "warn", "broken"]
 EnvStatus = Literal["ready", "degraded", "broken"]
@@ -79,10 +76,19 @@ def _now() -> str:
 
 
 def _runtime_profile() -> tuple[str, tuple[str, ...]]:
-    data = tomllib.loads(RUNTIME_PROFILES_PATH.read_text())
-    profile_name = os.environ.get("DPORTS_DEV_RUNTIME_PROFILE") or data["default"]
-    profile = data["profiles"][profile_name]
-    return profile_name, tuple(profile["packages"])
+    """The runtime profile the env *should* have been built from.
+
+    Read through `dports_dev_env`, which owns the manifest, rather than
+    re-parsed from a guessed path. That kept two copies of the selection
+    rule (default vs. DPORTS_DEV_RUNTIME_PROFILE) in sync by hand; now
+    there is one. The import is deferred so this module stays importable
+    with the dev-env package absent — `_check_python_runtime` turns the
+    failure into a `broken` check rather than an exception.
+    """
+    from dports_dev_env.runtime_profiles import load_runtime_profile  # noqa: PLC0415
+
+    profile = load_runtime_profile()
+    return profile.name, tuple(profile.packages)
 
 
 def _aggregate(checks: list[HealthCheck]) -> EnvStatus:

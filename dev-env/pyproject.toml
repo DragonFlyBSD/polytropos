@@ -8,18 +8,15 @@ version = "0.1.0"
 description = "DragonFly DeltaPorts development environment manager"
 requires-python = ">=3.11"
 license = "BSD-2-Clause"
-dependencies = [
-    # Pulled in transitively when _replay_intent_log imports
-    # dportsv3.agent.edit_intent for Step 25e intent-log replay.
-    # Pin matches scripts/generator/pyproject.toml: 4.18 introduced
-    # the rpds-py wheel dependency that fails to build on this
-    # toolchain; we only need validate + ValidationError so older
-    # versions are fine.
-    "jsonschema >= 4.0, < 4.18",
-]
+# Deliberately stdlib-only. This package is installed into its own venv and
+# run as root to manage chroots, so every dependency here is a dependency of
+# root. It must NOT depend on the generator: the generator depends on this,
+# and that edge points one way.
+dependencies = []
 
 [project.scripts]
 dports-dev-env = "dports_dev_env.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dports_dev_env"]
+artifacts = ["dports_dev_env/runtime-profiles.toml"]

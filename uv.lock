@@ -339,11 +339,16 @@ wheels = [
 ]
 
 [[package]]
+name = "dports-dev-env"
+version = "0.1.0"
+source = { editable = "dev-env" }
+
+[[package]]
 name = "dports-dragonfly"
 version = "0.0.1a0"
 source = { editable = "." }
 dependencies = [
-    { name = "jsonschema" },
+    { name = "dports-dev-env" },
     { name = "tomli-w" },
 ]
 
@@ -364,10 +369,10 @@ tracker = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dports-dev-env", editable = "dev-env" },
     { name = "fastapi", marker = "extra == 'tracker'" },
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "jinja2", marker = "extra == 'tracker'" },
-    { name = "jsonschema", specifier = ">=4.0,<4.18" },
     { name = "litellm", marker = "extra == 'agent'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
