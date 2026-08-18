@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "DeltaPorts",
+  "project_id": "8c58c839-dcba-49d0-97ca-027436ccac4e"
+}

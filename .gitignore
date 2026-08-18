@@ -21,3 +21,6 @@ config/delivery.token
 *.db-wal
 *.db-shm
 *.log
+
+# Beads: the Dolt DB is managed by Dolt, not git (.beads/.gitignore covers it)
+.beads/backup/
