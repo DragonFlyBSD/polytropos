@@ -22,5 +22,7 @@ config/delivery.token
 *.db-shm
 *.log
 
-# Beads: the Dolt DB is managed by Dolt, not git (.beads/.gitignore covers it)
+# Beads. The Dolt database and its local archives are managed by Dolt, not git
+# (.beads/.gitignore covers embeddeddolt/). The issue data itself is kept in
+# git as .beads/issues.jsonl, auto-exported — see .beads/config.yaml.
 .beads/backup/

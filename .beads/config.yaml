@@ -47,13 +47,18 @@
 # Optional JSONL auto-export for viewers, interchange, and issue-level migration.
 # Disabled by default; enable only when an integration needs fresh .beads/issues.jsonl.
 # Use relative paths under .beads/ for JSONL import/export filenames.
-# export:
-#   auto: false
-#   path: issues.jsonl
-#   interval: 60s
-#   git-add: false
-# import:
-#   path: issues.jsonl
+# Enabled deliberately: this repository has no git remote yet, so the Dolt
+# database in .beads/embeddeddolt/ is gitignored local state and is the ONLY
+# copy of the issue history. Auto-export keeps .beads/issues.jsonl current and
+# committed, which puts the issues in git history where they survive the loss
+# of this working copy. Revisit once `bd dolt push` has a real remote.
+export:
+  auto: true
+  path: issues.jsonl
+  interval: 60s
+  git-add: true
+import:
+  path: issues.jsonl
 
 # Integration settings (access with 'bd config get/set')
 # Non-secret keys (stored in the database):
