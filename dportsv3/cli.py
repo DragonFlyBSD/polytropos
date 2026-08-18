@@ -104,8 +104,9 @@ def _register_compose_parser(subparsers: argparse._SubParsersAction) -> None:
     compose.add_argument(
         "--delta-root",
         type=Path,
-        default=Path("."),
-        help="Delta repository root containing ports/ and special/",
+        default=None,
+        help="Delta repository root containing ports/ and special/ "
+             "(default: $DPORTS_DELTA_ROOT, else the current directory)",
     )
     compose.add_argument(
         "--freebsd-root",
@@ -254,8 +255,9 @@ def _register_migrate_parser(subparsers: argparse._SubParsersAction) -> None:
     inventory.add_argument(
         "--root",
         type=Path,
-        default=Path("."),
-        help="Repository root containing ports/",
+        default=None,
+        help="Repository root containing ports/ "
+             "(default: $DPORTS_DELTA_ROOT, else the current directory)",
     )
     inventory.add_argument(
         "--json",
@@ -279,8 +281,9 @@ def _register_migrate_parser(subparsers: argparse._SubParsersAction) -> None:
     convert.add_argument(
         "--root",
         type=Path,
-        default=Path("."),
-        help="Repository root containing ports/",
+        default=None,
+        help="Repository root containing ports/ "
+             "(default: $DPORTS_DELTA_ROOT, else the current directory)",
     )
     convert.add_argument(
         "--dry-run",
@@ -305,8 +308,9 @@ def _register_migrate_parser(subparsers: argparse._SubParsersAction) -> None:
     batch.add_argument(
         "--root",
         type=Path,
-        default=Path("."),
-        help="Repository root containing ports/",
+        default=None,
+        help="Repository root containing ports/ "
+             "(default: $DPORTS_DELTA_ROOT, else the current directory)",
     )
     batch.add_argument(
         "--bucket",
@@ -415,7 +419,10 @@ def _register_migrate_parser(subparsers: argparse._SubParsersAction) -> None:
         "--root",
         type=Path,
         default=Path("."),
-        help="Repository root for dashboard metadata",
+        # Recorded in the report, never read from. Unlike the other --root
+        # flags this is deliberately not validated as a ports checkout, so
+        # the dashboard still runs where there is no ports tree at all (CI).
+        help="Repository root, recorded in the dashboard metadata",
     )
     dashboard.add_argument(
         "--strict-policy",

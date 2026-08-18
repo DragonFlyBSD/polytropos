@@ -40,18 +40,16 @@ class _FakeHealth:
 
 
 def _policy_path() -> Path:
-    # __file__ = scripts/generator/tests/test_decision_parity.py
-    #   parents[0]=tests, parents[1]=generator, parents[2]=scripts,
-    #   parents[3]=repo root.
-    #
-    # Prefer the operator-local copy ``agentic-policy.json`` (real,
-    # gitignored); fall back to the tracked ``agentic-policy.json.sample``
-    # so the parity test works on fresh checkouts without manual setup.
-    config_dir = Path(__file__).resolve().parents[3] / "config"
-    local = config_dir / "agentic-policy.json"
-    if local.is_file():
-        return local
-    return config_dir / "agentic-policy.json.sample"
+    """The policy file production actually reads.
+
+    Deliberately the runner's own resolver rather than a recomputed path:
+    a parity test that finds the file its own way can pass against a file
+    the runner never loads. It used to derive this from parents[3], which
+    both duplicated the sample/local rule and assumed the tool lived inside
+    the ports checkout at a fixed depth.
+    """
+    from dportsv3 import paths
+    return paths.require_config_file("agentic-policy.json")
 
 
 @pytest.fixture(scope="module")

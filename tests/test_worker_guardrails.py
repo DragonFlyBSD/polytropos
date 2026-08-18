@@ -430,21 +430,18 @@ def test_dops_reference_is_not_in_playbooks_directory():
     """The cheat-sheet must NOT live under docs/agent-playbooks/ —
     otherwise the playbook selector could attach it to payloads,
     defeating the on-demand goal."""
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[3]
-    cheatsheet = repo_root / "scripts/generator/dportsv3/agent/dops_quickref.md"
-    assert cheatsheet.is_file(), "dops_quickref.md must be co-located with the agent module"
-    # Confirm it is NOT under docs/agent-playbooks/ (the legacy
-    # docs/kedb/ location is also checked since the constraint is the
-    # same — neither directory should host the quickref).
-    for candidate in (
-        repo_root / "docs/agent-playbooks/dops_quickref.md",
-        repo_root / "docs/kedb/dops_quickref.md",
-    ):
-        assert not candidate.exists(), (
-            f"dops quick-reference must not live under {candidate.parent} — "
-            "that would auto-load it into every payload"
-        )
+    from dportsv3 import paths
+    from dportsv3.agent.worker import _DOPS_QUICKREF_PATH
+
+    assert _DOPS_QUICKREF_PATH.is_file(), (
+        "dops_quickref.md must be co-located with the agent module")
+    # The constraint is about which directory it sits in, so check the
+    # playbooks directory the selector actually reads — not a reconstructed
+    # docs/ path that stops being the real one the moment either moves.
+    assert not (paths.AGENT_PLAYBOOKS_DIR / "dops_quickref.md").exists(), (
+        f"dops quick-reference must not live under {paths.AGENT_PLAYBOOKS_DIR} — "
+        "that would auto-load it into every payload"
+    )
 
 
 def test_dops_reference_tool_registered():

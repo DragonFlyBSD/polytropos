@@ -42,12 +42,14 @@ CONF_TARGET = "dportsv3-hooks.conf"
 
 
 def repo_hook_source() -> Path:
-    """Path to the repo's scripts/dsynth-hooks/ directory.
+    """Path to the dsynth hooks this package installs into a chroot.
 
-    Walks up from this module: parents[0]=dports_dev_env,
-    parents[1]=dev-env, parents[2]=tools, parents[3]=scripts.
+    Package data, co-located: this package is what copies the hooks into an
+    env, so it carries them. It used to walk three parents up to a sibling
+    `scripts/dsynth-hooks/`, which only resolved while this lived inside the
+    DeltaPorts checkout at one exact depth.
     """
-    return Path(__file__).resolve().parents[3] / "dsynth-hooks"
+    return Path(__file__).resolve().parent / "dsynth-hooks"
 
 
 def install_hooks(

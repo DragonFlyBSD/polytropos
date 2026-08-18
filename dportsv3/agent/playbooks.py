@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from dportsv3 import paths
+
 __all__ = [
     "PlaybookTriggers",
     "PlaybookEntry",
@@ -342,21 +344,19 @@ def detect_toolchains(port_dir: Path | None) -> set[str]:
 # ---------------------------------------------------------------------
 
 
-def find_playbooks_dir() -> Path | None:
-    """Locate ``docs/agent-playbooks/`` by walking up from this file.
+def find_playbooks_dir() -> Path:
+    """Locate the playbooks directory that ships with this package.
 
-    Fixes the pre-existing parent-chain bug in ``find_kedb_dir`` —
-    the legacy version did a single ``.parent`` hop and resolved to a
-    path that doesn't exist, so auto-detect always returned None.
-    Walks up the directory tree until it finds ``docs/agent-playbooks``
-    or runs out of ancestors.
+    The playbooks are the agent's accumulated pattern knowledge, so they are
+    package data and live inside the package. There is nothing to search for.
+
+    This used to walk up the directory tree looking for ``docs/agent-playbooks``
+    and return ``None`` when it ran out of ancestors. That made a failed lookup
+    indistinguishable from "no playbooks apply": the agent would run with its
+    whole pattern library missing and never say so. It now raises.
     """
-    here = Path(__file__).resolve()
-    for ancestor in [here.parent, *here.parents]:
-        candidate = ancestor / "docs" / "agent-playbooks"
-        if candidate.is_dir():
-            return candidate
-    return None
+    return paths.require_dir(
+        paths.AGENT_PLAYBOOKS_DIR, "the agent playbooks directory")
 
 
 def list_entries(playbooks_dir: Path | None) -> list[PlaybookEntry]:

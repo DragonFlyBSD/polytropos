@@ -5,7 +5,8 @@ Covers:
 - entry parsing (title extraction, body separation, est_tokens)
 - selector (role / classification / toolchains / convert_phase)
 - budget gate (priority-aware drop)
-- find_playbooks_dir walking up ancestors to locate the docs/ dir
+- find_playbooks_dir resolving the packaged playbooks directory, and
+  raising rather than returning None when it is absent
 """
 
 from __future__ import annotations
@@ -284,14 +285,26 @@ def test_selector_empty_result_returns_empty_text(tmp_path):
 # ----- discovery ------------------------------------------------------
 
 
-def test_find_playbooks_dir_walks_up_to_repo_docs():
-    """The real repo's docs/agent-playbooks/ should be locatable from
-    this test file (Step 27a moved it there). This guards against the
-    pre-existing parent-chain bug being reintroduced."""
+def test_find_playbooks_dir_returns_the_packaged_dir():
+    """The playbooks ship inside the package, so locating them is a
+    co-location rather than a search."""
     located = find_playbooks_dir()
-    assert located is not None, "find_playbooks_dir() should locate the live dir"
-    assert located.name == "agent-playbooks"
+    assert located.name == "playbooks"
+    assert located.parent.name == "agent"
     assert (located / "README.md").is_file()
+    assert list(located.glob("*.md")), "packaged playbooks directory is empty"
+
+
+def test_missing_playbooks_dir_raises_rather_than_returning_none(monkeypatch):
+    """The half that matters. This used to return None on a failed lookup,
+    which is indistinguishable from 'no playbooks apply' — the agent would
+    run with its whole pattern library missing and never say so."""
+    from dportsv3 import paths
+    from dportsv3.agent import playbooks as pb
+
+    monkeypatch.setattr(paths, "AGENT_PLAYBOOKS_DIR", Path("/nonexistent/playbooks"))
+    with pytest.raises(paths.MissingInput, match="playbooks"):
+        pb.find_playbooks_dir()
 
 
 def test_detect_toolchains_from_uses_line(tmp_path):

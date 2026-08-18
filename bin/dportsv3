@@ -2,17 +2,39 @@
 
 set -eu
 
-SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-GENERATOR_DIR="$SELF_DIR/scripts/generator"
+# This wrapper ships inside the checkout, so it is the one component entitled
+# to know the repository layout — which is precisely what keeps that knowledge
+# out of the Python packages, where it used to live as parents[N] walks.
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+GENERATOR_DIR="$SELF_DIR"
 VENV_DIR="$GENERATOR_DIR/.venv"
 STAMP_FILE="$VENV_DIR/.dportsv3-install-stamp"
 PYPROJECT_FILE="$GENERATOR_DIR/pyproject.toml"
 PYTHON_BIN=${PYTHON:-python3}
-DEV_ENV_DIR="$SELF_DIR/scripts/tools/dev-env"
+DEV_ENV_DIR="$SELF_DIR/dev-env"
 DEV_ENV_VENV_DIR="$DEV_ENV_DIR/.venv"
 DEV_ENV_STAMP_FILE="$DEV_ENV_VENV_DIR/.dports-dev-env-install-stamp"
 DEV_ENV_PYPROJECT_FILE="$DEV_ENV_DIR/pyproject.toml"
 DEV_ENV_LOCK_DIR="$DEV_ENV_DIR/.venv.lock"
+
+# Point the tool at the checkout's config/ unless the operator has chosen a
+# directory themselves. Everything downstream resolves config through
+# $DPORTSV3_CONFIG_DIR, so setting it here is what makes a plain `git clone`
+# behave like a configured install without any code guessing at paths.
+if [ -z "${DPORTSV3_CONFIG_DIR:-}" ] && [ -d "$SELF_DIR/config" ]; then
+    DPORTSV3_CONFIG_DIR="$SELF_DIR/config"
+    export DPORTSV3_CONFIG_DIR
+fi
+
+# Tell the agent how to re-invoke this wrapper. It shells out to
+# `dportsv3 dev-env exec ...`, and this script is the only entry point that
+# routes `dev-env` — the console script of the same name does not implement
+# it. Exporting our own path means the agent never has to search, and never
+# finds the console script by mistake.
+if [ -z "${DPORTSV3_CMD:-}" ]; then
+    DPORTSV3_CMD="$SELF_DIR/bin/dportsv3"
+    export DPORTSV3_CMD
+fi
 
 if [ ! -f "$PYPROJECT_FILE" ]; then
     printf '%s\n' "dportsv3: missing generator project: $PYPROJECT_FILE" >&2
@@ -86,7 +108,7 @@ PY
 }
 
 runtime_profile_packages() {
-    "$PYTHON_BIN" - "$DEV_ENV_DIR/runtime-profiles.toml" <<'PY'
+    "$PYTHON_BIN" - "$DEV_ENV_DIR/dports_dev_env/runtime-profiles.toml" <<'PY'
 from __future__ import annotations
 
 import os

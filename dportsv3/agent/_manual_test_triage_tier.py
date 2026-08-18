@@ -30,7 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from dportsv3.agent import llm, policy, triage
+from dportsv3.agent import llm, policy, runner, triage
 
 
 # -----------------------------------------------------------------------------
@@ -176,17 +176,9 @@ output format.
           f"{result.usage.completion_tokens}/{result.usage.total_tokens}")
     print()
 
-    # Resolve tier via the same policy the runner uses. Prefer the
-    # operator-local copy; fall back to the tracked ``.sample`` so the
-    # script works on fresh checkouts.
-    config_dir = Path(__file__).resolve().parents[4] / "config"
-    default_policy = config_dir / "agentic-policy.json"
-    if not default_policy.is_file():
-        default_policy = config_dir / "agentic-policy.json.sample"
-    policy_path = os.environ.get(
-        "DP_HARNESS_POLICY", str(default_policy),
-    )
-    pol = policy.load_policy(policy_path)
+    # Resolve tier via the same policy the runner uses — literally the same
+    # resolver, so this script cannot drift from the runner's answer.
+    pol = policy.load_policy(runner._policy_path())
     tier = policy.tier_for(pol, result.classification, result.confidence)
 
     print(f"policy:         {policy_path}")

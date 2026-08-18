@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, replace
@@ -222,4 +223,28 @@ def now_utc() -> str:
 
 
 def default_delta_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    """The DeltaPorts ports checkout, when no ``--delta-root`` was given.
+
+    This is an *external* input: the ports tree is a separate repository from
+    this tool, so there is nothing sensible to infer and it has to be named.
+    It comes from ``$DPORTS_DEV_DELTA_ROOT``, or this raises.
+
+    It used to be ``parents[4]`` — the tool's own repository root, which was
+    the ports checkout only because the tool lived inside it. After the split
+    that resolves to the tool's repo (or, from an installed copy, somewhere
+    under site-packages), so an env would have been built against the wrong
+    tree, or an empty one, without a word of complaint.
+    """
+    raw = os.environ.get("DPORTS_DEV_DELTA_ROOT", "").strip()
+    if not raw:
+        raise UsageError(
+            "no DeltaPorts checkout specified: pass --delta-root, or set "
+            "$DPORTS_DEV_DELTA_ROOT. The ports tree is a separate repository "
+            "from this tool, so it cannot be inferred."
+        )
+    root = Path(raw).expanduser()
+    if not root.is_dir():
+        raise UsageError(
+            f"$DPORTS_DEV_DELTA_ROOT points at {root}, which is not a directory"
+        )
+    return root

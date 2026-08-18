@@ -32,6 +32,7 @@ from . import (
     ReviewRequestResult,
 )
 from .config import DeliveryConfig, load_delivery_config
+from .. import paths
 
 
 @dataclass
@@ -87,13 +88,11 @@ def resolve_config(
         if config_dir:
             path = Path(config_dir) / "delivery.toml"
         else:
-            # Repo-anchored fallback. This file lives at
-            # scripts/generator/dportsv3/delivery/orchestrator.py;
-            # parents[4] is the repo root.
-            path = (
-                Path(__file__).resolve().parents[4]
-                / "config" / "delivery.toml"
-            )
+            # The template bundled with the package. `config_file` is not
+            # used here because it reads $DPORTSV3_CONFIG_DIR from the real
+            # environment, and this function takes `env` as a parameter so
+            # callers can pass a synthetic one.
+            path = paths.BUNDLED_CONFIG_DIR / "delivery.toml.sample"
     if not path.is_file():
         return None
     return load_delivery_config(path, target=target, env=env)

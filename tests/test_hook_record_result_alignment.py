@@ -15,9 +15,22 @@ import re
 from pathlib import Path
 
 
-_REPO = Path(__file__).resolve().parents[3]
-_HOOKS_DIR = _REPO / "scripts" / "dsynth-hooks"
-_MODELS = _REPO / "scripts" / "generator" / "dportsv3" / "tracker" / "models.py"
+def _hooks_dir() -> Path:
+    """Where the hooks live, per the package that installs them."""
+    from dports_dev_env.hooks import repo_hook_source
+    return repo_hook_source()
+
+
+def _models_path() -> Path:
+    from dportsv3.tracker import models
+    return Path(models.__file__)
+
+
+# Ask each package where its own files are instead of reconstructing a
+# repository layout here — that reconstruction was three parents up into
+# `scripts/`, and only ever resolved inside the DeltaPorts checkout.
+_HOOKS_DIR = _hooks_dir()
+_MODELS = _models_path()
 
 
 def _hook_record_calls(name: str) -> list[str]:

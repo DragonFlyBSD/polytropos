@@ -35,29 +35,38 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-# How to invoke `dportsv3`. The wrapper script at the repo root is the
-# only entry point that knows how to route the `dev-env` subcommand —
-# it dispatches to a separate venv. Using `python -m dportsv3` would
-# bypass that routing and fail.
+# How to invoke `dportsv3`. This specifically needs the *shell wrapper*
+# (`bin/dportsv3`), which is the only entry point that routes the `dev-env`
+# subcommand — it dispatches to a separate venv. Neither `python -m dportsv3`
+# nor the `dportsv3` console script knows about `dev-env` at all.
 #
 # Resolution order:
-#   1. DPORTSV3_CMD env var (whitespace-split) — for tests / overrides
-#   2. <repo>/dportsv3 sibling lookup relative to this file
-#   3. `dportsv3` on PATH (via shutil.which)
+#   1. $DPORTSV3_CMD (whitespace-split). The wrapper exports this pointing at
+#      itself, so under normal operation there is nothing to resolve.
+#   2. `dportsv3` on PATH.
 # Otherwise, raise at first use.
+#
+# There used to be a step between them: a sibling lookup four parents up from
+# this file. It only resolved while the tool lived inside the DeltaPorts
+# checkout, and it silently outranked PATH.
+#
+# The PATH fallback is a real hazard worth naming: in an active venv,
+# `shutil.which("dportsv3")` finds the *console script*, which has no
+# `dev-env` subcommand — so a `dev-env exec` through it fails with an
+# argparse error rather than anything self-explanatory. That is why the
+# wrapper exports $DPORTSV3_CMD instead of relying on lookup.
 def _resolve_dportsv3_cmd() -> list[str]:
     override = os.environ.get("DPORTSV3_CMD")
     if override:
         return override.split()
-    sibling = Path(__file__).resolve().parents[4] / "dportsv3"
-    if sibling.is_file():
-        return [str(sibling)]
     found = shutil.which("dportsv3")
     if found:
         return [found]
     raise RuntimeError(
-        "could not locate dportsv3 wrapper "
-        "(set DPORTSV3_CMD, put dportsv3 on PATH, or run from the repo)"
+        "could not locate the dportsv3 wrapper. Set $DPORTSV3_CMD to "
+        "bin/dportsv3, or put that wrapper on PATH. Note that the console "
+        "script of the same name is not a substitute: it does not implement "
+        "the `dev-env` subcommand this needs."
     )
 
 

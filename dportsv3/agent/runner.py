@@ -58,6 +58,7 @@ from pathlib import Path
 # canonical "actively working" state set is safe to bind at module
 # load. Other lifecycle uses stay function-local per this file's
 # convention, but this one backs a module-level constant.
+from dportsv3 import paths
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
 from dportsv3.engine import emit
 
@@ -75,26 +76,23 @@ DEFAULT_MAX_ITERATIONS = 3
 DEFAULT_ARTIFACT_STORE_URL = "http://127.0.0.1:8788"
 DEFAULT_TRACKER_URL = "http://127.0.0.1:8080"
 
-# Default location of config/agentic-policy.json. ``runner.py`` lives
-# at scripts/generator/dportsv3/agent/runner.py; walk four parents up
-# to reach the repo root, then into config/. Operator can override via
+# Default location of agentic-policy.json. Resolution lives in
+# ``dportsv3.paths``: the operator's copy under $DPORTSV3_CONFIG_DIR wins,
+# then the ``.sample`` template bundled with the package, so a fresh install
+# works with no setup. Operator can still override the whole thing via
 # DP_HARNESS_POLICY.
 #
-# Sample/local split: ``config/agentic-policy.json.sample`` is the
-# tracked template; operators copy it to ``config/agentic-policy.json``
-# and edit locally. .gitignore covers the local copy. Resolver prefers
-# the local copy if present, falls back to the sample so fresh
-# checkouts work out of the box.
-def _resolve_default_policy_path() -> str:
-    config_dir = Path(__file__).resolve().parents[4] / "config"
-    local = config_dir / "agentic-policy.json"
-    sample = config_dir / "agentic-policy.json.sample"
-    if local.is_file():
-        return str(local)
-    return str(sample)
-
-
-_DEFAULT_POLICY_PATH = _resolve_default_policy_path()
+# Resolved lazily, not at import: $DPORTSV3_CONFIG_DIR is environment, and
+# baking it into a module-level constant meant tests (and any caller that
+# sets it after import) silently got the value from import time.
+def _policy_path() -> str:
+    override = os.environ.get("DP_HARNESS_POLICY", "").strip()
+    if override:
+        # Take the override as given, without resolving the default — an
+        # operator pointing at their own file should not be able to trip
+        # over a missing packaged template.
+        return override
+    return str(paths.require_config_file("agentic-policy.json"))
 
 # Heartbeat interval (seconds)
 HEARTBEAT_INTERVAL = 5
@@ -2452,9 +2450,7 @@ def _write_triage_audit_harness(
 
     tier_name = "MANUAL"
     try:
-        policy_path = os.environ.get(
-            "DP_HARNESS_POLICY", _DEFAULT_POLICY_PATH,
-        )
+        policy_path = _policy_path()
         pol = load_policy(policy_path)
         tier_name = policy_tier_for(
             pol, result.classification, result.confidence,
@@ -3247,9 +3243,7 @@ def process_triage_job(
     ctx.state["job_path"] = job_path
     ctx.state["payload"] = payload
     ctx.state["origin"] = origin
-    ctx.state["policy_path"] = os.environ.get(
-        "DP_HARNESS_POLICY", _DEFAULT_POLICY_PATH,
-    )
+    ctx.state["policy_path"] = _policy_path()
     ctx.state["services"] = TriageServices(
         materialize_bundle=_materialize_bundle,
         artifact_store_put=artifact_store_put,
@@ -3769,9 +3763,7 @@ def process_patch_job(
     ctx.state["job_path"] = job_path
     ctx.state["payload"] = payload
     ctx.state["origin"] = origin
-    ctx.state["policy_path"] = os.environ.get(
-        "DP_HARNESS_POLICY", _DEFAULT_POLICY_PATH,
-    )
+    ctx.state["policy_path"] = _policy_path()
     ctx.state["services"] = PatchServices(
         read_bundle_text=read_bundle_text,
         write_error_note=write_error_note,

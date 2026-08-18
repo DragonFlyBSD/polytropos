@@ -5,6 +5,7 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
+from dportsv3 import paths
 from dportsv3.common.io import emit_json
 from dportsv3.compose import run_compose
 from dportsv3.compose_reporting import format_compose_result
@@ -17,7 +18,7 @@ def cmd_compose(args: Namespace) -> int:
     result = run_compose(
         target=str(args.target),
         output_path=Path(args.output),
-        delta_root=Path(args.delta_root),
+        delta_root=paths.resolve_delta_root(args.delta_root),
         freebsd_root=Path(args.freebsd_root),
         lock_root=lock_root,
         selected_origins=[str(origin) for origin in getattr(args, "origin", [])],

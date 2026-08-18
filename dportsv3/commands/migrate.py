@@ -7,6 +7,7 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
+from dportsv3 import paths
 from dportsv3.common.io import (
     emit_json,
     read_json_list,
@@ -24,7 +25,7 @@ from dportsv3.migration.waves import build_wave_report, select_wave
 
 
 def _handle_inventory(args: Namespace) -> int:
-    root = Path(args.root)
+    root = paths.resolve_delta_root(args.root)
     try:
         records = scan_inventory(root)
     except ValueError as exc:
@@ -72,7 +73,8 @@ def _handle_convert(args: Namespace) -> int:
         return 2
 
     result = convert_record(
-        matches[0], repo_root=Path(args.root), dry_run=bool(args.dry_run)
+        matches[0], repo_root=paths.resolve_delta_root(args.root),
+        dry_run=bool(args.dry_run),
     )
     emit_json(result, pretty=bool(args.json))
     if bool(args.strict) and result.get("status") in {"failed", "blocked"}:
@@ -90,7 +92,7 @@ def _handle_batch(args: Namespace) -> int:
 
     report = run_batch(
         records,
-        repo_root=Path(args.root),
+        repo_root=paths.resolve_delta_root(args.root),
         buckets=list(args.bucket or []),
         targets=list(args.target or []),
         categories=list(args.category or []),

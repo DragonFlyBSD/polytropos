@@ -11,11 +11,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Add the generator package directory to sys.path so we can import
-# dportsv3.* from this standalone script location.
-_GENERATOR_DIR = Path(__file__).resolve().parent / "generator"
-if _GENERATOR_DIR.is_dir() and str(_GENERATOR_DIR) not in sys.path:
-    sys.path.insert(0, str(_GENERATOR_DIR))
+# The repository root is this script's parent directory, and it holds the
+# `dportsv3` package. Adding it lets an operator run this shim straight out
+# of a checkout without installing anything; an installed copy finds the
+# package on sys.path already and this is a no-op.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if (_REPO_ROOT / "dportsv3").is_dir() and str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from dportsv3.agent.runner import main
 

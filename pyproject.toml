@@ -54,3 +54,12 @@ Repository = "https://github.com/DragonFlyBSD/DeltaPorts"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dportsv3"]
+# Non-.py files the tool reads at runtime. Without these the package installs
+# and imports fine but the agent comes up with no playbooks and no policy —
+# the exact silent degradation `dportsv3/paths.py` exists to prevent, so it
+# raises rather than shrugs if any of it is missing.
+artifacts = [
+    "dportsv3/agent/playbooks/*.md",
+    "dportsv3/agent/dops_quickref.md",
+    "dportsv3/data/config/*.sample",
+]

@@ -19,4 +19,7 @@ dports-dev-env = "dports_dev_env.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dports_dev_env"]
-artifacts = ["dports_dev_env/runtime-profiles.toml"]
+artifacts = [
+    "dports_dev_env/runtime-profiles.toml",
+    "dports_dev_env/dsynth-hooks/*",
+]

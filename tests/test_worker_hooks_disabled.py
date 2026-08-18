@@ -79,8 +79,8 @@ def test_dsynth_build_creates_and_removes_flag_file(monkeypatch):
 def test_hook_common_short_circuits_when_flag_present(tmp_path):
     """Sourcing hook_common.sh with the flag file present must exit 0
     so the sourcing hook script never reaches its body."""
-    repo_root = Path(__file__).resolve().parents[3]
-    hook_common = repo_root / "scripts" / "dsynth-hooks" / "hook_common.sh"
+    from dports_dev_env.hooks import repo_hook_source
+    hook_common = repo_hook_source() / "hook_common.sh"
     assert hook_common.is_file(), f"missing hook_common.sh at {hook_common}"
 
     # Tiny driver: source hook_common.sh, then echo REACHED.

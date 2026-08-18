@@ -242,10 +242,11 @@ def _resolve_token(env: dict[str, str]) -> str | None:
 
     Search order:
       1. ``$DPORTSV3_DELIVERY_TOKEN`` env var.
-      2. ``$DPORTSV3_CONFIG_DIR/delivery.token`` when the env var
-         is set.
-      3. ``<repo-root>/config/delivery.token`` — repo-anchored
-         default, same root computation as the TOML fallback.
+      2. ``$DPORTSV3_CONFIG_DIR/delivery.token``.
+
+    There is no bundled default, and deliberately so: a token is a secret,
+    so the only sensible thing to ship is nothing. Absent both, this returns
+    None and the caller reports that delivery needs a token.
     """
     direct = env.get("DPORTSV3_DELIVERY_TOKEN", "").strip()
     if direct:
@@ -254,11 +255,6 @@ def _resolve_token(env: dict[str, str]) -> str | None:
     config_dir = env.get("DPORTSV3_CONFIG_DIR", "").strip()
     if config_dir:
         candidates.append(Path(config_dir) / "delivery.token")
-    # Repo-anchored fallback. This file lives at scripts/generator/
-    # dportsv3/delivery/config.py — parents[4] is the repo root.
-    candidates.append(
-        Path(__file__).resolve().parents[4] / "config" / "delivery.token"
-    )
     for token_file in candidates:
         if not token_file.is_file():
             continue
