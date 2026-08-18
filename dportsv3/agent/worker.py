@@ -1898,9 +1898,8 @@ _DOPS_QUICKREF_PATH = Path(__file__).resolve().parent / "dops_quickref.md"
 def dops_reference(env: str) -> dict:
     """Return the on-demand dops quick-reference.
 
-    Co-located with the agent module (NOT under
-    ``docs/agent-playbooks/``) so the playbook selector doesn't ship
-    it in every payload. Call once
+    Co-located with the agent module but NOT inside the playbooks
+    directory, so the playbook selector doesn't ship it in every payload. Call once
     per patch attempt at most, only after confirming there's no
     ``overlay.dops`` yet and you intend to write one.
 

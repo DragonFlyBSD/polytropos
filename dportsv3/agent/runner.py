@@ -4278,8 +4278,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print payload without calling the LLM")
     parser.add_argument(
         "--playbooks-dir",
-        help="Path to docs/agent-playbooks/ (default: auto-detect via "
-             "find_playbooks_dir)",
+        help="Override the playbooks directory (default: the copy that ships "
+             "inside the package)",
     )
     parser.add_argument(
         "--env",

@@ -1,6 +1,6 @@
 """Agent playbook library (Step 27b).
 
-Parses ``docs/agent-playbooks/*.md`` entries with YAML-subset
+Parses the packaged ``dportsv3/agent/playbooks/*.md`` entries with YAML-subset
 frontmatter, selects entries by per-job context (flow + classification
 + toolchain), and renders the selected entries into a markdown block
 for inclusion in the agent's payload.

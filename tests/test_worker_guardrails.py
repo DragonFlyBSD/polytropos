@@ -427,7 +427,7 @@ def test_dops_reference_returns_quickref_content():
 
 
 def test_dops_reference_is_not_in_playbooks_directory():
-    """The cheat-sheet must NOT live under docs/agent-playbooks/ —
+    """The cheat-sheet must NOT live inside the playbooks directory —
     otherwise the playbook selector could attach it to payloads,
     defeating the on-demand goal."""
     from dportsv3 import paths

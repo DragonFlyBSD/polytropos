@@ -2,7 +2,7 @@
 
 Distinct from ``tests/test_playbooks.py`` (unit tests against the
 selector + parser) — these tests exercise the wiring between the
-runner's payload builders and the live ``docs/agent-playbooks/``
+runner's payload builders and the live packaged playbooks
 content, plus the `playbooks_selected` activity-log telemetry.
 
 Covers:
