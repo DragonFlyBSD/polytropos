@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local config copies (only the .sample files are tracked)
+config/agentic-policy.json
+config/delivery.toml
+config/delivery.token
+
+# Local state: the tracker DB, queues, logs
+*.db
+*.db-wal
+*.db-shm
+*.log
