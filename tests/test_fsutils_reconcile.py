@@ -58,12 +58,53 @@ def test_content_change_updates_dst(tmp_path: Path) -> None:
     dst = tmp_path / "dst"
     _write(src / "Makefile", "PORTNAME=new\n")
     _write(dst / "Makefile", "PORTNAME=old\n")
+    # Give src a distinct mtime. Both files are written in the same
+    # breath, and on a filesystem whose timestamps are coarser than
+    # the gap between two writes they land on the identical tick —
+    # HAMMER2 does. Asserting only "dst's mtime moved" would then fail
+    # even though the rewrite happened correctly, because copy2 adopts
+    # src's mtime and src's mtime *is* dst's old one.
+    old = time.time() - 86400
+    os.utime(src / "Makefile", (old, old))
     pre = _mtime_ns(dst / "Makefile")
 
     reconcile(src, dst)
 
     assert (dst / "Makefile").read_text() == "PORTNAME=new\n"
+    # The documented contract for a differing file is an atomic
+    # replace via copy2, which carries src's mtime across.
+    assert _mtime_ns(dst / "Makefile") == _mtime_ns(src / "Makefile")
     assert _mtime_ns(dst / "Makefile") != pre  # rewrite expected
+
+
+def test_content_change_with_identical_stat_updates_dst(tmp_path: Path) -> None:
+    """Regression for poly-mdx.
+
+    The dangerous case is not a visibly different file, it is one that
+    a stat-only compare cannot distinguish: same byte length, same
+    mtime. A ports Makefile bump such as DISTVERSION=1.2.3 -> 1.2.4 is
+    exactly that shape, and compose writes the scratch tree fast
+    enough to land in a single mtime tick on HAMMER2. Before the fix
+    reconcile skipped the copy and the edit never reached the live
+    tree. mtimes are equalised explicitly so this fails on
+    nanosecond-resolution filesystems too, rather than passing by
+    accident of granularity.
+    """
+    src = tmp_path / "src"
+    dst = tmp_path / "dst"
+    _write(src / "Makefile", "DISTVERSION=1.2.4\n")
+    _write(dst / "Makefile", "DISTVERSION=1.2.3\n")
+    src_stat = (src / "Makefile").stat()
+    os.utime(dst / "Makefile", ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+
+    # Guard the premise: equal size and equal mtime are what make this
+    # invisible to a shallow compare.
+    assert (src / "Makefile").stat().st_size == (dst / "Makefile").stat().st_size
+    assert _mtime_ns(src / "Makefile") == _mtime_ns(dst / "Makefile")
+
+    reconcile(src, dst)
+
+    assert (dst / "Makefile").read_text() == "DISTVERSION=1.2.4\n"
 
 
 # --- left_only / right_only ---

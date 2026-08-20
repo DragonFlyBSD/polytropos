@@ -9,16 +9,41 @@ from pathlib import Path
 
 
 class _DeepDircmp(dircmp):
-    """``filecmp.dircmp`` uses ``cmpfiles`` with ``shallow=True`` by
-    default, which classifies files by ``stat()`` (mtime + size).
-    For reconcile we need content-based classification — same content
-    with different mtimes must land in ``same_files`` (so we preserve
-    dst's mtime), not ``diff_files`` (which would trigger a rewrite).
+    """``filecmp.dircmp`` classifies files with ``cmpfiles(...,
+    shallow=True)``, which compares only the ``stat()`` signature
+    (type, size, mtime) and never reads the bytes. We need
+    content-based classification in *both* directions: same content
+    with different mtimes must land in ``same_files`` (so reconcile
+    preserves dst's mtime), and different content that happens to
+    share a size and an mtime must land in ``diff_files`` (so the
+    change is not silently dropped).
 
-    ``phase4`` in Python's dircmp uses ``self.__class__`` when
-    creating subdir dircmps, so this override propagates through
-    recursion without further plumbing.
+    Overriding ``phase3`` is not sufficient on its own. ``methodmap``
+    is built in the ``dircmp`` class body and holds *base class*
+    function objects, and ``dircmp.__getattr__`` dispatches through it
+    as ``self.methodmap[attr](self)`` — so reading ``same_files`` runs
+    ``dircmp.phase3``, never a subclass override. That made this class
+    a no-op: two files of equal length written within one filesystem
+    mtime tick compared equal without being read, so ``reconcile``
+    skipped the copy and ``diff_tree`` reported no difference. Latent
+    on APFS, where consecutive writes get distinct nanosecond mtimes;
+    live on HAMMER2, where they do not (poly-mdx).
+
+    Rather than rewrite ``methodmap`` — private, and its shape has
+    changed across versions — fill the three attributes eagerly in
+    ``__init__``. Instance attributes shadow the lazy path in every
+    variant: ``__getattr__`` runs only for attributes that are absent,
+    and a ``cached_property`` defers to the instance dict just the
+    same. ``phase4`` builds subdirectory comparers through
+    ``self.__class__``, so recursion inherits this behaviour.
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        # Signature is forwarded verbatim: ``dircmp`` gained a
+        # ``shallow`` parameter in 3.13 and ``phase4`` passes on
+        # whatever it was constructed with.
+        super().__init__(*args, **kwargs)
+        self.phase3()
 
     def phase3(self) -> None:
         same, diff, funny = cmpfiles(

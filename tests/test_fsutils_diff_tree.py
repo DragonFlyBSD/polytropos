@@ -56,6 +56,38 @@ def test_content_difference_is_reported(tmp_path: Path) -> None:
     assert diff_tree(left, right) == [("content", str(Path("files") / "patch-a"))]
 
 
+def test_different_content_with_identical_stat_is_reported(tmp_path: Path) -> None:
+    """Regression for poly-mdx.
+
+    ``filecmp``'s shallow compare reduces a file to (type, size,
+    mtime) and never reads the bytes, so a same-length edit written
+    inside one filesystem tick looks unchanged. Equalising both stat
+    fields on purpose makes that reproducible everywhere: on APFS
+    consecutive writes get distinct nanosecond mtimes and the bug
+    hides, on HAMMER2 they share a tick and it bites. The nested path
+    also pins that ``phase4`` recursion inherits the deep comparison.
+    """
+    left, right = tmp_path / "l", tmp_path / "r"
+    _write(left / "files" / "patch-a", "DISTVERSION=1.2.3\n")
+    _write(right / "files" / "patch-a", "DISTVERSION=1.2.4\n")
+    src_stat = (left / "files" / "patch-a").stat()
+    os.utime(
+        right / "files" / "patch-a",
+        ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns),
+    )
+
+    # Guard the premise: without these the test would pass for the
+    # wrong reason (a shallow compare would catch a size/mtime skew).
+    assert (left / "files" / "patch-a").stat().st_size == (
+        right / "files" / "patch-a"
+    ).stat().st_size
+    assert (left / "files" / "patch-a").stat().st_mtime_ns == (
+        right / "files" / "patch-a"
+    ).stat().st_mtime_ns
+
+    assert diff_tree(left, right) == [("content", str(Path("files") / "patch-a"))]
+
+
 def test_nested_paths_are_relative(tmp_path: Path) -> None:
     left, right = tmp_path / "l", tmp_path / "r"
     _write(left / "a" / "b" / "c", "1\n")
