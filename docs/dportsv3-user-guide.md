@@ -78,11 +78,34 @@ This is the upstream base tree to compose against.
 Important: `dportsv3` does **not** switch FreeBSD branches for you. It validates
 that current branch and compose target match.
 
-### 3) Optional lock tree (for `type lock` overlays)
+### 3) Lock tree (for `type lock` overlays)
 
-- Only needed if overlays use `type lock`.
-- Passed as `--lock-root`.
-- If omitted, compose falls back to `<delta-root>/locked`.
+- Only needed if overlays use `type lock` — but DeltaPorts does use them,
+  so in practice `compose` against DeltaPorts needs this tree.
+- Passed as `--lock-root`, pointing at the **DPorts** checkout.
+- If omitted, compose falls back to `<delta-root>/locked`. No such directory
+  exists in DeltaPorts, so relying on the fallback means every `type lock`
+  overlay fails to materialize. Compose reports this once as
+  `E_COMPOSE_LOCK_ROOT_MISSING` naming the path it tried, alongside one
+  `E_COMPOSE_LOCK_SOURCE_MISSING` per affected origin.
+
+### Running outside the ports repository
+
+`compose` reads three separate trees, and only `--delta-root` has an
+environment-variable equivalent. From a Polytropos checkout:
+
+```sh
+./bin/dportsv3 compose \
+    --target @2026Q3 \
+    --delta-root   /path/to/DeltaPorts \
+    --freebsd-root /path/to/freebsd-ports \
+    --lock-root    /path/to/DPorts \
+    --output       /path/to/output
+```
+
+- `--delta-root` defaults to `$DPORTS_DELTA_ROOT`, else the current directory.
+- `--freebsd-root` is mandatory and has no environment variable.
+- `--lock-root` has no environment variable; see the fallback caveat above.
 
 ## Repository Layout Expectations
 

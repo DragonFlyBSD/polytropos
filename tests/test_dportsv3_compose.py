@@ -671,6 +671,119 @@ def test_compose_removed_in_skips_port_for_target(tmp_path, capsys) -> None:
     assert "removed-for-target" in gone_report["notes"]
 
 
+def _lock_overlay_fixture(tmp_path, *, with_lock_overlay: bool):
+    """Minimal tree with one `type port` overlay, optionally plus a
+    `type lock` one. Deliberately creates no lock root."""
+    freebsd = tmp_path / "freebsd"
+    delta = tmp_path / "delta"
+    (freebsd / "devel" / "a").mkdir(parents=True)
+    (freebsd / "devel" / "a" / "Makefile").write_text("VAR= old\n")
+    _init_freebsd_repo(freebsd)
+    (delta / "ports" / "devel" / "a").mkdir(parents=True)
+    (delta / "ports" / "devel" / "a" / "overlay.dops").write_text(
+        'target @main\nport devel/a\ntype port\nmk set VAR "new"\n'
+    )
+    if with_lock_overlay:
+        (delta / "ports" / "devel" / "lk").mkdir(parents=True)
+        (delta / "ports" / "devel" / "lk" / "overlay.dops").write_text(
+            "target @main\nport devel/lk\ntype lock\n"
+        )
+    return freebsd, delta
+
+
+def _semantic_errors(payload) -> list[str]:
+    stage = next(
+        s for s in payload["stages"] if s["name"] == "apply_semantic_ops"
+    )
+    return stage["errors"]
+
+
+def test_missing_lock_root_is_reported_once_naming_the_input(
+    tmp_path, capsys
+) -> None:
+    """Regression for poly-3ze.
+
+    `--lock-root` silently defaults to `<delta-root>/locked`, which
+    does not exist in DeltaPorts. The only symptom used to be one
+    "missing lock source" error per affected origin, which reads as
+    though those ports were individually broken rather than the run
+    being misconfigured. The cause must be stated once, naming the
+    path that was tried.
+    """
+    freebsd, delta = _lock_overlay_fixture(tmp_path, with_lock_overlay=True)
+
+    main(
+        [
+            "compose",
+            "--target", "@main",
+            "--output", str(tmp_path / "out"),
+            "--delta-root", str(delta),
+            "--freebsd-root", str(freebsd),
+            # --lock-root deliberately omitted: exercise the fallback.
+            "--oracle-profile", "off",
+            "--replace-output",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    errors = _semantic_errors(payload)
+
+    root_errors = [e for e in errors if "E_COMPOSE_LOCK_ROOT_MISSING" in e]
+    assert len(root_errors) == 1, f"expected exactly one, got {root_errors}"
+    # Names the path it actually tried, so the fallback is visible.
+    assert str(delta / "locked") in root_errors[0]
+    assert "--lock-root" in root_errors[0]
+
+    # The human summary must carry the path too. The error detail only
+    # reaches the JSON report, so without a hint an operator reading
+    # plain compose output sees a bare code in top_error_codes and
+    # still cannot tell which path was tried.
+    main(
+        [
+            "compose",
+            "--target", "@main",
+            "--output", str(tmp_path / "out2"),
+            "--delta-root", str(delta),
+            "--freebsd-root", str(freebsd),
+            "--oracle-profile", "off",
+            "--replace-output",
+        ]
+    )
+    human = capsys.readouterr().out
+    assert "E_COMPOSE_LOCK_ROOT_MISSING" in human
+    assert any(
+        line.startswith("hint:") and str(delta / "locked") in line
+        for line in human.splitlines()
+    ), human
+
+
+def test_missing_lock_root_is_silent_without_lock_overlays(
+    tmp_path, capsys
+) -> None:
+    """The lock tree is documented as needed only for `type lock`
+    overlays, so a tree without any must not be failed for lacking it.
+    """
+    freebsd, delta = _lock_overlay_fixture(tmp_path, with_lock_overlay=False)
+
+    main(
+        [
+            "compose",
+            "--target", "@main",
+            "--output", str(tmp_path / "out"),
+            "--delta-root", str(delta),
+            "--freebsd-root", str(freebsd),
+            "--oracle-profile", "off",
+            "--replace-output",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert not [
+        e for e in _semantic_errors(payload) if "E_COMPOSE_LOCK_ROOT_MISSING" in e
+    ]
+
+
 def test_compose_non_dry_run_handles_types_and_dops_suppresses_compat_fallback(
     tmp_path, capsys
 ) -> None:

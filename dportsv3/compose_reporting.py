@@ -100,6 +100,9 @@ def build_compose_report_overview(
     patch_failures: Counter[str] = Counter()
     mode_counts: Counter[str] = Counter()
     stale_origins: set[str] = set()
+    # Kept verbatim so the hint can name the path that was tried; a
+    # static hint would drop exactly the detail the operator needs.
+    lock_root_error: str | None = None
 
     for stage in stages:
         stage_name = str(stage.get("name", ""))
@@ -107,6 +110,8 @@ def build_compose_report_overview(
             text = str(item)
             code = _diagnostic_code(text)
             error_codes[code] += 1
+            if code == "E_COMPOSE_LOCK_ROOT_MISSING" and lock_root_error is None:
+                lock_root_error = text
             origin = _diagnostic_origin(text)
             if origin is not None:
                 error_origins[origin] += 1
@@ -186,6 +191,11 @@ def build_compose_report_overview(
                 special_any_bootstrapped = True
 
     hints: list[str] = []
+    if lock_root_error is not None:
+        # A misconfigured root is the cause of every downstream
+        # "missing lock source", so lead with it.
+        _, _, detail = lock_root_error.partition(": ")
+        hints.append(detail or lock_root_error)
     if error_codes.get("E_COMPOSE_STALE_OVERLAY", 0) > 0:
         hints.append("rerun with --prune-stale-overlays to auto-remove stale overlays")
     if marked_removed > 0:

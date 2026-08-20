@@ -7,6 +7,13 @@ The ports data this tool operates on lives in a **separate** repository,
 DeltaPorts. Point the tool at a checkout with `--delta-root`, or set
 `$DPORTS_DELTA_ROOT`. Never vendor ports data into this repo.
 
+`compose` needs three input trees, not one: `--delta-root` (DeltaPorts),
+`--freebsd-root` (a freebsd-ports checkout already on the branch matching
+`--target`), and `--lock-root` (the DPorts checkout, for `type lock`
+overlays). Only `--delta-root` has an environment variable. Omitting
+`--lock-root` falls back to `<delta-root>/locked`, which does not exist —
+see `docs/dportsv3-user-guide.md` for the full invocation.
+
 ## Build & Test
 
 ```sh

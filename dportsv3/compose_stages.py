@@ -659,6 +659,28 @@ def semantic_stage(
     apply_dsl_fn: Callable[..., Any] = apply_dsl,
 ) -> ComposeStageResult:
     stage = ComposeStageResult(name="apply_semantic_ops", started_at=datetime.now())
+
+    # A missing lock root is a configuration fault, but it only ever
+    # surfaced as one "missing lock source" error per affected origin,
+    # which reads as though those ports were individually broken. Say
+    # it once, naming the input, so the cause is not buried under its
+    # own symptoms. Gated on an overlay actually needing the tree:
+    # --lock-root is documented as required only for `type lock`
+    # overlays, so a tree without any must keep composing.
+    needs_lock_root = any(
+        ctx.plan_type == "lock"
+        and ctx.mode == "dops"
+        and not (is_stale_port_context(ctx) or ctx.removed_for_target)
+        for ctx in contexts
+    )
+    if needs_lock_root and not lock_root.is_dir():
+        stage.add_error(
+            "E_COMPOSE_LOCK_ROOT_MISSING",
+            f"lock root does not exist: {lock_root} — "
+            f"pass --lock-root pointing at the DPorts checkout "
+            f"(type lock overlays materialize from it)",
+        )
+
     for ctx in contexts:
         report = reports[ctx.origin]
         if is_stale_port_context(ctx) or ctx.removed_for_target:
