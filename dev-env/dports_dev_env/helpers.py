@@ -71,8 +71,11 @@ for origin in "$@"; do
 done
 """
     if name == "showenv":
+        # The two source roots do not start with DPORTS_, and since the split
+        # there are two of them — which one is which is the first thing you
+        # want from this helper.
         return """#!/bin/sh
-env | grep '^DPORTS_' | sort
+env | grep -E '^(DPORTS_|DELTAPORTS_ROOT|POLYTROPOS_ROOT|FREEBSD_PORTS_ROOT)' | sort
 """
     if name in ("dbuild", "dtest"):
         # dbuild runs `dsynth build` (build + stage + package, the

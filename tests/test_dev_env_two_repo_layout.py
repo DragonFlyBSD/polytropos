@@ -341,6 +341,16 @@ def test_shell_env_names_both_trees():
     assert env["POLYTROPOS_ROOT"] == TOOL_DIR
 
 
+def test_showenv_lists_both_source_roots():
+    """It grepped ^DPORTS_ only, so neither root ever appeared."""
+    from dports_dev_env.helpers import helper_body
+
+    body = helper_body("showenv")
+
+    assert "DELTAPORTS_ROOT" in body
+    assert "POLYTROPOS_ROOT" in body
+
+
 def test_env_repos_fast_forwards_the_tool_checkout():
     from dports_dev_env.layout import PORTS_RELATIVE, TOOL_RELATIVE
     from dports_dev_env.update import ENV_REPOS
