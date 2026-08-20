@@ -22,7 +22,7 @@
 # ARTIFACT_STORE_URL=http://127.0.0.1:8788
 
 # Override only if the artifact-store client lives elsewhere.
-# ARTIFACT_STORE_CLIENT=/build/synth/DeltaPorts/scripts/artifact-store-client
+# ARTIFACT_STORE_CLIENT=/build/synth/polytropos/bin/artifact-store-client
 
 # -----------------------------------------------------------------------------
 # Tracker side (optional)
@@ -33,7 +33,9 @@
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080
 
 # Absolute path to the dportsv3 wrapper (used to call tracker CLI commands).
-DPORTSV3_BIN=/build/synth/DeltaPorts/dportsv3
+# Since the tool was split out of the ports repository this is a checkout of
+# its own, no longer a path inside the DeltaPorts tree.
+DPORTSV3_BIN=/build/synth/polytropos/bin/dportsv3
 
 # Build target. Defaults to @${PROFILE} if unset (one profile per target).
 # DPORTSV3_TRACKER_TARGET=@2026Q2

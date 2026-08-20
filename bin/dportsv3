@@ -26,6 +26,16 @@ if [ -z "${DPORTSV3_CONFIG_DIR:-}" ] && [ -d "$SELF_DIR/config" ]; then
     export DPORTSV3_CONFIG_DIR
 fi
 
+# Same idea for the dev-env manager: a chroot now holds two checkouts, the
+# ports tree and this tool, and the tool checkout cannot be inferred from
+# inside a package without the parents[N] walk the split exists to remove.
+# This wrapper knows where it lives, so it says so; `dev-env create` falls
+# back to this variable when no --tool-root is given.
+if [ -z "${DPORTS_DEV_TOOL_ROOT:-}" ]; then
+    DPORTS_DEV_TOOL_ROOT="$SELF_DIR"
+    export DPORTS_DEV_TOOL_ROOT
+fi
+
 # Tell the agent how to re-invoke this wrapper. It shells out to
 # `dportsv3 dev-env exec ...`, and this script is the only entry point that
 # routes `dev-env` — the console script of the same name does not implement

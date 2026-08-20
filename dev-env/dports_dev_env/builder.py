@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,17 @@ from .config import DevEnvConfig, ensure_cache_dirs
 from .dsynth import write_dsynth_config
 from .errors import CommandError, DevEnvError, UsageError
 from .helpers import write_shell_rc
+from .layout import (
+    FREEBSD_DIR,
+    FREEBSD_RELATIVE,
+    LOCK_DIR,
+    LOCK_RELATIVE,
+    PORTS_DIR,
+    PORTS_RELATIVE,
+    TOOL_BIN,
+    TOOL_RELATIVE,
+    TOOL_VENV_RELATIVE,
+)
 from .locks import CacheLock
 from .log import info, phase, step_timer, warn
 from .names import default_env_name, target_to_branch
@@ -30,6 +42,7 @@ class CreateOptions:
     target: str
     origin: str | None
     delta_root: Path
+    tool_root: Path
     backend: str
     freebsd_branch: str | None
     dports_branch: str
@@ -98,7 +111,7 @@ class EnvironmentBuilder:
 
         phase("[3/7] Refreshing cached repo mirrors")
         with step_timer("refresh cached repo mirrors"):
-            mirrors = RepoCache(self.config).refresh_all(self.options.delta_root)
+            mirrors = RepoCache(self.config).refresh_all(self.options.delta_root, self.options.tool_root)
 
         phase("[4/7] Mounting throwaway chroot root from provisioned base")
         with step_timer("create throwaway chroot root"):
@@ -108,12 +121,15 @@ class EnvironmentBuilder:
         phase("[5/7] Seeding env-local source trees and writing runtime config")
         with step_timer("seed env-local source trees and runtime config"):
             repos = RepoCache(self.config)
-            repos.clone_branch("DeltaPorts", mirrors.deltaports, state.repos.deltaports_branch, self.root_dir / "work/DeltaPorts")
-            generator_venv = self.root_dir / "work/DeltaPorts/scripts/generator/.venv"
+            repos.clone_branch("DeltaPorts", mirrors.deltaports, state.repos.deltaports_branch, self.root_dir / PORTS_RELATIVE)
+            repos.clone_branch("polytropos", mirrors.tool, state.repos.tool_branch, self.root_dir / TOOL_RELATIVE)
+            # A mirror clone can carry a .venv if one was committed by accident;
+            # the venv cache below owns that directory, so start from nothing.
+            generator_venv = self.root_dir / TOOL_VENV_RELATIVE
             if generator_venv.exists():
                 shutil.rmtree(generator_venv)
-            repos.clone_branch("freebsd-ports", mirrors.freebsd_ports, state.repos.freebsd_branch, self.root_dir / "work/freebsd-ports")
-            repos.export_branch("DPorts", mirrors.dports, state.repos.dports_branch, self.root_dir / "work/DPorts")
+            repos.clone_branch("freebsd-ports", mirrors.freebsd_ports, state.repos.freebsd_branch, self.root_dir / FREEBSD_RELATIVE)
+            repos.export_branch("DPorts", mirrors.dports, state.repos.dports_branch, self.root_dir / LOCK_RELATIVE)
             (self.root_dir / "work/artifacts/compose").mkdir(parents=True, exist_ok=True)
             write_dsynth_config(self.config, state)
             write_shell_rc(state)
@@ -152,17 +168,58 @@ class EnvironmentBuilder:
             raise UsageError(f"unsupported backend: {self.options.backend}")
         if self.options.oracle_profile not in {"off", "local", "ci"}:
             raise UsageError("--oracle-profile must be one of: off, local, ci")
-        if not self.options.delta_root.is_dir() or not (self.options.delta_root / "dportsv3").is_file():
-            raise UsageError(f"Delta root does not look like this repo: {self.options.delta_root}")
-        self.run_git(["git", "-C", str(self.options.delta_root), "rev-parse", "--git-dir"])
-        dirty = subprocess.run(["git", "-C", str(self.options.delta_root), "status", "--porcelain"], text=True, capture_output=True)
-        if dirty.stdout.strip():
-            warn("host DeltaPorts checkout has uncommitted changes; only committed state will appear in the env")
-            if not self.options.allow_dirty:
-                raise UsageError("refusing to create env from a dirty host checkout (pass --allow-dirty to proceed)")
+        self.validate_source_repo(
+            "DeltaPorts ports tree",
+            self.options.delta_root,
+            "--delta-root",
+            # Same marker `dportsv3 compose` itself checks for, so a root that
+            # passes here cannot fail later for looking like the wrong tree.
+            # Either directory counts: composing only special/ is supported.
+            lambda root: (root / "ports").is_dir() or (root / "special").is_dir(),
+            "it has neither a ports/ nor a special/ directory",
+        )
+        self.validate_source_repo(
+            "polytropos tool checkout",
+            self.options.tool_root,
+            "--tool-root",
+            # bin/dportsv3, not ./dportsv3 — at this repo's root that name is
+            # the Python package directory, so a plain is_file() on it fails
+            # and an exists() on it would pass for the wrong reason.
+            lambda root: (root / "bin" / "dportsv3").is_file() and (root / "pyproject.toml").is_file(),
+            "it has no bin/dportsv3 wrapper and pyproject.toml at its root",
+        )
         for command in ["tar", "git", "chroot", "mount_null", "mount_procfs"]:
             if shutil.which(command) is None:
                 raise UsageError(f"required command not found: {command}")
+
+    def validate_source_repo(
+        self,
+        label: str,
+        root: Path,
+        flag: str,
+        looks_right: Callable[[Path], bool],
+        complaint: str,
+    ) -> None:
+        """Check one host checkout is the tree it is supposed to be, and clean.
+
+        Both source trees get the same treatment because since the split both
+        of them decide what an env contains: the ports tree supplies the
+        overlay, the tool checkout supplies the code that composes it. The
+        marker test used to be "does --delta-root contain a dportsv3 wrapper",
+        which passed only while the tool lived inside the ports checkout and
+        rejected every real ports tree once it moved out.
+        """
+        if not root.is_dir() or not looks_right(root):
+            raise UsageError(f"{flag}={root} does not look like the {label}: {complaint}")
+        self.run_git(["git", "-C", str(root), "rev-parse", "--git-dir"])
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain"], text=True, capture_output=True)
+        if dirty.stdout.strip():
+            warn(f"host {label} has uncommitted changes; only committed state will appear in the env")
+            if not self.options.allow_dirty:
+                raise UsageError(
+                    f"refusing to create env from a dirty {label} at {root} "
+                    f"(pass --allow-dirty to proceed)"
+                )
 
     def initial_state(self, provisioned_base_id: str) -> EnvironmentState:
         created_at = now_utc()
@@ -183,8 +240,12 @@ class EnvironmentBuilder:
                 deltaports_branch=self.config.deltaports_branch,
                 freebsd_branch=freebsd_branch,
                 dports_branch=self.options.dports_branch,
+                tool_branch=self.current_branch(self.options.tool_root),
             ),
-            source=SourceState(delta_root=str(self.options.delta_root)),
+            source=SourceState(
+                delta_root=str(self.options.delta_root),
+                tool_root=str(self.options.tool_root),
+            ),
             runtime=RuntimeState(host_distdir=str(self.config.host_distdir), oracle_profile=self.options.oracle_profile),
             initial_compose=InitialComposeState("not-run", created_at),
         )
@@ -192,16 +253,16 @@ class EnvironmentBuilder:
     def compose_inside_env(self, state: EnvironmentState) -> None:
         result = ChrootRunner(self.root_dir).run(
             [
-                "/work/DeltaPorts/dportsv3",
+                TOOL_BIN,
                 "compose",
                 "--target",
                 state.target,
                 "--delta-root",
-                "/work/DeltaPorts",
+                PORTS_DIR,
                 "--freebsd-root",
-                "/work/freebsd-ports",
+                FREEBSD_DIR,
                 "--lock-root",
-                "/work/DPorts",
+                LOCK_DIR,
                 "--output",
                 f"/work/artifacts/compose/{state.target}",
                 "--replace-output",
@@ -211,6 +272,27 @@ class EnvironmentBuilder:
         )
         if result.returncode != 0:
             raise CommandError("initial compose failed")
+
+    def current_branch(self, root: Path) -> str:
+        """The branch an env should track for a host checkout.
+
+        The ports and FreeBSD branches are configured, because those trees are
+        shared and their branch is part of what a target means. The tool branch
+        is not: you build an env to exercise the tool work in front of you, so
+        it follows whatever the host checkout has checked out.
+        """
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+            capture_output=True,
+        )
+        branch = result.stdout.strip()
+        if result.returncode != 0 or not branch or branch == "HEAD":
+            raise UsageError(
+                f"cannot determine the checked-out branch of {root}"
+                + (" (detached HEAD)" if branch == "HEAD" else "")
+            )
+        return branch
 
     def run_git(self, command: list[str]) -> None:
         result = subprocess.run(command, text=True, capture_output=True)
@@ -246,5 +328,32 @@ def default_delta_root() -> Path:
     if not root.is_dir():
         raise UsageError(
             f"$DPORTS_DEV_DELTA_ROOT points at {root}, which is not a directory"
+        )
+    return root
+
+
+def default_tool_root() -> Path:
+    """This tool's own checkout, when no ``--tool-root`` was given.
+
+    Comes from ``$DPORTS_DEV_TOOL_ROOT``, which ``bin/dportsv3`` exports for
+    the checkout it lives in. The wrapper is the one component entitled to
+    know the repository layout, so routing it through the environment is what
+    keeps a ``parents[N]`` walk out of this package while still letting a
+    plain ``dportsv3 dev-env create`` work with no arguments.
+
+    An installed copy has no repository above it to find, so an operator
+    running the console script directly has to name the checkout — hence a
+    raise rather than a guess.
+    """
+    raw = os.environ.get("DPORTS_DEV_TOOL_ROOT", "").strip()
+    if not raw:
+        raise UsageError(
+            "no polytropos checkout specified: pass --tool-root, or set "
+            "$DPORTS_DEV_TOOL_ROOT. Invoking via bin/dportsv3 sets it for you."
+        )
+    root = Path(raw).expanduser()
+    if not root.is_dir():
+        raise UsageError(
+            f"$DPORTS_DEV_TOOL_ROOT points at {root}, which is not a directory"
         )
     return root

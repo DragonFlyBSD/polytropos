@@ -5,10 +5,11 @@ import sys
 import time
 from pathlib import Path
 
-from .builder import CreateOptions, EnvironmentBuilder, default_delta_root
+from .builder import CreateOptions, EnvironmentBuilder, default_delta_root, default_tool_root
 from .config import load_config, require_root, validate_cache_root
 from .errors import DevEnvError, UsageError
 from .fs import safe_remove_tree
+from .layout import FREEBSD_RELATIVE, PORTS_DIR, PORTS_RELATIVE, TOOL_RELATIVE
 from .log import error, info, run_log_context, to_user, warn
 from .mounts import mounts_under, ordered_mounts_under, unmount_under
 from .session import EnvironmentSession
@@ -24,7 +25,16 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--name", help="Environment name (default: derived from target/origin)")
     create.add_argument("--target", required=True, help="Compose target, e.g. @2026Q2")
     create.add_argument("--origin", help="Optional selected origin, e.g. editors/vim")
-    create.add_argument("--delta-root", help="Host DeltaPorts checkout used to refresh the cache mirror (default: this repo)")
+    create.add_argument(
+        "--delta-root",
+        help="Host DeltaPorts ports checkout to mirror into the env "
+             "(default: $DPORTS_DEV_DELTA_ROOT)",
+    )
+    create.add_argument(
+        "--tool-root",
+        help="Host polytropos checkout to mirror into the env "
+             "(default: $DPORTS_DEV_TOOL_ROOT, which bin/dportsv3 sets)",
+    )
     create.add_argument("--backend", default="chroot", help="Backend name (default: chroot)")
     create.add_argument("--freebsd-branch", help="Override FreeBSD branch (default: derived from target)")
     create.add_argument("--dports-branch", help="Override DPorts branch (default: from config)")
@@ -32,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--allow-dirty",
         action="store_true",
-        help="Proceed even if the host DeltaPorts checkout has uncommitted edits (only committed state propagates)",
+        help="Proceed even if a host checkout has uncommitted edits (only committed state propagates)",
     )
     create.add_argument(
         "--no-initial-compose",
@@ -77,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     exec_ = subparsers.add_parser("exec", help="Run a command inside an environment non-interactively")
-    exec_.add_argument("--cwd", default="/work/DeltaPorts", help="Working directory inside the chroot")
+    exec_.add_argument("--cwd", default=PORTS_DIR, help="Working directory inside the chroot")
     exec_.add_argument("--quiet", action="store_true", help="Suppress INFO mount-prep output")
     exec_.add_argument("name", help="Environment name")
     exec_.add_argument("argv", nargs=argparse.REMAINDER, help="-- CMD [ARGS...] to run inside the env")
@@ -230,8 +240,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         "oracle_profile": state.oracle_profile,
         "root_mounted": root_mounted,
         "env_dir": str(env_dir),
-        "deltaports": _git_info("work/DeltaPorts"),
-        "freebsd_ports": _git_info("work/freebsd-ports"),
+        "deltaports": _git_info(PORTS_RELATIVE),
+        "polytropos": _git_info(TOOL_RELATIVE),
+        "freebsd_ports": _git_info(FREEBSD_RELATIVE),
     }))
     return 0
 
@@ -324,7 +335,7 @@ def apply_and_build(
     # isn't. Placed BEFORE the cleanup try/finally so a refusal never
     # resets the operator's own uncommitted state.
     if diff_path is not None:
-        workspace = writable_root / "work" / "DeltaPorts"
+        workspace = writable_root / PORTS_RELATIVE
         dirty = _port_dirty_paths(workspace, origin)
         if dirty:
             tail = (f"diff replay refused: ports/{origin}/ has "
@@ -410,7 +421,7 @@ def apply_and_build(
         #       files (the formerly-staged new files from 2a).
         cleanup = runner.run(
             ["/bin/sh", "-c",
-             f"cd /work/DeltaPorts && "
+             f"cd {PORTS_DIR} && "
              f"git reset -q -- {shlex.quote(rel)} && "
              f"{{ git checkout -q -- {shlex.quote(rel)} 2>/dev/null "
              f"|| true; }} && "
@@ -437,7 +448,7 @@ def apply_and_build(
         # a cleanup failure.
         reapply_cleanup = runner.run(
             ["/bin/sh", "-c",
-             f"cd /work/DeltaPorts && reapply {shlex.quote(origin)}",
+             f"cd {PORTS_DIR} && reapply {shlex.quote(origin)}",
              "_"],
             env=env, capture_output=True,
         )
@@ -472,7 +483,7 @@ def apply_and_build(
             try:
                 apply_proc = runner.run(
                     ["/bin/sh", "-c",
-                     f"cd /work/DeltaPorts && git apply --3way "
+                     f"cd {PORTS_DIR} && git apply --3way "
                      f"{shlex.quote(diff_chroot_path)}", "_"],
                     env=env, capture_output=True,
                 )
@@ -491,7 +502,7 @@ def apply_and_build(
         # 2. reapply ORIGIN — re-materialize DPorts from the (possibly-
         #    edited) DeltaPorts source.
         reapply_proc = runner.run(
-            ["/bin/sh", "-c", f"cd /work/DeltaPorts && reapply "
+            ["/bin/sh", "-c", f"cd {PORTS_DIR} && reapply "
                               f"{shlex.quote(origin)}", "_"],
             env=env, capture_output=True,
         )
@@ -528,7 +539,7 @@ def apply_and_build(
             ["/bin/sh", "-c",
              "flag=/work/.dports-agent-hooks-disabled; "
              "trap 'rm -f \"$flag\"' EXIT; : > \"$flag\"; "
-             f"cd /work/DeltaPorts && dtest {shlex.quote(origin)} "
+             f"cd {PORTS_DIR} && dtest {shlex.quote(origin)} "
              f"> {shlex.quote(log_chroot)} 2>&1", "_"],
             env=env, capture_output=False,
         )
@@ -610,7 +621,7 @@ def cmd_reset_port(args: argparse.Namespace) -> int:
     rel = f"ports/{args.origin}"
     p = runner.run(
         ["/bin/sh", "-c",
-         f"cd /work/DeltaPorts && "
+         f"cd {PORTS_DIR} && "
          f"git checkout HEAD -- {_shlex.quote(rel)} && "
          f"git clean -fd -- {_shlex.quote(rel)}", "_"],
         env=env, capture_output=True,
@@ -783,6 +794,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         target=args.target,
         origin=args.origin,
         delta_root=Path(args.delta_root) if args.delta_root else default_delta_root(),
+        tool_root=Path(args.tool_root) if args.tool_root else default_tool_root(),
         backend=args.backend,
         freebsd_branch=args.freebsd_branch,
         dports_branch=args.dports_branch or config.dports_branch,

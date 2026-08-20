@@ -15,17 +15,22 @@ class RepoMirrors:
     deltaports: Path
     freebsd_ports: Path
     dports: Path
+    #: The tool's own repository. Mirrored from the host checkout exactly as
+    #: ``deltaports`` is, so an env can be built from local, uncommitted-free
+    #: tool work rather than only from what has been pushed.
+    tool: Path
 
 
 class RepoCache:
     def __init__(self, config: DevEnvConfig) -> None:
         self.config = config
 
-    def refresh_all(self, delta_root: Path) -> RepoMirrors:
+    def refresh_all(self, delta_root: Path, tool_root: Path) -> RepoMirrors:
         deltaports = self.refresh_local_mirror("deltaports", delta_root)
+        tool = self.refresh_local_mirror("polytropos", tool_root)
         freebsd_ports = self.refresh_remote_mirror("freebsd-ports", self.config.freebsd_ports_url)
         dports = self.refresh_remote_mirror("dports", self.config.dports_url)
-        return RepoMirrors(deltaports=deltaports, freebsd_ports=freebsd_ports, dports=dports)
+        return RepoMirrors(deltaports=deltaports, freebsd_ports=freebsd_ports, dports=dports, tool=tool)
 
     def refresh_remote_mirror(self, name: str, url: str) -> Path:
         mirror = self.config.repos_dir / f"{name}.git"

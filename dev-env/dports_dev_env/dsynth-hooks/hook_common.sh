@@ -63,7 +63,7 @@ fi
 : "${DIR_DISTFILES:=}"
 
 : "${ARTIFACT_STORE_URL:=http://127.0.0.1:8788}"
-: "${ARTIFACT_STORE_CLIENT:=/build/synth/DeltaPorts/scripts/artifact-store-client}"
+: "${ARTIFACT_STORE_CLIENT:=/build/synth/polytropos/bin/artifact-store-client}"
 
 hook_config_dir() {
 	# Hooks live in ConfigBase (/etc/dsynth or /usr/local/etc/dsynth).

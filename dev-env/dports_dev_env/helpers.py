@@ -4,6 +4,7 @@ import hashlib
 import shlex
 
 from .dsynth import dsynth_profile_name
+from .layout import FREEBSD_DIR, LOCK_DIR, PORTS_DIR, TOOL_BIN, TOOL_DIR
 from .state import EnvironmentState
 
 
@@ -18,16 +19,16 @@ HELPER_BIN_DIR = "/root/.dports-dev/bin"
 
 def helper_body(name: str) -> str:
     if name == "regen":
-        return """#!/bin/sh
+        return f"""#!/bin/sh
 set -eu
-: "${DPORTS_TARGET:?regen: DPORTS_TARGET is not set; run from a dports-dev shell}"
-: "${DPORTS_COMPOSE_ROOT:?regen: DPORTS_COMPOSE_ROOT is not set}"
-: "${DPORTS_LOCK_ROOT:?regen: DPORTS_LOCK_ROOT is not set}"
-: "${DPORTS_ORACLE_PROFILE:=off}"
-if [ -n "${DPORTS_ORIGIN:-}" ]; then
-    exec /work/DeltaPorts/dportsv3 compose --target "$DPORTS_TARGET" --delta-root /work/DeltaPorts --freebsd-root /work/freebsd-ports --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --replace-output --oracle-profile "$DPORTS_ORACLE_PROFILE" --origin "$DPORTS_ORIGIN"
+: "${{DPORTS_TARGET:?regen: DPORTS_TARGET is not set; run from a dports-dev shell}}"
+: "${{DPORTS_COMPOSE_ROOT:?regen: DPORTS_COMPOSE_ROOT is not set}}"
+: "${{DPORTS_LOCK_ROOT:?regen: DPORTS_LOCK_ROOT is not set}}"
+: "${{DPORTS_ORACLE_PROFILE:=off}}"
+if [ -n "${{DPORTS_ORIGIN:-}}" ]; then
+    exec {TOOL_BIN} compose --target "$DPORTS_TARGET" --delta-root {PORTS_DIR} --freebsd-root {FREEBSD_DIR} --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --replace-output --oracle-profile "$DPORTS_ORACLE_PROFILE" --origin "$DPORTS_ORIGIN"
 fi
-exec /work/DeltaPorts/dportsv3 compose --target "$DPORTS_TARGET" --delta-root /work/DeltaPorts --freebsd-root /work/freebsd-ports --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --replace-output --oracle-profile "$DPORTS_ORACLE_PROFILE"
+exec {TOOL_BIN} compose --target "$DPORTS_TARGET" --delta-root {PORTS_DIR} --freebsd-root {FREEBSD_DIR} --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --replace-output --oracle-profile "$DPORTS_ORACLE_PROFILE"
 """
     if name == "reapply":
         return f"""#!/bin/sh
@@ -66,7 +67,7 @@ if [ "$#" -eq 0 ]; then
     fi
 fi
 for origin in "$@"; do
-    /work/DeltaPorts/dportsv3 compose $json_flag --target "$DPORTS_TARGET" --origin "$origin" --delta-root /work/DeltaPorts --freebsd-root /work/freebsd-ports --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --oracle-profile "$DPORTS_ORACLE_PROFILE" || exit $?
+    {TOOL_BIN} compose $json_flag --target "$DPORTS_TARGET" --origin "$origin" --delta-root {PORTS_DIR} --freebsd-root {FREEBSD_DIR} --lock-root "$DPORTS_LOCK_ROOT" --output "$DPORTS_COMPOSE_ROOT" --oracle-profile "$DPORTS_ORACLE_PROFILE" || exit $?
 done
 """
     if name == "showenv":
@@ -135,21 +136,27 @@ def build_env_dict(state: EnvironmentState) -> dict[str, str]:
     profile_name = dsynth_profile_name(state)
     helper_bin = HELPER_BIN_DIR
     return {
-        "DELTAPORTS_ROOT": "/work/DeltaPorts",
-        "FREEBSD_PORTS_ROOT": "/work/freebsd-ports",
+        # The ports tree. Unchanged by the repository split, and it stays
+        # that way: it is the agent's only legal edit surface, written into
+        # prompt text and enforced by the worker guardrails.
+        "DELTAPORTS_ROOT": PORTS_DIR,
+        # The tool checkout. New since the split — before it, the tool was a
+        # subdirectory of DELTAPORTS_ROOT and needed no name of its own.
+        "POLYTROPOS_ROOT": TOOL_DIR,
+        "FREEBSD_PORTS_ROOT": FREEBSD_DIR,
         "DPORTS_DEV_ENV": state.name,
         "DPORTS_TARGET": state.target,
         "DPORTS_ORIGIN": state.origin,
         "DPORTS_COMPOSE_ROOT": f"/work/artifacts/compose/{state.target}",
-        "DPORTS_LOCK_ROOT": "/work/DPorts",
+        "DPORTS_LOCK_ROOT": LOCK_DIR,
         "DPORTS_DSYNTH_ROOT": "/work/dsynth",
         "DPORTS_DSYNTH_PROFILE": profile_name,
         "DPORTS_TOUCHED_ORIGINS_FILE": str(TOUCHED_ORIGINS_PATH),
         "DPORTS_HELPER_BIN": helper_bin,
         "DPORTS_ORACLE_PROFILE": state.oracle_profile,
         "DISTDIR": "/usr/distfiles",
-        "DPORTS_DOC_USER_GUIDE": "https://github.com/DragonFlyBSD/DeltaPorts/blob/master/docs/dportsv3-user-guide.md",
-        "DPORTS_DOC_DEV_ENV": "https://github.com/DragonFlyBSD/DeltaPorts/blob/master/docs/dev-chroot-environment.md",
+        "DPORTS_DOC_USER_GUIDE": "https://github.com/DragonFlyBSD/polytropos/blob/master/docs/dportsv3-user-guide.md",
+        "DPORTS_DOC_DEV_ENV": "https://github.com/DragonFlyBSD/polytropos/blob/master/docs/dev-chroot-environment.md",
         "PATH": f"{helper_bin}:/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin",
     }
 
@@ -167,7 +174,7 @@ if [ -n "$DPORTS_ORIGIN" ] && [ -d "$DPORTS_COMPOSE_ROOT/$DPORTS_ORIGIN" ]; then
 elif [ -d "$DPORTS_COMPOSE_ROOT" ]; then
     cd "$DPORTS_COMPOSE_ROOT"
 else
-    cd /work/DeltaPorts
+    cd {PORTS_DIR}
 fi
 
 showwelcome() {{
@@ -180,6 +187,7 @@ showwelcome() {{
     fi
     printf '%s\n' 'Paths:'
     printf '  DeltaPorts: %s\n' "$DELTAPORTS_ROOT"
+    printf '  polytropos: %s\n' "$POLYTROPOS_ROOT"
     printf '  FreeBSD ports: %s\n' "$FREEBSD_PORTS_ROOT"
     printf '  DPorts: %s\n' "$DPORTS_LOCK_ROOT"
     printf '  Compose: %s\n' "$DPORTS_COMPOSE_ROOT"

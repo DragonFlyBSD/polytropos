@@ -18,9 +18,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .builder import default_delta_root
+from .builder import default_delta_root, default_tool_root
 from .config import DevEnvConfig
 from .errors import CommandError, UsageError
+from .layout import FREEBSD_RELATIVE, PORTS_RELATIVE, TOOL_RELATIVE
 from .log import info, step_timer
 from .repos import RepoCache
 from .state import EnvironmentState
@@ -31,8 +32,9 @@ from .store import EnvironmentStore
 # writable-relative checkout path). DPorts is deliberately omitted —
 # it's compose-generated, not a git checkout.
 ENV_REPOS: list[tuple[str, str]] = [
-    ("DeltaPorts", "work/DeltaPorts"),
-    ("freebsd-ports", "work/freebsd-ports"),
+    ("DeltaPorts", PORTS_RELATIVE),
+    ("polytropos", TOOL_RELATIVE),
+    ("freebsd-ports", FREEBSD_RELATIVE),
 ]
 
 
@@ -77,11 +79,19 @@ def update_env(
     )
     if not delta_root.is_dir():
         raise UsageError(f"delta_root not found: {delta_root}")
+    # An env records both host checkouts it was built from, and both are
+    # mirrored from a local working tree, so both have to be re-read here or
+    # the fast-forward below pulls from a stale mirror.
+    tool_root = (
+        Path(state.source.tool_root) if state.source.tool_root else default_tool_root()
+    )
+    if not tool_root.is_dir():
+        raise UsageError(f"tool_root not found: {tool_root}")
 
     # 1. Refresh mirrors from the host's working trees.
-    info(f"[1/2] Refreshing repo mirrors from {delta_root}")
+    info(f"[1/2] Refreshing repo mirrors from {delta_root} and {tool_root}")
     with step_timer("refresh mirrors"):
-        RepoCache(config).refresh_all(delta_root)
+        RepoCache(config).refresh_all(delta_root, tool_root)
 
     # 2. Fast-forward each repo checkout in the env.
     writable = store.writable_dir(name)

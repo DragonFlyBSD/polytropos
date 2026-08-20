@@ -7,12 +7,10 @@ from pathlib import Path
 
 from .errors import CommandError, UsageError
 from .helpers import TOUCHED_ORIGINS_PATH
+from .layout import PORTS_RELATIVE
 from .log import info, step_timer
 from .repos import RepoCache
 from .store import EnvironmentStore
-
-
-GENERATOR_VENV_RELATIVE = Path("scripts/generator/.venv")
 
 
 def extract_touched_origins(changed_paths: list[str]) -> list[str]:
@@ -49,7 +47,7 @@ class DirtySyncer:
         EnvironmentSession(self.config, self.store).ensure_root_mounted(env_dir, state)
 
         host_repo = Path(state.source.delta_root)
-        env_repo = state.root_dir / "work/DeltaPorts"
+        env_repo = state.root_dir / PORTS_RELATIVE
         touched_file = state.root_dir / Path(TOUCHED_ORIGINS_PATH).relative_to("/")
 
         if not host_repo.is_dir() or not (host_repo / ".git").exists():
@@ -88,7 +86,12 @@ class DirtySyncer:
         self.git_run(env_repo, ["remote", "set-url", "origin", str(mirror)])
         self.git_run(env_repo, ["fetch", "--prune", "origin"])
         self.git_run(env_repo, ["reset", "--hard", host_head])
-        self.git_run(env_repo, ["clean", "-fd", "-e", str(GENERATOR_VENV_RELATIVE)])
+        # No exclusions: this cleans the ports checkout, and since the split
+        # the generator venv lives in the tool checkout instead. The old
+        # `-e scripts/generator/.venv` guarded a directory that no longer
+        # exists in this tree, and a schema-1 env that still had one cannot be
+        # loaded by this tool at all.
+        self.git_run(env_repo, ["clean", "-fd"])
 
     def apply_unstaged_patch(self, host_repo: Path, env_repo: Path) -> None:
         patch = subprocess.run(["git", "-C", str(host_repo), "diff", "--binary"], capture_output=True)

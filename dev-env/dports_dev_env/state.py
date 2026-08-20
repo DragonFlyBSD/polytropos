@@ -8,7 +8,11 @@ from typing import Literal
 from .errors import StateError
 
 
-STATE_SCHEMA = 1
+# 2: an env holds two checkouts, so RepoState gained ``tool_branch`` and
+# SourceState gained ``tool_root``. Schema 1 envs are not migrated — they were
+# built when the tool lived inside the ports checkout, a layout that cannot be
+# provisioned or run any more, so there is nothing a migration could produce.
+STATE_SCHEMA = 2
 EnvStatus = Literal["creating", "ready", "failed", "destroying"]
 ComposeStatus = Literal["not-run", "running", "ok", "failed", "skipped"]
 
@@ -18,11 +22,17 @@ class RepoState:
     deltaports_branch: str
     freebsd_branch: str
     dports_branch: str
+    tool_branch: str
 
 
 @dataclass(frozen=True)
 class SourceState:
+    #: Host ports checkout the env was built from.
     delta_root: str
+    #: Host tool checkout the env was built from. Separate repositories since
+    #: the split, so an env records both and neither can be inferred from the
+    #: other.
+    tool_root: str
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,13 @@ _VALID_COMPOSE_STATUSES = {"not-run", "running", "ok", "failed", "skipped"}
 def state_from_json(data: dict[str, object]) -> EnvironmentState:
     schema = data.get("schema")
     if schema != STATE_SCHEMA:
+        if schema == 1:
+            raise StateError(
+                "this environment was created before the tool was split out of the "
+                "ports repository (state schema 1). Its layout — the tool living "
+                "inside the ports checkout — can no longer be provisioned, so there "
+                "is nothing to migrate: destroy it and create it again."
+            )
         raise StateError(f"state schema {schema} incompatible with this tool (expected {STATE_SCHEMA})")
     repos = data.get("repos")
     source = data.get("source")
@@ -142,8 +159,12 @@ def state_from_json(data: dict[str, object]) -> EnvironmentState:
             deltaports_branch=str(repos.get("deltaports_branch", "")),
             freebsd_branch=str(repos.get("freebsd_branch", "")),
             dports_branch=str(repos.get("dports_branch", "")),
+            tool_branch=str(repos.get("tool_branch", "")),
         ),
-        source=SourceState(delta_root=str(source.get("delta_root", ""))),
+        source=SourceState(
+            delta_root=str(source.get("delta_root", "")),
+            tool_root=str(source.get("tool_root", "")),
+        ),
         runtime=RuntimeState(
             host_distdir=str(runtime.get("host_distdir", "")),
             oracle_profile=str(runtime.get("oracle_profile", "off")),
