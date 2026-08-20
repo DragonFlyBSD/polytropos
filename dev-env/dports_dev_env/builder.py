@@ -67,6 +67,8 @@ class EnvironmentBuilder:
         self.root_dir = store.root_dir(self.env_name)
         self.writable_dir = store.writable_dir(self.env_name)
         self.exit_code = 0
+        # Filled by validate(), which runs before anything is created.
+        self.tool_branch = ""
 
     def create(self) -> CreateResult:
         self.validate()
@@ -188,6 +190,10 @@ class EnvironmentBuilder:
             lambda root: (root / "bin" / "dportsv3").is_file() and (root / "pyproject.toml").is_file(),
             "it has no bin/dportsv3 wrapper and pyproject.toml at its root",
         )
+        # Resolved here, not in initial_state: that runs after env_dir has been
+        # created and outside the try that records a failed env, so a raise
+        # there leaves an orphan directory holding the name hostage.
+        self.tool_branch = self.current_branch(self.options.tool_root)
         for command in ["tar", "git", "chroot", "mount_null", "mount_procfs"]:
             if shutil.which(command) is None:
                 raise UsageError(f"required command not found: {command}")
@@ -240,7 +246,7 @@ class EnvironmentBuilder:
                 deltaports_branch=self.config.deltaports_branch,
                 freebsd_branch=freebsd_branch,
                 dports_branch=self.options.dports_branch,
-                tool_branch=self.current_branch(self.options.tool_root),
+                tool_branch=self.tool_branch,
             ),
             source=SourceState(
                 delta_root=str(self.options.delta_root),
