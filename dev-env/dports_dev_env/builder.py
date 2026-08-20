@@ -31,7 +31,7 @@ from .names import default_env_name, target_to_branch
 from .provision import BaseProvisioner
 from .repos import RepoCache
 from .runtime import mount_env_root, prepare_root_runtime
-from .state import EnvironmentState, FailureState, InitialComposeState, RepoState, RuntimeState, SourceState
+from .state import STATE_SCHEMA, EnvironmentState, FailureState, InitialComposeState, RepoState, RuntimeState, SourceState
 from .store import EnvironmentStore
 from .venv import GeneratorVenvCache
 
@@ -231,7 +231,7 @@ class EnvironmentBuilder:
         created_at = now_utc()
         freebsd_branch = self.options.freebsd_branch or target_to_branch(self.options.target)
         return EnvironmentState(
-            schema=1,
+            schema=STATE_SCHEMA,
             name=self.env_name,
             backend="chroot",
             target=self.options.target,

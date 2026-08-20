@@ -157,6 +157,21 @@ def test_tool_branch_follows_the_host_checkout(tmp_path, monkeypatch):
     assert builder.initial_state(provisioned_base_id="b").repos.tool_branch == "x5-work"
 
 
+def test_a_created_env_can_be_read_back(tmp_path, monkeypatch):
+    """initial_state() hardcoded schema=1, so every env was unreadable the
+    moment it was saved. create() never re-reads its own state, so it reported
+    success and the next command failed."""
+    ports = make_ports_tree(tmp_path / "DeltaPorts")
+    tool = make_tool_checkout(tmp_path / "polytropos")
+    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    stub_host_commands(monkeypatch)
+    builder.validate()
+
+    builder.store.save(builder.initial_state(provisioned_base_id="base1"))
+
+    assert builder.store.load("env1").source.tool_root == str(tool)
+
+
 def test_detached_tool_head_fails_before_the_env_dir_exists(tmp_path, monkeypatch):
     """Resolving the branch inside initial_state() would raise after
     env_dir.mkdir() and outside the try that records a failed env, leaving an
