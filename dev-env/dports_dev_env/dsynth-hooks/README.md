@@ -33,16 +33,18 @@ artifact-store work; tracker calls are silent no-ops.
 
 ```sh
 install -d /etc/dsynth
-install -m 755 scripts/dsynth-hooks/hook_* /etc/dsynth/
-install -m 755 scripts/dsynth-hooks/hook_common.sh /etc/dsynth/
-install -m 644 scripts/dsynth-hooks/dportsv3-hooks.conf.example \
+HOOKS=dev-env/dports_dev_env/dsynth-hooks
+install -m 755 $HOOKS/hook_* /etc/dsynth/
+install -m 755 $HOOKS/hook_common.sh /etc/dsynth/
+install -m 644 $HOOKS/dportsv3-hooks.conf.example \
     /etc/dsynth/dportsv3-hooks.conf
 ```
 
 Then edit `/etc/dsynth/dportsv3-hooks.conf` for at least:
 
 - `DPORTSV3_TRACKER_URL` (or leave commented to disable tracker integration)
-- `DPORTSV3_BIN` (absolute path to your `dportsv3` wrapper)
+- `DPORTSV3_BIN` (absolute path to your `dportsv3` wrapper, e.g.
+  `/build/synth/polytropos/bin/dportsv3`)
 
 Defaults you usually don't need to override:
 

@@ -9,7 +9,7 @@ Fast, deterministic, no LLM, no real dsynth, no real dev-env. Run as
 part of every change.
 
 ```
-scripts/generator/.venv/bin/python -m pytest scripts/generator/tests/ -q
+.venv/bin/python -m pytest tests/ -q
 ```
 
 Coverage:
@@ -22,9 +22,9 @@ Coverage:
 | Agentic HTML views | `test_tracker_agentic_views.py` |
 | Tracker progress UI adapter | `test_tracker_progress.py` |
 
-The venv at `scripts/generator/.venv` is created by the `dportsv3`
+The venv at `.venv` is created by the `dportsv3`
 wrapper on first run. To install pytest + mypy into it:
-`scripts/generator/.venv/bin/pip install -e 'scripts/generator[dev]'`.
+`.venv/bin/pip install -e '.[dev]'`.
 
 ## 2. Manual harness fixtures
 
@@ -35,9 +35,9 @@ landed on disk.
 
 | Fixture | What it exercises |
 |---|---|
-| `scripts/generator/dportsv3/agent/_manual_test_tool_loop.py` | LLM + tool dispatch loop against a real dev-env, one-shot inspection task |
-| `scripts/generator/dportsv3/agent/_manual_test_triage_tier.py` | Triage flow + tier dispatch on fabricated bundles (compile / plist / unknown) |
-| `scripts/generator/dportsv3/agent/_manual_test_patch_flow.py` | Full patch flow + attempt loop end-to-end against a real port |
+| `dportsv3/agent/_manual_test_tool_loop.py` | LLM + tool dispatch loop against a real dev-env, one-shot inspection task |
+| `dportsv3/agent/_manual_test_triage_tier.py` | Triage flow + tier dispatch on fabricated bundles (compile / plist / unknown) |
+| `dportsv3/agent/_manual_test_patch_flow.py` | Full patch flow + attempt loop end-to-end against a real port |
 
 Common env vars:
 
@@ -92,7 +92,7 @@ DP_HARNESS_TRIAGE_MODEL=... \
 DP_HARNESS_PATCH_MODEL=... \
 DP_HARNESS_TRIAGE_API_KEY=... \
 DP_HARNESS_PATCH_API_KEY=... \
-  ./dportsv3 agent-queue-runner --queue-root /build/synth/logs/evidence/queue &
+  bin/dportsv3 agent-queue-runner --queue-root /build/synth/logs/evidence/queue &
 
 # 4. Trigger a real build (the dsynth profile should source the hooks)
 dsynth -p 2026Q2 -S -y build devel/known-failing-port
@@ -122,7 +122,7 @@ works for shaking the agentic read endpoints (`/api/bundles`,
 
 | Symptom | Layer | Diagnosis |
 |---|---|---|
-| pytest can't import dportsv3 | venv | `pip install -e scripts/generator[dev]` into the venv, not the host Python |
+| pytest can't import dportsv3 | venv | `pip install -e .[dev]` into the venv, not the host Python |
 | Manual fixture hangs at the first LLM call | manual harness | API key, custom base URL, or model name routing — check the litellm error string |
 | Bundle reaches state.db but no job is enqueued | live e2e | Trust tier resolved to MANUAL, or the runner isn't subscribed to that target |
 | Patch loop stops with `budget-exhausted` | manual / live | Token budget too small for the failure class; bump the tier in `config/agentic-policy.json` |

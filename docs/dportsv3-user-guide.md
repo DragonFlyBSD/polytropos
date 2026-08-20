@@ -14,7 +14,8 @@ Use this document as the canonical reference for:
 
 ## What `dportsv3` Is
 
-`dportsv3` is the active Python generator under `scripts/generator`.
+`dportsv3` is the active Python generator. It lives in the polytropos
+repository, separate from the DeltaPorts ports data it reads.
 
 Main command families:
 
@@ -26,23 +27,25 @@ Main command families:
 
 ## Command Entrypoints
 
-Preferred from the DeltaPorts repo root:
+Preferred, from the polytropos repo root:
 
 ```bash
-./dportsv3 --help
+bin/dportsv3 --help
 ```
 
-- The wrapper bootstraps `scripts/generator/.venv` automatically on first run.
-- It also reinstalls the editable package when `scripts/generator/pyproject.toml`
-  changes.
+- The wrapper bootstraps `.venv` automatically on first run.
+- It also reinstalls the editable package when `pyproject.toml` changes.
+- It exports `$DPORTS_DEV_TOOL_ROOT` and `$DPORTSV3_CONFIG_DIR` for this
+  checkout, which is why the packages themselves never have to guess at the
+  repository layout.
 
 Direct entrypoint inside the generator venv:
 
 ```bash
-scripts/generator/.venv/bin/dportsv3 --help
+.venv/bin/dportsv3 --help
 ```
 
-Module fallback from `scripts/generator`:
+Module fallback from the repo root:
 
 ```bash
 python -m dportsv3 --help
@@ -138,10 +141,11 @@ git -C ../freebsd-ports fetch origin
 git -C ../freebsd-ports switch 2026Q1
 
 # 2) compose Q1
-./dportsv3 compose \
+bin/dportsv3 compose \
   --target @2026Q1 \
-  --delta-root . \
+  --delta-root ../DeltaPorts \
   --freebsd-root ../freebsd-ports \
+  --lock-root ../DPorts \
   --output artifacts/compose/@2026Q1 \
   --replace-output --json > artifacts/compose-2026Q1.json
 
@@ -149,10 +153,11 @@ git -C ../freebsd-ports switch 2026Q1
 git -C ../freebsd-ports switch 2026Q2
 
 # 4) compose Q2
-./dportsv3 compose \
+bin/dportsv3 compose \
   --target @2026Q2 \
-  --delta-root . \
+  --delta-root ../DeltaPorts \
   --freebsd-root ../freebsd-ports \
+  --lock-root ../DPorts \
   --output artifacts/compose/@2026Q2 \
   --replace-output --json > artifacts/compose-2026Q2.json
 ```
@@ -247,18 +252,19 @@ Examples:
 1) Build migration visibility artifacts (optional but recommended):
 
 ```bash
-./dportsv3 migrate inventory --root . --json > artifacts/inventory.json
-./dportsv3 migrate classify artifacts/inventory.json --json > artifacts/classified.json
-./dportsv3 migrate wave-plan artifacts/classified.json --target @2026Q1 --json > artifacts/wave-plan.json
+bin/dportsv3 migrate inventory --root ../DeltaPorts --json > artifacts/inventory.json
+bin/dportsv3 migrate classify artifacts/inventory.json --json > artifacts/classified.json
+bin/dportsv3 migrate wave-plan artifacts/classified.json --target @2026Q1 --json > artifacts/wave-plan.json
 ```
 
 2) Compose target output tree:
 
 ```bash
-./dportsv3 compose \
+bin/dportsv3 compose \
   --target @2026Q1 \
-  --delta-root . \
+  --delta-root ../DeltaPorts \
   --freebsd-root ../freebsd-ports \
+  --lock-root ../DPorts \
   --output artifacts/compose/@2026Q1 \
   --replace-output \
   --oracle-profile local \
@@ -268,7 +274,7 @@ Examples:
 3) Summarize compose report:
 
 ```bash
-./dportsv3 compose-report artifacts/compose-2026Q1.json
+bin/dportsv3 compose-report artifacts/compose-2026Q1.json
 ```
 
 4) Fix issues and rerun same command until clean.
@@ -560,8 +566,8 @@ Use this flow when transitioning legacy overlays to semantic DSL.
 ### Step 1: inventory and classify
 
 ```bash
-./dportsv3 migrate inventory --root . --json > artifacts/inventory.json
-./dportsv3 migrate classify artifacts/inventory.json --json > artifacts/classified.json
+bin/dportsv3 migrate inventory --root ../DeltaPorts --json > artifacts/inventory.json
+bin/dportsv3 migrate classify artifacts/inventory.json --json > artifacts/classified.json
 ```
 
 Buckets indicate migration path:
@@ -574,20 +580,20 @@ Buckets indicate migration path:
 ### Step 2: convert one port (dry-run first)
 
 ```bash
-./dportsv3 migrate convert artifacts/classified.json category/port --dry-run --json
+bin/dportsv3 migrate convert artifacts/classified.json category/port --dry-run --json
 ```
 
 Then write if acceptable:
 
 ```bash
-./dportsv3 migrate convert artifacts/classified.json category/port --json
+bin/dportsv3 migrate convert artifacts/classified.json category/port --json
 ```
 
 ### Step 3: validate generated DSL
 
 ```bash
-./dportsv3 dsl check ports/category/port/overlay.dops
-./dportsv3 dsl plan ports/category/port/overlay.dops --json
+bin/dportsv3 dsl check ../DeltaPorts/ports/category/port/overlay.dops
+bin/dportsv3 dsl plan ../DeltaPorts/ports/category/port/overlay.dops --json
 ```
 
 Note: current auto-conversion emits `target @main` in generated `overlay.dops`.
@@ -621,15 +627,15 @@ Validation sequence for multi-target overlays:
 
 ```bash
 # structure/semantic check
-./dportsv3 dsl check ports/category/port/overlay.dops
+bin/dportsv3 dsl check ../DeltaPorts/ports/category/port/overlay.dops
 
 # inspect expanded plan
-./dportsv3 dsl plan ports/category/port/overlay.dops --json
+bin/dportsv3 dsl plan ../DeltaPorts/ports/category/port/overlay.dops --json
 
 # preview for each active target
-./dportsv3 dsl apply ports/category/port/overlay.dops --port-root artifacts/compose/@main/category/port --target @main --dry-run --diff
-./dportsv3 dsl apply ports/category/port/overlay.dops --port-root artifacts/compose/@2026Q1/category/port --target @2026Q1 --dry-run --diff
-./dportsv3 dsl apply ports/category/port/overlay.dops --port-root artifacts/compose/@2026Q2/category/port --target @2026Q2 --dry-run --diff
+bin/dportsv3 dsl apply ../DeltaPorts/ports/category/port/overlay.dops --port-root artifacts/compose/@main/category/port --target @main --dry-run --diff
+bin/dportsv3 dsl apply ../DeltaPorts/ports/category/port/overlay.dops --port-root artifacts/compose/@2026Q1/category/port --target @2026Q1 --dry-run --diff
+bin/dportsv3 dsl apply ../DeltaPorts/ports/category/port/overlay.dops --port-root artifacts/compose/@2026Q2/category/port --target @2026Q2 --dry-run --diff
 ```
 
 ### Step 3c: conditional Makefile block authoring (`.if ... .endif`)
@@ -668,7 +674,7 @@ Current v1 scope:
 ### Step 4: preview apply on composed tree
 
 ```bash
-./dportsv3 dsl apply ports/category/port/overlay.dops \
+bin/dportsv3 dsl apply ../DeltaPorts/ports/category/port/overlay.dops \
   --port-root artifacts/compose/@2026Q1/category/port \
   --target @2026Q1 \
   --dry-run --diff --oracle-profile local

@@ -1,13 +1,16 @@
 # Dev Chroot Environment
 
-`./dportsv3 dev-env` creates a throwaway DragonFly chroot for port
+`bin/dportsv3 dev-env` creates a throwaway DragonFly chroot for port
 development while reusing cached inputs.
 
 Current scope:
 
 - backend: `chroot` only
 - rootfs source: latest `DragonFly-x86_64-*.world.tar.gz` from Avalon releases
-- DeltaPorts source: cached mirror plus env-local writable `master` checkout
+- DeltaPorts source: cached mirror plus env-local writable `master` checkout,
+  landing at `/work/DeltaPorts`
+- polytropos source: cached mirror of your own tool checkout plus an env-local
+  checkout at `/work/polytropos`, on whatever branch the host checkout is on
 - FreeBSD ports source: persistent mirror plus env-local git checkout for the
   target branch
 - DPorts source: persistent mirror, exported into the env and used as
@@ -23,11 +26,19 @@ Current scope:
 - host commands: `tar`, `git`, `chroot`, `mount_null`, `mount_procfs`
 - network access to Avalon, the FreeBSD ports git remote, and the DPorts git
   remote
+- both host checkouts named: the ports tree via `--delta-root` or
+  `$DPORTS_DEV_DELTA_ROOT`, and this tool via `--tool-root` or
+  `$DPORTS_DEV_TOOL_ROOT`. Invoking through `bin/dportsv3` sets the latter for
+  you, so in practice only the ports tree needs naming.
+
+Both are mirrored from your local working trees rather than from a remote, so
+an env exercises the tool work in front of you. Only committed state
+propagates; `create` refuses a dirty checkout unless you pass `--allow-dirty`.
 
 ## Create One Environment
 
 ```bash
-sudo ./dportsv3 dev-env create --target @2026Q2 --origin editors/vim --shell
+sudo bin/dportsv3 dev-env create --target @2026Q2 --origin editors/vim --shell
 ```
 
 This will:
@@ -35,10 +46,11 @@ This will:
 1. discover the latest DragonFly `*world*` asset on Avalon,
 2. cache the downloaded archive,
 3. build or reuse a provisioned base directly from the cached archive,
-4. refresh cached mirrors for DeltaPorts, FreeBSD ports, and DPorts,
+4. refresh cached mirrors for DeltaPorts, polytropos, FreeBSD ports, and
+   DPorts,
 5. mount the provisioned base read-only and add per-env writable overlays,
-6. clone env-local DeltaPorts and FreeBSD ports from cached mirrors and export
-   the DPorts tree into the env,
+6. clone env-local DeltaPorts, polytropos and FreeBSD ports from cached mirrors
+   and export the DPorts tree into the env,
 7. run `cd /usr && make pkg-bootstrap` when `pkg` is missing, then bootstrap a
    few development tools and the default runtime profile inside the chroot,
 8. generate `/etc/dsynth/dsynth.ini` and the env-specific dsynth make config,
@@ -53,17 +65,20 @@ If initial compose fails, the command returns non-zero but the environment remai
 ## Enter Later
 
 ```bash
-sudo ./dportsv3 dev-env shell 2026Q2-editors_vim
+sudo bin/dportsv3 dev-env shell 2026Q2-editors_vim
 ```
 
 ## Sync Dirty Host Edits
 
 ```bash
-sudo ./dportsv3 dev-env sync-dirty 2026Q2-editors_vim
+sudo bin/dportsv3 dev-env sync-dirty 2026Q2-editors_vim
 ```
 
 This refreshes `/work/DeltaPorts` inside the env from the original host checkout,
 then applies the host repo's current unstaged tracked changes and untracked files.
+
+It covers the ports tree only. Uncommitted edits to the tool itself do not
+reach a running env — recreate the env to pick those up.
 Touched origins under `ports/<category>/<port>/...` are recorded in:
 
 ```text
@@ -73,19 +88,19 @@ Touched origins under `ports/<category>/<port>/...` are recorded in:
 ## Destroy
 
 ```bash
-sudo ./dportsv3 dev-env destroy 2026Q2-editors_vim
+sudo bin/dportsv3 dev-env destroy 2026Q2-editors_vim
 ```
 
 `destroy` prompts for confirmation. Use `--yes` for batch or non-interactive runs:
 
 ```bash
-sudo ./dportsv3 dev-env destroy --yes 2026Q2-editors_vim
+sudo bin/dportsv3 dev-env destroy --yes 2026Q2-editors_vim
 ```
 
 ## List
 
 ```bash
-sudo ./dportsv3 dev-env list
+sudo bin/dportsv3 dev-env list
 ```
 
 `list` also shows partial or still-creating environments left by interrupted
@@ -94,7 +109,7 @@ creation so they can be destroyed explicitly.
 ## Cleanup Mounts
 
 ```bash
-sudo ./dportsv3 dev-env cleanup-mounts --yes
+sudo bin/dportsv3 dev-env cleanup-mounts --yes
 ```
 
 This previews stale dports-dev mounts under the cache root and requires `--yes`
@@ -109,6 +124,7 @@ By default the helper stores state under `~/.cache/dports-dev/`:
 - `bases/provisioned/`: reusable DragonFly roots with `pkg`, tools, Python, and
   optional helper packages already installed
 - `repos/deltaports.git/`: cached DeltaPorts mirror
+- `repos/polytropos.git/`: cached mirror of this tool's checkout
 - `repos/freebsd-ports.git/`: persistent git mirror
 - `repos/dports.git/`: persistent DPorts mirror
 - `venvs/generator/`: DragonFly-native cached generator virtualenvs
@@ -134,9 +150,12 @@ the manifest default/profile and recreate affected environments; the changed
 profile data naturally creates a distinct provisioned base.
 
 The generator virtualenv cache is keyed by provisioned base id, Python version,
-and `scripts/generator/pyproject.toml`. It is restored into
-fresh envs before the initial compose, avoiding repeated `pip install -e` work
-while still letting the editable install use the env-local DeltaPorts sources.
+and both `pyproject.toml` files in the tool checkout — the generator's and
+`dev-env/`'s. Both count because `bin/dportsv3` installs dev-env into that same
+venv; keying on the generator alone hands back a stale venv whenever dev-env's
+dependencies move. The venv lives at `/work/polytropos/.venv` and is restored
+into fresh envs before the initial compose, avoiding repeated `pip install -e`
+work while still letting the editable install use the env-local sources.
 
 Default shared distfiles mount:
 
@@ -145,6 +164,27 @@ Default shared distfiles mount:
 
 Override with `DPORTS_DEV_HOST_DISTDIR` or set it to an empty value to disable
 the mount.
+
+## Inside The Env
+
+Two source trees, and the difference between them matters:
+
+- `/work/DeltaPorts` — the ports tree. This is the edit surface: patches,
+  overlays and `ports/<category>/<port>/` live here, and it is the only prefix
+  the agentic repair loop is permitted to write to. The path is fixed. It is
+  written into the LLM prompt text and enforced by the worker guardrails, which
+  reject writes anywhere else, so it did not move when the tool was split out
+  into its own repository and will not move for the package rename either.
+- `/work/polytropos` — this tool. The wrapper is `/work/polytropos/bin/dportsv3`
+  and the generator venv sits at `/work/polytropos/.venv`. Before the split the
+  tool shipped as a subdirectory of the ports checkout and had no path of its
+  own.
+
+Alongside them: `/work/freebsd-ports`, `/work/DPorts` (the lock root),
+`/work/artifacts/compose/<target>` (composed output) and `/work/dsynth/`.
+
+`showenv` prints these as `DELTAPORTS_ROOT`, `POLYTROPOS_ROOT`,
+`FREEBSD_PORTS_ROOT` and `DPORTS_LOCK_ROOT`.
 
 ## In-Chroot Helpers
 

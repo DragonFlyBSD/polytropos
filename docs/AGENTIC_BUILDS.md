@@ -44,7 +44,7 @@ dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
 - **One serve process** for the UI/read surface: FastAPI
   `dportsv3 tracker serve` at `:8080` by default. Builds, agentic
   bundles/jobs/runner, and HTML views are all routed through it.
-- **One hook set**: `scripts/dsynth-hooks/` writes the failure bundle
+- **One hook set**: `dev-env/dports_dev_env/dsynth-hooks/` writes the failure bundle
   to artifact-store and the run-state to the tracker.
 - **One per-port workspace primitive**: `dportsv3 dev-env` (chroot +
   writable copy-on-write overlay). The patch agent edits files in the
@@ -151,4 +151,4 @@ per-target events live.
 | Hook can't reach tracker | `DPORTSV3_TRACKER_URL` from the dsynth env; some chroot setups need a bind-mount or 127.0.0.1 only |
 
 For deeper triage of the agent runtime itself, see `docs/TESTING_E2E.md`
-for the manual fixtures under `scripts/generator/dportsv3/agent/`.
+for the manual fixtures under `dportsv3/agent/`.

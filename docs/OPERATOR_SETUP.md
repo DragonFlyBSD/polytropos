@@ -23,22 +23,33 @@ You also need `dsynth` itself, of course, and a profile set up
 
 ## 2. Clone + bootstrap
 
+Two repositories: the tool and the ports data it reads. The tool no longer
+lives inside the ports tree.
+
 ```sh
 cd /build/synth                 # or wherever you keep build trees
-git clone https://github.com/.../DeltaPorts.git
-cd DeltaPorts
-./dportsv3 --help               # first run builds the venv at scripts/generator/.venv
+git clone https://github.com/DragonFlyBSD/polytropos.git
+git clone https://github.com/DragonFlyBSD/DeltaPorts.git
+cd polytropos
+bin/dportsv3 --help               # first run builds the venv at .venv
+```
+
+Point the tool at the ports tree with `--delta-root`, or set it once:
+
+```sh
+export DPORTS_DELTA_ROOT=/build/synth/DeltaPorts
+export DPORTS_DEV_DELTA_ROOT=/build/synth/DeltaPorts   # for dev-env
 ```
 
 The wrapper script:
-- creates `scripts/generator/.venv/` with `--system-site-packages`
-- `pip install -e scripts/generator` (editable, source changes pick up live)
+- creates `.venv/` with `--system-site-packages`
+- `pip install -e .` (editable, source changes pick up live)
 - caches a stamp so subsequent calls skip re-install
 
 If you also want pytest + mypy in there:
 
 ```sh
-scripts/generator/.venv/bin/pip install -e 'scripts/generator[dev]'
+.venv/bin/pip install -e '.[dev]'
 ```
 
 ## 3. Create a dev-env for your target
@@ -47,8 +58,8 @@ The dev-env is a chroot with a writable copy-on-write overlay where
 the agent edits files. One per target/origin you want to iterate on.
 
 ```sh
-./dportsv3 dev-env create myenv --target @2026Q2 --origin devel/foo
-./dportsv3 dev-env status myenv     # expect: status=ready, backend=chroot, root_mounted=true
+bin/dportsv3 dev-env create --name myenv --target @2026Q2 --origin devel/foo
+bin/dportsv3 dev-env status myenv     # expect: status=ready, backend=chroot, root_mounted=true
 ```
 
 `dev-env path myenv --writable` will print the overlay path
@@ -64,7 +75,7 @@ dsynth runs inside the chroot, so its hooks belong in the env's
 writable `/etc/dsynth` overlay rather than on the host:
 
 ```sh
-./dportsv3 dev-env hooks-install myenv
+bin/dportsv3 dev-env hooks-install myenv
 ```
 
 This copies the hook scripts + `dportsv3-hooks.conf.example` →
@@ -78,13 +89,13 @@ Edit the conf and set:
 ARTIFACT_STORE_URL=http://127.0.0.1:8788
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080
 DPORTSV3_TRACKER_TARGET=@2026Q2     # defaults from $PROFILE if unset
-DPORTSV3_BIN=/build/synth/DeltaPorts/dportsv3
+DPORTSV3_BIN=/build/synth/polytropos/bin/dportsv3
 ```
 
 Verify with:
 
 ```sh
-./dportsv3 dev-env hooks-status myenv
+bin/dportsv3 dev-env hooks-status myenv
 ```
 
 Reports which hooks are present, whether they're executable, and
@@ -120,18 +131,18 @@ In three separate shells or under your service manager of choice:
 
 ```sh
 # Shell A — artifact-store (receives bundles, writes state.db + blobs)
-./dportsv3 artifact-store --logs-root $LOGS_ROOT
+bin/dportsv3 artifact-store --logs-root $LOGS_ROOT
 
 # Shell B — tracker (UI + read API + SSE)
 DPORTSV3_STATE_DB=$STATE_DB \
 DPORTSV3_ARTIFACT_ROOT=$ARTIFACT_ROOT \
-  ./dportsv3 tracker serve --port 8080
+  bin/dportsv3 tracker serve --port 8080
 
 # Shell C — queue runner (claims jobs, runs triage/patch)
 DPORTSV3_STATE_DB=$STATE_DB \
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080 \
 ARTIFACT_STORE_URL=http://127.0.0.1:8788 \
-  ./dportsv3 agent-queue-runner --queue-root $QUEUE_ROOT
+  bin/dportsv3 agent-queue-runner --queue-root $QUEUE_ROOT
 ```
 
 Order doesn't matter; each is idempotent on schema init. Open
@@ -171,7 +182,7 @@ The `artifacts` array points at `analysis/triage.md`,
 The actual edits live in the dev-env's writable overlay:
 
 ```sh
-ENV_DIR=$(./dportsv3 dev-env path myenv --writable)
+ENV_DIR=$(bin/dportsv3 dev-env path myenv --writable)
 git -C $ENV_DIR/work/DeltaPorts diff
 ```
 
@@ -184,7 +195,7 @@ touches your authoritative working tree.
 | Symptom | Fix |
 |---|---|
 | `dportsv3` says "missing DragonFly packages" | install the `pkg install` list from §1 |
-| Hooks don't fire on failure | `./dportsv3 dev-env hooks-status myenv` for stale/missing; confirm the env's `/etc/dsynth/dportsv3-hooks.conf` is being sourced by the dsynth profile inside the chroot |
+| Hooks don't fire on failure | `bin/dportsv3 dev-env hooks-status myenv` for stale/missing; confirm the env's `/etc/dsynth/dportsv3-hooks.conf` is being sourced by the dsynth profile inside the chroot |
 | Tracker 500s on artifact stream | `DPORTSV3_ARTIFACT_ROOT` doesn't match `--logs-root`/evidence on the artifact-store |
 | Triage 401s | provider key wrong, or `DP_HARNESS_TRIAGE_API_BASE` needs to be set for non-default endpoints |
 | Patch loop stops with `budget-exhausted` | check trust tier classification in `analysis/triage.md`; consider bumping the tier in `config/agentic-policy.json` |
@@ -196,8 +207,8 @@ When you pull new code:
 
 ```sh
 git pull
-./dportsv3 dev-env hooks-status myenv     # are any hooks stale vs. the new source?
-./dportsv3 dev-env hooks-install myenv    # re-copy (config preserved)
+bin/dportsv3 dev-env hooks-status myenv     # are any hooks stale vs. the new source?
+bin/dportsv3 dev-env hooks-install myenv    # re-copy (config preserved)
 ```
 
 Then restart the tracker (uvicorn doesn't auto-reload templates or
