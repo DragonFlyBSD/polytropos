@@ -21,7 +21,7 @@ from pathlib import Path
 from .builder import default_delta_root, default_tool_root
 from .config import DevEnvConfig
 from .errors import CommandError, UsageError
-from .layout import FREEBSD_RELATIVE, PORTS_RELATIVE, TOOL_RELATIVE
+from .layout import FREEBSD_RELATIVE, PORTS_MAIN_RELATIVE, TOOL_RELATIVE
 from .log import info, step_timer
 from .repos import RepoCache
 from .state import EnvironmentState
@@ -32,7 +32,9 @@ from .store import EnvironmentStore
 # writable-relative checkout path). DPorts is deliberately omitted —
 # it's compose-generated, not a git checkout.
 ENV_REPOS: list[tuple[str, str]] = [
-    ("DeltaPorts", PORTS_RELATIVE),
+    # The real checkout: fetching through the symlink would land in whatever
+    # tree a job currently holds.
+    ("DeltaPorts", PORTS_MAIN_RELATIVE),
     ("polytropos", TOOL_RELATIVE),
     ("freebsd-ports", FREEBSD_RELATIVE),
 ]

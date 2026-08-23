@@ -2608,7 +2608,10 @@ def _drop_bundle_branch_for_job(
         return
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
-        result = worker.drop_bundle_branch(env, bundle_id)
+        # Keep the branch: a bundle's convert->patch chain shares it, and a
+        # later job in the chain still wants its commits. Only the worktree
+        # goes.
+        result = worker.destroy_job_worktree(env, bundle_id, "patch")
     except Exception as exc:
         try:
             activity_log(
@@ -2679,7 +2682,7 @@ def _checkout_bundle_branch_for_job(
         return
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
-        result = worker.checkout_bundle_branch(env, bundle_id)
+        result = worker.create_job_worktree(env, bundle_id, "patch")
     except Exception as exc:
         try:
             activity_log(
@@ -2759,7 +2762,7 @@ def _checkout_verify_branch_for_job(
         return (False, None)
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
-        result = worker.checkout_verify_branch(env, bundle_id)
+        result = worker.create_job_worktree(env, bundle_id, "verify")
     except Exception as exc:
         try:
             activity_log(
@@ -2801,7 +2804,9 @@ def _checkout_verify_branch_for_job(
         )
     except Exception:
         pass
-    return (True, result.get("previous_ref"))
+    # No previous_ref: nothing was moved off a shared checkout, so there is
+    # nothing to restore. Kept in the tuple for the caller's shape until B2.
+    return (True, None)
 
 
 def _drop_verify_branch_for_job(
@@ -2821,7 +2826,12 @@ def _drop_verify_branch_for_job(
         return
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
-        result = worker.drop_verify_branch(env, bundle_id, restore_ref)
+        # restore_ref is vestigial: it named the ref to put the shared
+        # checkout back on, and there is no shared checkout to restore now —
+        # the worktree is thrown away instead. B2 removes the parameter.
+        result = worker.destroy_job_worktree(
+            env, bundle_id, "verify", drop_branch=True,
+        )
     except Exception as exc:
         try:
             activity_log(
@@ -3538,13 +3548,15 @@ def _write_changes_diff(bundle_dir: Path | None, bundle_id: str | None, env: str
     """
     try:
         from dportsv3.agent import worker  # type: ignore[import-not-found]
-        paths = worker.env_paths(env)
         # Whole-tree (not ports/<origin>) so fixes that correctly land
         # outside the bundle origin — e.g. a slave port whose patch lives
         # in the master's PATCHDIR — are captured instead of vanishing.
         rel = "."
         base = worker._resolve_bundle_base_branch(env)
-        p = worker._git_diff_against_base(paths.deltaports, base, rel)
+        # Takes the env, not a host path: the diff runs in-chroot now, because
+        # a job's tree may be a linked worktree whose gitdir: pointer only
+        # resolves under the chroot's /work/... prefix.
+        p = worker._git_diff_against_base(env, base, rel)
         diff_bytes = p.stdout.encode("utf-8")
     except Exception as exc:
         diff_bytes = f"# failed to capture diff: {exc}\n".encode("utf-8")

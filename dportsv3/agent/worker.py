@@ -610,7 +610,7 @@ def put_file(
     return {"path": path, "sha256": _sha256(data), "size": len(data)}
 
 
-def _git_diff_with_untracked(repo_dir: Path, rel: str) -> subprocess.CompletedProcess:
+def _git_diff_with_untracked(env: str, rel: str) -> subprocess.CompletedProcess:
     """Run ``git diff`` for ``rel`` against HEAD, including untracked files.
 
     Plain ``git diff`` is silent on untracked files; agents that create
@@ -619,25 +619,19 @@ def _git_diff_with_untracked(repo_dir: Path, rel: str) -> subprocess.CompletedPr
     ``add --intent-to-add`` registers a placeholder entry so the new
     file shows up as an addition in the diff; ``reset`` after returns
     the index to its prior state so we leave no staged residue.
+
+    Runs IN-CHROOT. It used to run on the host against
+    ``<writable>/work/DeltaPorts``, which worked while that was an ordinary
+    checkout. Since B1 it can be a linked worktree, and a worktree's ``.git``
+    file holds an *absolute* ``gitdir:`` pointer written with the chroot's
+    ``/work/...`` prefix — so host-side git in one fails outright with "not a
+    git repository". Host-side access to the tree is now file I/O only.
     """
-    repo = str(repo_dir)
-    subprocess.run(
-        ["git", "-C", repo, "add", "--intent-to-add", "--", rel],
-        capture_output=True, text=True, check=False,
-    )
-    diff = subprocess.run(
-        ["git", "-C", repo, "diff", "--", rel],
-        capture_output=True, text=True, check=False,
-    )
-    subprocess.run(
-        ["git", "-C", repo, "reset", "--", rel],
-        capture_output=True, text=True, check=False,
-    )
-    return diff
+    return _git_in_ports_tree(env, f"diff -- {shlex.quote(rel)}", rel)
 
 
 def _git_diff_against_base(
-    repo_dir: Path, base_branch: str, rel: str,
+    env: str, base_branch: str, rel: str,
 ) -> subprocess.CompletedProcess:
     """Step 30 slice 2: capture the diff between the env's base
     branch and the current working tree for ``rel``.
@@ -655,20 +649,29 @@ def _git_diff_against_base(
     "everything since upstream" and is therefore the correct
     shape for an upstream PR.
     """
-    repo = str(repo_dir)
-    subprocess.run(
-        ["git", "-C", repo, "add", "--intent-to-add", "--", rel],
-        capture_output=True, text=True, check=False,
+    return _git_in_ports_tree(
+        env, f"diff {shlex.quote(base_branch)} -- {shlex.quote(rel)}", rel,
     )
-    diff = subprocess.run(
-        ["git", "-C", repo, "diff", base_branch, "--", rel],
-        capture_output=True, text=True, check=False,
+
+
+def _git_in_ports_tree(env: str, git_args: str, rel: str) -> subprocess.CompletedProcess:
+    """Run one ``git <git_args>`` in the env's ports tree, bracketed by the
+    intent-to-add/reset dance, and return the middle command's result.
+
+    One place builds these so both diff helpers share the bracket and the
+    chroot prefix. ``rel`` is added before and reset after, so a
+    freshly-created file shows up as an addition without leaving staged
+    residue.
+    """
+    q_rel = shlex.quote(rel)
+    script = (
+        f"cd {shlex.quote(PORTS_DIR)} && "
+        f"git add --intent-to-add -- {q_rel} >/dev/null 2>&1; "
+        f"git {git_args}; rc=$?; "
+        f"git reset -- {q_rel} >/dev/null 2>&1; "
+        f"exit $rc"
     )
-    subprocess.run(
-        ["git", "-C", repo, "reset", "--", rel],
-        capture_output=True, text=True, check=False,
-    )
-    return diff
+    return _exec(env, "/bin/sh", "-c", script, cwd=PORTS_DIR)
 
 
 def emit_diff(env: str, origin: str, relpath: str) -> dict:
@@ -682,7 +685,7 @@ def emit_diff(env: str, origin: str, relpath: str) -> dict:
     """
     paths = env_paths(env)
     rel = f"ports/{origin}/{relpath}"
-    p = _git_diff_with_untracked(paths.deltaports, rel)
+    p = _git_diff_with_untracked(env, rel)
     diff_text, diff_trunc = _tail(p.stdout, max_bytes=_MAX_STREAM_BYTES * 2)
     return _exec_result(
         p.returncode, "", p.stderr,
@@ -1608,6 +1611,156 @@ def checkout_bundle_branch(env: str, bundle_id: str) -> dict:
         "ok": True, "branch": branch, "base": base,
         "reused": False, "created": True,
     }
+
+
+# In-chroot layout. Deliberately literals rather than an import of
+# ``dports_dev_env.layout``: this module drives dev-env through its CLI, not
+# its internals (see the module docstring), and ``/work/DeltaPorts`` is already
+# spelled out throughout. ``test_worker_layout_agrees_with_dev_env`` pins these
+# against dev-env's constants so the two cannot drift apart silently.
+PORTS_DIR = "/work/DeltaPorts"
+PORTS_MAIN_DIR = "/work/ports-main"
+
+
+def _job_worktree_name(bundle_id: str, kind: str) -> str:
+    """Directory name for a job's worktree: ``job-<kind>-<bundle_id>``.
+
+    Lives directly under ``/work/`` beside the main checkout, so the symlink
+    that ``PORTS_DIR`` is can point at it with a *relative* target. That
+    matters: the link is followed both from inside the chroot and from the
+    host's writable layer, and only a relative target resolves under both.
+    """
+    ident = bundle_id.strip().removesuffix(".job")
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in ident)
+    return f"job-{kind}-{safe}"
+
+
+def _point_ports_link(env: str, target: str) -> subprocess.CompletedProcess:
+    """Point the env's ports-tree name at ``target`` (a sibling directory
+    name under ``/work``).
+
+    ``rm`` then ``ln`` rather than ``ln -sfn``/``ln -sfh``: the two spellings
+    of "don't follow the existing link" differ between GNU and BSD, and this
+    runs on DragonFly.
+    """
+    return _exec(
+        env, "/bin/sh", "-c",
+        f"rm -f {shlex.quote(PORTS_DIR)} && "
+        f"ln -s {shlex.quote(target)} {shlex.quote(PORTS_DIR)}",
+        cwd="/work",
+    )
+
+
+def create_job_worktree(env: str, bundle_id: str, kind: str = "patch") -> dict:
+    """Give this job its own checkout of the ports tree.
+
+    Replaces "check a branch out on the one shared tree": each job gets a
+    linked worktree off the main checkout's object store, and ``PORTS_DIR`` is
+    repointed at it. Every attempt in the job shares this one worktree, exactly
+    as attempts share the tree today.
+
+    ``kind="patch"`` reuses the bundle's branch, creating it off base the first
+    time, so a bundle's convert->patch chain keeps its commits. ``kind="verify"``
+    force-recuts from base: the verify gate replays the complete changes.diff on
+    a clean base and must not inherit the agent's commits.
+
+    Returns the standard result dict plus ``branch``, ``base``, ``worktree``
+    (chroot path) and ``created``.
+    """
+    if not bundle_id:
+        return {"ok": False, "error": "bundle_id is required"}
+    if kind not in ("patch", "verify"):
+        return {"ok": False, "error": f"unknown worktree kind: {kind}"}
+
+    branch = (
+        _branch_name_for(bundle_id) if kind == "patch"
+        else _verify_branch_name_for(bundle_id)
+    )
+    base = _resolve_bundle_base_branch(env)
+    name = _job_worktree_name(bundle_id, kind)
+    worktree = f"/work/{name}"
+    q_wt, q_branch, q_base = shlex.quote(worktree), shlex.quote(branch), shlex.quote(base)
+    git = f"git -C {shlex.quote(PORTS_MAIN_DIR)}"
+
+    # Clear any leftover from a job that died before teardown; a stale worktree
+    # would otherwise make `worktree add` fail on an occupied path.
+    _exec(env, "/bin/sh", "-c",
+          f"{git} worktree remove --force {q_wt} >/dev/null 2>&1; "
+          f"rm -rf {q_wt}; {git} worktree prune",
+          cwd="/work")
+
+    if kind == "verify":
+        add = f"{git} worktree add --force -B {q_branch} {q_wt} {q_base}"
+    else:
+        # -B would discard the bundle branch's existing commits.
+        add = (
+            f"if {git} rev-parse --verify --quiet refs/heads/{q_branch} >/dev/null; then "
+            f"{git} worktree add --force {q_wt} {q_branch}; else "
+            f"{git} worktree add --force -b {q_branch} {q_wt} {q_base}; fi"
+        )
+    add_p = _exec(env, "/bin/sh", "-c", add, cwd="/work")
+    if add_p.returncode != 0:
+        return _exec_result(
+            add_p.returncode, add_p.stdout, add_p.stderr,
+            error=f"worktree add for {branch} failed",
+            branch=branch, base=base, worktree=worktree,
+        )
+
+    link_p = _point_ports_link(env, name)
+    if link_p.returncode != 0:
+        return _exec_result(
+            link_p.returncode, link_p.stdout, link_p.stderr,
+            error=f"could not point {PORTS_DIR} at {name}",
+            branch=branch, base=base, worktree=worktree,
+        )
+    return {
+        "ok": True, "branch": branch, "base": base,
+        "worktree": worktree, "created": True,
+    }
+
+
+def destroy_job_worktree(
+    env: str, bundle_id: str, kind: str = "patch", *, drop_branch: bool = False,
+) -> dict:
+    """Throw the job's worktree away.
+
+    The point of B1: there is no tree to scrub afterwards, because the tree
+    the job dirtied does not outlive it. ``PORTS_DIR`` goes back to the main
+    checkout first, so nothing is left addressing a directory being removed.
+
+    ``drop_branch`` also deletes the branch — right for the throwaway verify
+    branch, wrong for a bundle branch whose commits a later job still wants.
+    """
+    if not bundle_id:
+        return {"ok": False, "error": "bundle_id is required"}
+    if kind not in ("patch", "verify"):
+        return {"ok": False, "error": f"unknown worktree kind: {kind}"}
+
+    branch = (
+        _branch_name_for(bundle_id) if kind == "patch"
+        else _verify_branch_name_for(bundle_id)
+    )
+    name = _job_worktree_name(bundle_id, kind)
+    worktree = f"/work/{name}"
+    q_wt, q_branch = shlex.quote(worktree), shlex.quote(branch)
+    git = f"git -C {shlex.quote(PORTS_MAIN_DIR)}"
+
+    link_p = _point_ports_link(env, PORTS_MAIN_DIR.rpartition("/")[2])
+    if link_p.returncode != 0:
+        return _exec_result(
+            link_p.returncode, link_p.stdout, link_p.stderr,
+            error=f"could not restore {PORTS_DIR}",
+            branch=branch, worktree=worktree,
+        )
+
+    cmd = f"{git} worktree remove --force {q_wt}; rm -rf {q_wt}; {git} worktree prune"
+    if drop_branch:
+        cmd += f"; {git} branch -D {q_branch} >/dev/null 2>&1 || true"
+    rm_p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work")
+    return _exec_result(
+        rm_p.returncode, rm_p.stdout, rm_p.stderr,
+        branch=branch, worktree=worktree, dropped_branch=drop_branch,
+    )
 
 
 def _drop_branch(env: str, branch: str, restore_to: str, base: str) -> dict:

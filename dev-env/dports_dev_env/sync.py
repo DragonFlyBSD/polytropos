@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .errors import CommandError, UsageError
 from .helpers import TOUCHED_ORIGINS_PATH
-from .layout import PORTS_RELATIVE
+from .layout import PORTS_MAIN_RELATIVE
 from .log import info, step_timer
 from .repos import RepoCache
 from .store import EnvironmentStore
@@ -47,7 +47,9 @@ class DirtySyncer:
         EnvironmentSession(self.config, self.store).ensure_root_mounted(env_dir, state)
 
         host_repo = Path(state.source.delta_root)
-        env_repo = state.root_dir / PORTS_RELATIVE
+        # The real checkout. Job worktrees branch from it; resetting it through
+        # the symlink would reset whichever tree a job currently holds.
+        env_repo = state.root_dir / PORTS_MAIN_RELATIVE
         touched_file = state.root_dir / Path(TOUCHED_ORIGINS_PATH).relative_to("/")
 
         if not host_repo.is_dir() or not (host_repo / ".git").exists():

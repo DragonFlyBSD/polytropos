@@ -24,7 +24,26 @@ _GEN = Path(__file__).resolve().parents[1]
 if str(_GEN) not in sys.path:
     sys.path.insert(0, str(_GEN))
 
+from dportsv3.agent import worker  # noqa: E402
 from dportsv3.agent.worker import _git_diff_with_untracked  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _run_in_repo(repo, monkeypatch):
+    """The helper runs in-chroot since B1, so there is no host path to pass.
+
+    Rather than mock it away, execute the very shell script the helper builds,
+    with the chroot's ports path rewritten to this test's repo. Real git still
+    decides the outcome — the intent-to-add/reset semantics under test are the
+    shipped ones, not a stand-in.
+    """
+    def fake_exec(env, *argv, cwd=None, **kw):
+        script = argv[-1].replace(worker.PORTS_DIR, str(repo))
+        return subprocess.run(
+            ["/bin/sh", "-c", script], capture_output=True, text=True,
+        )
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -53,7 +72,7 @@ def test_new_file_appears_in_diff(repo: Path) -> None:
     """A brand-new untracked file shows up as an addition."""
     (repo / "ports" / "fresh.txt").write_text("hello\n")
 
-    p = _git_diff_with_untracked(repo, "ports/fresh.txt")
+    p = _git_diff_with_untracked("e1", "ports/fresh.txt")
 
     assert p.returncode == 0, p.stderr
     assert "diff --git" in p.stdout
@@ -65,7 +84,7 @@ def test_modified_tracked_file_appears_in_diff(repo: Path) -> None:
     """Existing tracked-modified files still show up (no regression)."""
     (repo / "ports" / "tracked.txt").write_text("changed\n")
 
-    p = _git_diff_with_untracked(repo, "ports/tracked.txt")
+    p = _git_diff_with_untracked("e1", "ports/tracked.txt")
 
     assert p.returncode == 0, p.stderr
     assert "diff --git" in p.stdout
@@ -75,7 +94,7 @@ def test_modified_tracked_file_appears_in_diff(repo: Path) -> None:
 
 def test_no_changes_returns_empty(repo: Path) -> None:
     """When nothing has changed for the path, the diff is empty."""
-    p = _git_diff_with_untracked(repo, "ports/tracked.txt")
+    p = _git_diff_with_untracked("e1", "ports/tracked.txt")
 
     assert p.returncode == 0, p.stderr
     assert p.stdout == ""
@@ -85,7 +104,7 @@ def test_index_is_clean_after_call(repo: Path) -> None:
     """The intent-to-add must be reset; we leave no staged residue."""
     (repo / "ports" / "fresh.txt").write_text("hello\n")
 
-    _git_diff_with_untracked(repo, "ports/fresh.txt")
+    _git_diff_with_untracked("e1", "ports/fresh.txt")
 
     # ports/fresh.txt should still be untracked, not staged.
     status = _git(repo, "status", "--porcelain", "--", "ports/fresh.txt")
@@ -100,8 +119,19 @@ def test_directory_scope_catches_new_file(repo: Path) -> None:
     sub.mkdir(parents=True)
     (sub / "overlay.dops").write_text("# new dops overlay\n")
 
-    p = _git_diff_with_untracked(repo, "ports/devel/gperf")
+    p = _git_diff_with_untracked("e1", "ports/devel/gperf")
 
     assert p.returncode == 0, p.stderr
     assert "overlay.dops" in p.stdout
     assert "+# new dops overlay" in p.stdout
+
+
+def test_git_failure_propagates_its_exit_code(repo: Path) -> None:
+    """The helper brackets git with add/reset, so it must pass the middle
+    command's status through rather than the bracket's. ``emit_diff`` reports
+    ``ok`` from this, and a swallowed failure would read as "no changes"."""
+    from dportsv3.agent.worker import _git_diff_against_base
+
+    p = _git_diff_against_base("e1", "no-such-branch", "ports/tracked.txt")
+
+    assert p.returncode != 0

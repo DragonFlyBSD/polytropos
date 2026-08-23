@@ -23,7 +23,21 @@ onto ``state.root_dir``.
 
 from __future__ import annotations
 
+#: The ports tree as everything addresses it. Since B1 this is a relative
+#: symlink rather than a directory: it points at ``ports-main`` when no job is
+#: running and at that job's worktree for the life of a job. Nothing else
+#: changes — the agent, the guardrails, the prompts and the in-chroot helpers
+#: all keep using this one name.
+#:
+#: It must stay RELATIVE. The same symlink is traversed under two prefixes,
+#: the chroot's /work/... and the host's <writable>/work/..., and an absolute
+#: target resolves under only one of them.
 PORTS_DIR = "/work/DeltaPorts"
+
+#: The real ports checkout: the clone dev-env manages, and the repository that
+#: owns the object store every job worktree branches from. Only plumbing names
+#: this — fetching, syncing, reporting env state. Agent-facing code does not.
+PORTS_MAIN_DIR = "/work/ports-main"
 TOOL_DIR = "/work/polytropos"
 FREEBSD_DIR = "/work/freebsd-ports"
 LOCK_DIR = "/work/DPorts"
@@ -38,6 +52,10 @@ LOCK_DIR = "/work/DPorts"
 TOOL_BIN = f"{TOOL_DIR}/bin/dportsv3"
 
 PORTS_RELATIVE = PORTS_DIR.removeprefix("/")
+PORTS_MAIN_RELATIVE = PORTS_MAIN_DIR.removeprefix("/")
+
+#: What ``PORTS_DIR`` points at when no job holds it.
+PORTS_LINK_IDLE_TARGET = PORTS_MAIN_RELATIVE.rpartition("/")[2]
 TOOL_RELATIVE = TOOL_DIR.removeprefix("/")
 FREEBSD_RELATIVE = FREEBSD_DIR.removeprefix("/")
 LOCK_RELATIVE = LOCK_DIR.removeprefix("/")

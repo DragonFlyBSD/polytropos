@@ -49,8 +49,9 @@ This will:
 4. refresh cached mirrors for DeltaPorts, polytropos, FreeBSD ports, and
    DPorts,
 5. mount the provisioned base read-only and add per-env writable overlays,
-6. clone env-local DeltaPorts, polytropos and FreeBSD ports from cached mirrors
-   and export the DPorts tree into the env,
+6. clone env-local DeltaPorts (into `work/ports-main`, with `work/DeltaPorts`
+   linked to it), polytropos and FreeBSD ports from cached mirrors, and export
+   the DPorts tree into the env,
 7. run `cd /usr && make pkg-bootstrap` when `pkg` is missing, then bootstrap a
    few development tools and the default runtime profile inside the chroot,
 8. generate `/etc/dsynth/dsynth.ini` and the env-specific dsynth make config,
@@ -74,7 +75,8 @@ sudo bin/dportsv3 dev-env shell 2026Q2-editors_vim
 sudo bin/dportsv3 dev-env sync-dirty 2026Q2-editors_vim
 ```
 
-This refreshes `/work/DeltaPorts` inside the env from the original host checkout,
+This refreshes the env's ports checkout (`/work/ports-main`) from the original
+host checkout,
 then applies the host repo's current unstaged tracked changes and untracked files.
 
 It covers the ports tree only. Uncommitted edits to the tool itself do not
@@ -175,6 +177,24 @@ Two source trees, and the difference between them matters:
   written into the LLM prompt text and enforced by the worker guardrails, which
   reject writes anywhere else, so it did not move when the tool was split out
   into its own repository and will not move for the package rename either.
+
+  It is a *relative symlink*, not a directory. It points at `ports-main` when
+  no build job is running, and at that job's own worktree while one is. Keeping
+  the name fixed while swapping what it points at is what lets each build get
+  an isolated tree without the agent, the guardrails or the prompts learning a
+  second name for the ports tree. The target must stay relative: the same link
+  is followed from inside the chroot (`/work/...`) and from the host's writable
+  layer, and an absolute target resolves under only one of those.
+- `/work/ports-main` — the real ports checkout. This is what dev-env clones,
+  fetches and syncs, and it owns the git object store that every job worktree
+  branches from. Plumbing names this path; agent-facing code never does.
+- `/work/job-<kind>-<id>` — one build job's worktree, created at job start and
+  destroyed at job end. Nothing is scrubbed afterwards because nothing the job
+  dirtied outlives it.
+
+  Host-side code may *read and write files* through the symlink, but must not
+  run git through it: a linked worktree's `gitdir:` pointer is absolute and
+  chroot-shaped, so git only resolves from inside the chroot.
 - `/work/polytropos` — this tool. The wrapper is `/work/polytropos/bin/dportsv3`
   and the generator venv sits at `/work/polytropos/.venv`. Before the split the
   tool shipped as a subdirectory of the ports checkout and had no path of its

@@ -7,9 +7,9 @@ from pathlib import Path
 
 from .builder import CreateOptions, EnvironmentBuilder, default_delta_root, default_tool_root
 from .config import load_config, require_root, validate_cache_root
-from .errors import DevEnvError, UsageError
+from .errors import CommandError, DevEnvError, UsageError
 from .fs import safe_remove_tree
-from .layout import FREEBSD_RELATIVE, PORTS_DIR, PORTS_RELATIVE, TOOL_RELATIVE
+from .layout import FREEBSD_RELATIVE, PORTS_DIR, PORTS_MAIN_RELATIVE, PORTS_RELATIVE, TOOL_RELATIVE
 from .log import error, info, run_log_context, to_user, warn
 from .mounts import mounts_under, ordered_mounts_under, unmount_under
 from .session import EnvironmentSession
@@ -240,7 +240,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         "oracle_profile": state.oracle_profile,
         "root_mounted": root_mounted,
         "env_dir": str(env_dir),
-        "deltaports": _git_info(PORTS_RELATIVE),
+        "deltaports": _git_info(PORTS_MAIN_RELATIVE),
         "polytropos": _git_info(TOOL_RELATIVE),
         "freebsd_ports": _git_info(FREEBSD_RELATIVE),
     }))
@@ -335,8 +335,7 @@ def apply_and_build(
     # isn't. Placed BEFORE the cleanup try/finally so a refusal never
     # resets the operator's own uncommitted state.
     if diff_path is not None:
-        workspace = writable_root / PORTS_RELATIVE
-        dirty = _port_dirty_paths(workspace, origin)
+        dirty = _port_dirty_paths(state.root_dir, origin)
         if dirty:
             tail = (f"diff replay refused: ports/{origin}/ has "
                     f"uncommitted changes:\n  "
@@ -552,27 +551,37 @@ def apply_and_build(
     return result
 
 
-def _port_dirty_paths(workspace: Path, origin: str) -> list[str]:
-    """Return the porcelain dirty-paths for ports/<origin>/ in
-    ``workspace`` (host-side; the workspace is the shared writable
-    layer).
+def _port_dirty_paths(root_dir: Path, origin: str) -> list[str]:
+    """Return the porcelain dirty-paths for ports/<origin>/ in the env.
 
-    Empty list = clean. Used by apply_and_build's pre-replay check
-    and by the dev-env reset-port CLI's "is there anything to reset"
-    sanity message.
+    Empty list = clean. Used by apply_and_build's pre-replay check and by the
+    dev-env reset-port CLI's "is there anything to reset" sanity message.
+
+    Runs IN-CHROOT. It used to run host-side against the writable layer, which
+    worked while the ports tree there was an ordinary checkout. Since B1 it can
+    be a linked worktree, whose absolute ``gitdir:`` pointer only resolves
+    under the chroot's ``/work/...`` prefix.
+
+    Raises ``CommandError`` when git cannot answer. It previously returned []
+    on any failure, which reads as "clean" — and the pre-replay caller refuses
+    the replay precisely *because* a dirty tree would make the verify verdict
+    meaningless. Answering "clean" when we do not know inverts that check.
     """
-    import subprocess as _sp
+    import shlex as _shlex
+
+    from .chroot import ChrootRunner
+
     rel = f"ports/{origin}"
-    try:
-        p = _sp.run(
-            ["git", "-C", str(workspace),
-             "status", "--porcelain", "--", rel],
-            capture_output=True, text=True, check=False,
-        )
-    except Exception:
-        return []
+    p = ChrootRunner(root_dir).run(
+        ["/bin/sh", "-c",
+         f"cd {PORTS_DIR} && git status --porcelain -- {_shlex.quote(rel)}"],
+        capture_output=True,
+    )
     if p.returncode != 0:
-        return []
+        raise CommandError(
+            f"could not determine whether ports/{origin}/ is dirty: "
+            f"{(p.stderr or p.stdout or '').strip()[:200]}"
+        )
     out: list[str] = []
     for line in (p.stdout or "").splitlines():
         s = line.lstrip()
@@ -610,13 +619,17 @@ def cmd_reset_port(args: argparse.Namespace) -> int:
 
     env_dir = store.env_dir(args.name)
     writable_root = env_dir / "writable"
-    workspace = writable_root / "work" / "DeltaPorts"
     runner = ChrootRunner(state.root_dir)
     env = chroot_env() | build_env_dict(state)
 
     # Report what would be reset BEFORE doing it so the operator
     # can see the scope.
-    dirty_before = _port_dirty_paths(workspace, args.origin)
+    try:
+        dirty_before = _port_dirty_paths(state.root_dir, args.origin)
+    except CommandError as exc:
+        # Informational only here — reset-port resets regardless.
+        info(f"could not list dirty paths first: {exc}")
+        dirty_before = []
 
     rel = f"ports/{args.origin}"
     p = runner.run(

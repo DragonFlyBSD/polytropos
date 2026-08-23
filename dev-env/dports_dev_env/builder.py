@@ -20,6 +20,8 @@ from .layout import (
     LOCK_DIR,
     LOCK_RELATIVE,
     PORTS_DIR,
+    PORTS_LINK_IDLE_TARGET,
+    PORTS_MAIN_RELATIVE,
     PORTS_RELATIVE,
     TOOL_BIN,
     TOOL_RELATIVE,
@@ -123,7 +125,8 @@ class EnvironmentBuilder:
         phase("[5/7] Seeding env-local source trees and writing runtime config")
         with step_timer("seed env-local source trees and runtime config"):
             repos = RepoCache(self.config)
-            repos.clone_branch("DeltaPorts", mirrors.deltaports, state.repos.deltaports_branch, self.root_dir / PORTS_RELATIVE)
+            repos.clone_branch("DeltaPorts", mirrors.deltaports, state.repos.deltaports_branch, self.root_dir / PORTS_MAIN_RELATIVE)
+            link_ports_tree(self.root_dir)
             repos.clone_branch("polytropos", mirrors.tool, state.repos.tool_branch, self.root_dir / TOOL_RELATIVE)
             # A mirror clone can carry a .venv if one was committed by accident;
             # the venv cache below owns that directory, so start from nothing.
@@ -304,6 +307,21 @@ class EnvironmentBuilder:
         result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode != 0:
             raise UsageError(f"command failed: {' '.join(command)}")
+
+
+def link_ports_tree(root_dir: Path, target: str = PORTS_LINK_IDLE_TARGET) -> None:
+    """Point the env's ports-tree name at ``target``.
+
+    ``PORTS_DIR`` is a symlink so a job can swap the tree underneath it
+    without anything having to learn a second name for the ports tree. The
+    target is stored RELATIVE because this same link is followed from inside
+    the chroot (/work/...) and from the host (<writable>/work/...); an
+    absolute target resolves under only one of those.
+    """
+    link = root_dir / PORTS_RELATIVE
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(target)
 
 
 def now_utc() -> str:

@@ -74,8 +74,8 @@ def test_drop_helper_logs_success_when_removed(monkeypatch, tmp_path):
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "drop_bundle_branch",
-        lambda env, bundle_id: {
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: {
             "ok": True, "removed": True,
             "branch": f"bundle/{bundle_id}", "base": "main",
         },
@@ -102,8 +102,8 @@ def test_drop_helper_quiet_when_branch_already_absent(
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "drop_bundle_branch",
-        lambda env, bundle_id: {
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: {
             "ok": True, "removed": False, "reason": "branch_absent",
             "branch": f"bundle/{bundle_id}", "base": "main",
         },
@@ -123,8 +123,8 @@ def test_drop_helper_logs_failure(monkeypatch, tmp_path):
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "drop_bundle_branch",
-        lambda env, bundle_id: {
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: {
             "ok": False,
             "error": "git branch -D bundle/b failed",
             "branch": "bundle/b",
@@ -149,9 +149,9 @@ def test_drop_helper_tolerates_worker_raise(monkeypatch, tmp_path):
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
 
-    def _raise(env, bundle_id):
+    def _raise(env, bundle_id, kind="patch", **kw):
         raise RuntimeError("env disconnected")
-    monkeypatch.setattr(worker, "drop_bundle_branch", _raise)
+    monkeypatch.setattr(worker, "destroy_job_worktree", _raise)
 
     # Should not raise.
     runner._drop_bundle_branch_for_job(
@@ -169,14 +169,15 @@ def test_drop_helper_tolerates_worker_raise(monkeypatch, tmp_path):
 # --- verify-branch wrappers -----------------------------------------
 
 
-def test_checkout_verify_wrapper_returns_ok_and_previous_ref(monkeypatch, tmp_path):
-    """On success the wrapper returns (True, previous_ref) so the
-    dispatch can hand the ref to the end-of-run drop."""
+def test_checkout_verify_wrapper_returns_no_ref_to_restore(monkeypatch, tmp_path):
+    """B1: the verify run gets its own worktree, so nothing is moved off a
+    shared checkout and there is no previous ref to hand to the drop. The
+    tuple shape is kept until B2 removes the parameter."""
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "checkout_verify_branch",
-        lambda env, bundle_id: {
+        worker, "create_job_worktree",
+        lambda env, bundle_id, kind="verify": {
             "ok": True, "branch": "bundle/b-verify", "base": "main",
             "previous_ref": "bundle/b", "created": True,
         },
@@ -185,7 +186,7 @@ def test_checkout_verify_wrapper_returns_ok_and_previous_ref(monkeypatch, tmp_pa
         queue_root=tmp_path, job_id="j-1", env="e1", bundle_id="b",
     )
     assert ok is True
-    assert prev == "bundle/b"
+    assert prev is None
     assert any(r["stage"] == "verify_branch_checkout" for r in rows)
 
 
@@ -213,8 +214,8 @@ def test_checkout_verify_wrapper_returns_false_on_error(monkeypatch, tmp_path):
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "checkout_verify_branch",
-        lambda env, bundle_id: {"ok": False, "error": "boom", "branch": "x"},
+        worker, "create_job_worktree",
+        lambda env, bundle_id, kind="verify": {"ok": False, "error": "boom", "branch": "x"},
     )
     ok, prev = runner._checkout_verify_branch_for_job(
         queue_root=tmp_path, job_id="j-1", env="e1", bundle_id="b",
@@ -224,24 +225,25 @@ def test_checkout_verify_wrapper_returns_false_on_error(monkeypatch, tmp_path):
     assert any(r["stage"] == "verify_branch_checkout_failed" for r in rows)
 
 
-def test_drop_verify_wrapper_passes_restore_ref(monkeypatch, tmp_path):
+def test_drop_verify_destroys_the_worktree_and_its_branch(monkeypatch, tmp_path):
+    """The verify branch is throwaway — recut from base every run — so it goes
+    with the worktree. The bundle branch does not."""
     rows = _activity_recorder(monkeypatch)
     seen: list = []
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "drop_verify_branch",
-        lambda env, bundle_id, restore_ref: seen.append(
-            (env, bundle_id, restore_ref)
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="verify", **kw: seen.append(
+            (env, bundle_id, kind, kw.get("drop_branch"))
         ) or {
             "ok": True, "removed": True, "branch": "bundle/b-verify",
-            "restored_to": restore_ref,
         },
     )
     runner._drop_verify_branch_for_job(
         queue_root=tmp_path, job_id="j-1", env="e1", bundle_id="b",
         restore_ref="bundle/b", reason="verify_complete",
     )
-    assert seen == [("e1", "b", "bundle/b")]
+    assert seen == [("e1", "b", "verify", True)]
     assert any(r["stage"] == "verify_branch_dropped" for r in rows)
 
 
@@ -249,9 +251,9 @@ def test_drop_verify_wrapper_tolerates_worker_raise(monkeypatch, tmp_path):
     rows = _activity_recorder(monkeypatch)
     from dportsv3.agent import worker
 
-    def _raise(env, bundle_id, restore_ref):
+    def _raise(env, bundle_id, kind="verify", **kw):
         raise RuntimeError("env disconnected")
-    monkeypatch.setattr(worker, "drop_verify_branch", _raise)
+    monkeypatch.setattr(worker, "destroy_job_worktree", _raise)
 
     runner._drop_verify_branch_for_job(
         queue_root=tmp_path, job_id="j-1", env="e1", bundle_id="b",
@@ -260,3 +262,22 @@ def test_drop_verify_wrapper_tolerates_worker_raise(monkeypatch, tmp_path):
     failed = [r for r in rows if r["stage"] == "verify_branch_drop_failed"]
     assert len(failed) == 1
     assert "env disconnected" in failed[0]["message"]
+
+
+def test_patch_drop_keeps_the_bundle_branch(monkeypatch, tmp_path):
+    """A bundle's convert->patch chain shares bundle/<id> and a later job in
+    the chain still wants its commits. Only the worktree is disposable."""
+    _activity_recorder(monkeypatch)
+    seen: list = []
+    from dportsv3.agent import worker
+    monkeypatch.setattr(
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: seen.append(
+            (kind, kw.get("drop_branch"))
+        ) or {"ok": True, "removed": True, "branch": f"bundle/{bundle_id}"},
+    )
+    runner._drop_bundle_branch_for_job(
+        queue_root=tmp_path, job_id="j-1", env="e1",
+        bundle_id="b-abc", job_type="patch", reason="patch_success",
+    )
+    assert seen == [("patch", None)], "must not delete the bundle branch"

@@ -352,7 +352,9 @@ def test_showenv_lists_both_source_roots():
 
 
 def test_env_repos_fast_forwards_the_tool_checkout():
-    from dports_dev_env.layout import PORTS_RELATIVE, TOOL_RELATIVE
+    from dports_dev_env.layout import PORTS_MAIN_RELATIVE, TOOL_RELATIVE
     from dports_dev_env.update import ENV_REPOS
 
-    assert {rel for _, rel in ENV_REPOS} >= {PORTS_RELATIVE, TOOL_RELATIVE}
+    # The ports entry is the real checkout, not the symlink — see
+    # test_plumbing_targets_the_real_checkout_not_the_link.
+    assert {rel for _, rel in ENV_REPOS} >= {PORTS_MAIN_RELATIVE, TOOL_RELATIVE}

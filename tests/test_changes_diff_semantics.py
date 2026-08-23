@@ -41,8 +41,8 @@ def test_changes_diff_is_branch_vs_base(tmp_path, monkeypatch):
     convert commit's deltas from the artifact."""
     captured: dict = {}
 
-    def _fake_diff(repo, base, rel):
-        captured["repo"] = repo
+    def _fake_diff(env, base, rel):
+        captured["env"] = env
         captured["base"] = base
         captured["rel"] = rel
         return SimpleNamespace(
@@ -77,7 +77,9 @@ def test_changes_diff_is_branch_vs_base(tmp_path, monkeypatch):
     assert out.is_file()
     assert out.read_text() == "changes body\n"
     assert captured == {
-        "repo": deltaports,
+        # B1: the helper takes the env and runs in-chroot; a host path would
+        # not resolve inside a linked worktree.
+        "env": "e1",
         "base": "main",
         # C3: whole-tree, not ports/<origin> — captures fixes that land
         # outside the bundle origin (e.g. a slave's master PATCHDIR).
@@ -125,8 +127,10 @@ def test_changes_diff_tolerates_worker_failure(tmp_path, monkeypatch):
     break the patch step. The writer emits a tombstone body so
     the operator sees the failure shape rather than getting a
     silent empty file."""
+    # Injected at the base-branch resolve: since B1 this path no longer calls
+    # env_paths (the diff runs in-chroot), so failing that would prove nothing.
     monkeypatch.setattr(
-        worker, "env_paths",
+        worker, "_resolve_bundle_base_branch",
         lambda env: (_ for _ in ()).throw(
             RuntimeError("env gone"),
         ),

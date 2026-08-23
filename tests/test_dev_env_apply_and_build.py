@@ -170,10 +170,11 @@ def test_diff_path_is_staged_into_writable_and_applied(fake_env, monkeypatch, tm
                                    diff=str(diff), json=True))
 
     assert rc == 0
-    # apply, reapply, dtest, then post-build cleanup (3 calls:
+    # dirty check, apply, reapply, dtest, then post-build cleanup (3 calls:
     # WRKDIR wipe + substrate reset + baseline reapply).
-    assert len(fake_env.calls) == 6
-    apply_argv = " ".join(fake_env.calls[0]["argv"])
+    assert len(fake_env.calls) == 7
+    assert "git status --porcelain" in " ".join(fake_env.calls[0]["argv"])
+    apply_argv = " ".join(fake_env.calls[1]["argv"])
     assert "git apply --3way" in apply_argv
     assert "/work/.apply-and-build.diff" in apply_argv
     # Staged file should have been cleaned up after the apply.
@@ -191,7 +192,7 @@ def test_diff_mode_refuses_dirty_port_tree(fake_env, monkeypatch, tmp_path) -> N
 
     monkeypatch.setattr(
         cli, "_port_dirty_paths",
-        lambda workspace, origin: [" M ports/devel/foo/Makefile"],
+        lambda root_dir, origin: [" M ports/devel/foo/Makefile"],
     )
     diff = tmp_path / "fix.diff"
     diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n")
@@ -214,8 +215,10 @@ def test_diff_apply_failure_short_circuits(fake_env, monkeypatch, tmp_path) -> N
     from dports_dev_env.cli import cmd_apply_and_build
     out = _capture_stdout(monkeypatch)
 
-    # First call (git apply) returns non-zero with an error.
+    # The pre-replay dirty check runs first (in-chroot since B1), then the
+    # git apply returns non-zero with an error.
     fake_env.runner.outcomes = [
+        subprocess.CompletedProcess([], 0, "", ""),   # dirty check → clean
         subprocess.CompletedProcess([], 1, "", "error: patch failed"),
     ]
     diff = tmp_path / "bad.diff"
@@ -373,6 +376,7 @@ def test_baseline_reapply_skipped_when_substrate_reset_fails(
     # reapply + dtest + WRKDIR-wipe stages consume the first ones,
     # then the substrate reset gets rc=1.
     fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),     # dirty check → clean
         _sp.CompletedProcess([], 0, "", ""),     # diff apply
         _sp.CompletedProcess([], 0, "", ""),     # reapply
         _sp.CompletedProcess([], 0, "", ""),     # dsynth (dtest)
