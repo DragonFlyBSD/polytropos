@@ -76,6 +76,17 @@ rather than allowed to reap the service's in-flight jobs.
 The lock is released by the kernel when the process dies, so a killed runner
 never blocks the next start.
 
+**A restarted runner cleans up after the one that died.** Holding the lock
+and having claimed nothing yet, it knows every leftover is a leftover:
+
+- `inflight/` job files are moved to `failed/` with a note. Their rows were
+  already marked dead; the files were previously stranded, since only
+  `pending/` is ever scanned again.
+- Per-job worktrees (`/work/job-*`) in the runner's dev-env are removed and
+  the ports link is put back on the main checkout. Only that env is swept —
+  `dev-env shell` does not mark an env busy, so sweeping envs the runner
+  does not own could mean `rm -rf` inside a tree someone is working in.
+
 ## Environment
 
 Required by the runner:

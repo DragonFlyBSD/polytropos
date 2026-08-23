@@ -1606,6 +1606,65 @@ def create_job_worktree(env: str, bundle_id: str, kind: str = "patch") -> dict:
     }
 
 
+def sweep_job_worktrees(env: str, keep: tuple[str, ...] = ()) -> dict:
+    """Remove every per-job worktree in the env except those named in ``keep``.
+
+    Crash recovery (B3). A job that dies between ``create_job_worktree`` and
+    ``destroy_job_worktree`` leaves its tree behind; nothing else reclaims it,
+    because the next job for a *different* bundle gets a different directory.
+
+    Works on directory NAMES, not bundle ids. ``_job_worktree_name`` sanitizes
+    the id (any character outside ``[A-Za-z0-9._-]`` becomes ``_``), so the
+    mapping is lossy and a swept name cannot be turned back into the bundle it
+    came from. ``destroy_job_worktree`` is therefore the wrong tool here.
+
+    The ports link is restored to the main checkout first: it may be pointing
+    at one of the directories about to be removed.
+
+    Safe to call when nothing is stale — it is a no-op that still prunes the
+    worktree admin entries of directories that vanished.
+    """
+    link_p = _point_ports_link(env, PORTS_MAIN_DIR.rpartition("/")[2])
+    if link_p.returncode != 0:
+        return _exec_result(
+            link_p.returncode, link_p.stdout, link_p.stderr,
+            error=f"could not restore {PORTS_DIR} before sweeping",
+            removed=[], kept=list(keep),
+        )
+
+    git = f"git -C {shlex.quote(PORTS_MAIN_DIR)}"
+    keep_list = " ".join(shlex.quote(k) for k in keep)
+    # The `case` re-checks the job- prefix the glob already implies: this
+    # loop runs rm -rf, and a guard that cannot fire is cheaper than the
+    # one time the glob is edited into something broader.
+    script = f"""
+set -u
+cd /work || exit 1
+{git} worktree prune
+for d in job-*; do
+    [ -d "$d" ] || continue
+    case "$d" in job-*) ;; *) continue ;; esac
+    for k in {keep_list or "''"}; do
+        [ "$d" = "$k" ] && continue 2
+    done
+    {git} worktree remove --force "/work/$d" >/dev/null 2>&1
+    rm -rf "/work/$d"
+    printf 'removed %s\n' "$d"
+done
+{git} worktree prune
+"""
+    p = _exec(env, "/bin/sh", "-c", script, cwd="/work")
+    removed = [
+        line.split(" ", 1)[1]
+        for line in (p.stdout or "").splitlines()
+        if line.startswith("removed ")
+    ]
+    return _exec_result(
+        p.returncode, p.stdout, p.stderr,
+        removed=removed, kept=list(keep),
+    )
+
+
 def destroy_job_worktree(
     env: str, bundle_id: str, kind: str = "patch", *, drop_branch: bool = False,
 ) -> dict:

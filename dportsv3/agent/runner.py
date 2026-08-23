@@ -1065,6 +1065,70 @@ def _release_issue_build(queue_root: Path, issue_key: str,
             f"could not release confirm claim for {issue_key}: {exc}")
 
 
+def sweep_stranded_inflight(queue_root: Path) -> list[str]:
+    """Move ``inflight/`` leftovers to ``failed/`` (B3).
+
+    ``reap_orphans`` marks the DB rows DEAD but never touches the files, and
+    ``claim_next_job_batch`` only globs ``pending/`` — so a job file stranded
+    by a crash is invisible to the runner forever while its row reads dead.
+
+    Moved rather than deleted: the payload is the only record of what the job
+    was, and ``failed/`` is where a human already looks. Safe because the
+    runner holds an exclusive lock, so nothing in ``inflight/`` belongs to a
+    live process.
+
+    Returns the names moved.
+    """
+    inflight = queue_root / "inflight"
+    if not inflight.is_dir():
+        return []
+    moved: list[str] = []
+    for job_path in sorted(inflight.glob("*.job")):
+        try:
+            write_error_note(
+                job_path,
+                "stranded in inflight/ by a previous runner; not reprocessed",
+            )
+            move_job(job_path, "failed")
+            moved.append(job_path.name)
+        except OSError as exc:
+            log(queue_root, "WARN",
+                f"could not sweep stranded job {job_path.name}: {exc}")
+    return moved
+
+
+def sweep_stale_worktrees(queue_root: Path, env: str) -> list[str]:
+    """Remove per-job worktrees left by a crashed runner (B3).
+
+    Called at startup only, and only while the runner lock is held. That is
+    what makes it decidable: no other runner exists, and this one has not
+    claimed anything yet, so every ``/work/job-*`` directory is by definition
+    a leftover. Nothing is checked for liveness because nothing can be live.
+
+    Single env by design. Sweeping envs this runner is not using would mean
+    running ``rm -rf`` inside a tree an operator might be sitting in — the
+    lock says nothing about ``dev-env shell``, which does not mark an env
+    busy. When a runner owns several envs (poly-s9m) this loops over the set
+    it owns, which is still the set it can reason about.
+
+    Returns the worktree directory names removed.
+    """
+    if not env:
+        return []
+    from dportsv3.agent import worker  # noqa: PLC0415
+    try:
+        result = worker.sweep_job_worktrees(env)
+    except Exception as exc:
+        log(queue_root, "WARN", f"worktree sweep failed for env {env}: {exc}")
+        return []
+    if not result.get("ok"):
+        log(queue_root, "WARN",
+            f"worktree sweep failed for env {env}: "
+            f"{result.get('error') or result.get('stderr_tail', '')[:200]}")
+        return []
+    return list(result.get("removed") or [])
+
+
 def _reset_building_markers(queue_root: Path) -> None:
     """Crash recovery (C2), run once before the main loop.
 
@@ -4549,6 +4613,15 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             log(queue_root, "WARN", f"reap_orphans failed: {exc}")
 
+        # B3: reap_orphans just marked those rows DEAD but left their files
+        # in inflight/, where nothing ever looks at them again.
+        stranded = sweep_stranded_inflight(queue_root)
+        if stranded:
+            log(queue_root, "INFO",
+                f"swept {len(stranded)} stranded inflight job(s) to failed/: "
+                + ", ".join(stranded[:5])
+                + ("..." if len(stranded) > 5 else ""))
+
         # C2 crash recovery: a confirm build runs in-process, so a runner
         # that died mid-build left a stale building_generation marker.
         # Clear them so the level-triggered feed re-derives and re-enqueues.
@@ -4614,6 +4687,21 @@ def main(argv: list[str] | None = None) -> int:
     # without a runner restart. Empty = no gate (no env to watch);
     # operator gets a one-time WARN at startup.
     runner_env = resolve_env(None) or ""
+
+    # B3: with the lock held and nothing claimed yet, every /work/job-*
+    # directory in our env is a leftover from a runner that died mid-job.
+    if runner_env:
+        swept = sweep_stale_worktrees(queue_root, runner_env)
+        if swept:
+            log(queue_root, "INFO",
+                f"swept {len(swept)} stale worktree(s) in {runner_env}: "
+                + ", ".join(swept[:5])
+                + ("..." if len(swept) > 5 else ""))
+            activity_log(queue_root, "worktrees_swept",
+                         f"removed {len(swept)} stale worktree(s) in "
+                         f"{runner_env}",
+                         extra={"env": runner_env, "removed": swept[:20]})
+
     if not runner_env:
         log(queue_root, "WARN",
             "no dev-env resolved at runner start; dsynth-busy gating "
