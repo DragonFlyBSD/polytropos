@@ -37,6 +37,14 @@ packages; site-owned inputs (the live config dir, the ports tree) are named via
 package — that coupling is what made this repo hard to separate, and the
 resolver raises rather than degrading silently when something is missing.
 
+## Beads: look it up, don't recall it
+
+Look bead IDs up (`bd list`, `bd search`) before citing one — never write an ID
+from memory.
+
+Read the bead before acting on it. A remembered summary is not the bead: notes
+get corrected, and any line numbers they cite go stale as soon as the file moves.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 
