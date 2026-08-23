@@ -102,6 +102,21 @@ def queue_env(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "assert_port_clean",
                         lambda env, origin: {"ok": True})
 
+    # B1 gives each job its own worktree, and since poly-m7o a job that
+    # cannot get one is retired worktree_unavailable instead of running
+    # against whatever the ports link points at. These tests exercise the
+    # orchestrator event chain, not worktree provisioning, so hand them a
+    # tree that always succeeds.
+    monkeypatch.setattr(
+        worker, "create_job_worktree",
+        lambda env, bundle_id, kind="patch": {
+            "ok": True, "branch": f"bundle/{bundle_id}", "base": "master",
+            "worktree": f"/work/job-{kind}-{bundle_id}", "created": True,
+        })
+    monkeypatch.setattr(
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: {"ok": True})
+
     # Stub a healthy env so the gate doesn't pause + decide() proceeds.
     from dportsv3.agent import health as health_mod
     monkeypatch.setattr(

@@ -100,6 +100,13 @@ class JobEvent(StrEnum):
     # views and the manual queue.
     SKIP_ORIGIN_LOCKED = "skip_origin_locked"
     SKIP_ISSUE_MUTED   = "skip_issue_muted"
+    # The env could not give the job its own worktree of the ports tree.
+    # Its own event rather than ENV_BROKEN or PATCH_GAVE_UP: env_broken
+    # feeds the health contract and decision.py's "defer until healthy",
+    # and patch_gave_up feeds decision.py's failed-patch-attempt counter.
+    # A machinery failure is neither, and borrowing either would corrupt
+    # a signal something else reads.
+    WORKTREE_UNAVAILABLE = "worktree_unavailable"
 
 
 # (from_state, event) -> to_state. ``None`` as from_state means
@@ -152,6 +159,14 @@ TRANSITIONS: dict[tuple[JobState | None, JobEvent], JobState] = {
     (JobState.VERIFYING,   JobEvent.ENV_BROKEN):       JobState.DEAD,
     (JobState.VERIFYING_FIX, JobEvent.ENV_BROKEN):     JobState.DEAD,
     (JobState.CONFIRMING,  JobEvent.ENV_BROKEN):       JobState.DEAD,
+
+    # No isolated tree, no job. Reachable from PATCHING in practice —
+    # PATCH_START fires before the checkout — with CLAIMED and TRIAGED
+    # covered so a future caller earlier in the flow retires cleanly
+    # rather than hitting a swallowed IllegalTransition.
+    (JobState.CLAIMED,     JobEvent.WORKTREE_UNAVAILABLE): JobState.DEAD,
+    (JobState.TRIAGED,     JobEvent.WORKTREE_UNAVAILABLE): JobState.DEAD,
+    (JobState.PATCHING,    JobEvent.WORKTREE_UNAVAILABLE): JobState.DEAD,
 
     # Startup orphan reap — same shape as env_broken but a distinct
     # event so retire_reason can be filled differently.
@@ -218,6 +233,7 @@ _TERMINAL_REASONS: dict[JobEvent, str] = {
     JobEvent.CONFIRM_GAVE_UP:  "confirm_build_failed",
     JobEvent.SKIP_ORIGIN_LOCKED: "origin_locked",
     JobEvent.SKIP_ISSUE_MUTED: "issue_muted",
+    JobEvent.WORKTREE_UNAVAILABLE: "worktree_unavailable",
 }
 
 

@@ -2826,25 +2826,34 @@ def _checkout_bundle_branch_for_job(
     env: str | None,
     bundle_id: str | None,
     job_type: str,
-) -> None:
-    """Step 30 slice 1: ensure the env is checked out on this
-    bundle's dedicated branch before any worker.* call touches the
-    substrate. Called from process_patch_job and the verify dispatch.
+) -> bool:
+    """Give the job its own worktree of the ports tree before any
+    ``worker.*`` call touches the substrate. Returns whether it has one.
 
-    Soft-fail by design: if the checkout itself fails (env doesn't
-    exist, git unavailable, subprocess raises), the job proceeds
-    anyway and falls back to pre-Step-30 behavior (commits land on
-    whatever branch is current, changes.diff is HEAD-relative).
-    The activity row makes the lost-isolation visible so an operator
-    can spot it; failing the job hard would regress a class of
-    bundles that have already passed triage and would otherwise
-    run fine.
+    HARD-FAIL. This was soft-fail until B1, on the reasoning that a
+    failed checkout only cost isolation — the job would fall back to
+    "commits land on whatever branch is current", and bundles that had
+    already passed triage would still run. That reasoning died with B1.
+    The fallback is no longer a shared tree sitting on some branch:
+    ``create_job_worktree`` returns before repointing the link when
+    ``worktree add`` fails, so the job runs against whatever
+    ``PORTS_DIR`` last pointed at — after a crashed predecessor, that is
+    another job's worktree, and the commits land on that job's branch.
 
-    No-op when env or bundle_id is missing (e.g. triage jobs that
-    don't touch the substrate).
+    There is no safe tree to fall back to. Pointing the link at
+    ``ports-main`` is worse rather than better: worktrees are cut from a
+    local branch name (``_resolve_bundle_base_branch``), so commits
+    landing there poison the base every future worktree branches from.
+
+    So: no worktree, no job. A job retired ``worktree_unavailable`` can
+    be re-enqueued from its bundle; silent cross-job contamination
+    cannot be detected at all.
+
+    Returns True as a no-op when env or bundle_id is missing (e.g.
+    triage jobs that don't touch the substrate).
     """
     if not env or not bundle_id:
-        return
+        return True
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
         result = worker.create_job_worktree(env, bundle_id, "patch")
@@ -2859,7 +2868,7 @@ def _checkout_bundle_branch_for_job(
             )
         except Exception:
             pass
-        return
+        return False
     if not result.get("ok"):
         try:
             activity_log(
@@ -2874,7 +2883,7 @@ def _checkout_bundle_branch_for_job(
             )
         except Exception:
             pass
-        return
+        return False
     # Success row. Only emit when we actually did work (created
     # the branch, or switched onto an existing one) — the "already
     # current" no-op path would otherwise flood the activity log on
@@ -2894,6 +2903,7 @@ def _checkout_bundle_branch_for_job(
             )
         except Exception:
             pass
+    return True
 
 
 def _checkout_verify_branch_for_job(
@@ -3867,6 +3877,7 @@ def process_patch_job(
     completion. The orchestrator fires them for the lead; this
     wrapper fans the same events out to siblings.
     """
+    from dportsv3.agent.lifecycle import JobEvent
     from dportsv3.agent.step import Orchestrator, StepCtx
     from dportsv3.agent.steps import PatchAttemptStep, PatchServices
 
@@ -3897,15 +3908,32 @@ def process_patch_job(
         return skipped
     # ---------------------------------------------------------------
 
-    # Step 30 slice 1: pin the patch's work to a per-bundle branch.
-    # Reuses an existing bundle/<id> branch; creates a fresh one off
-    # the env's base otherwise. Soft-fail by design (see
-    # _checkout_bundle_branch_for_job for the trade-off rationale).
-    _checkout_bundle_branch_for_job(
+    # Step 30 slice 1: give the patch its own worktree, cut from or
+    # reusing bundle/<id>. Hard-fail since B1 — without an isolated tree
+    # the job would edit whatever PORTS_DIR last pointed at, which after
+    # a crashed predecessor is another job's worktree. See
+    # _checkout_bundle_branch_for_job for why there is no safe fallback.
+    if not _checkout_bundle_branch_for_job(
         queue_root=queue_root, job_id=job_path.name,
         env=resolve_env(job), bundle_id=job.get("bundle_id") or None,
         job_type="patch",
-    )
+    ):
+        detail = {
+            "bundle_id": job.get("bundle_id"),
+            "origin": origin,
+            "job_type": "patch",
+            "reason": "worktree_unavailable",
+        }
+        activity_log(
+            queue_root, "patch_skipped_worktree_unavailable",
+            f"{origin}: no isolated worktree; patch not run",
+            job_id=job_id, extra=detail,
+        )
+        _apply_transition(job_id, JobEvent.WORKTREE_UNAVAILABLE, detail=detail)
+        for s in sibling_paths or ():
+            _apply_transition(s.name, JobEvent.WORKTREE_UNAVAILABLE,
+                              detail=detail)
+        return False, "worktree_unavailable"
 
     # Step 38a: record the env's compose target so get_effective_overlay
     # can scope-filter overlay.dops by the build line the env targets.
