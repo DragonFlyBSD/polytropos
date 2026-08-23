@@ -61,6 +61,21 @@ dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
 All three read the same `state.db`. Order of startup doesn't matter —
 each one is idempotent on the schema.
 
+**Only one runner at a time.** The runner takes an exclusive `flock` on
+`<queue-root>/runner.lock` at startup and exits `3` if another one already
+holds it, naming the process that does. Its startup sweeps are global and
+unqualified — they mark every in-flight job dead and discard queued confirm
+jobs — so a second runner would corrupt the first's view of what is running.
+The lock is what makes those sweeps safe: hold it, and every in-flight row
+really is a leftover.
+
+This applies to `--once` as well, which runs the same sweeps before
+processing anything. Running it by hand while the service is up is refused
+rather than allowed to reap the service's in-flight jobs.
+
+The lock is released by the kernel when the process dies, so a killed runner
+never blocks the next start.
+
 ## Environment
 
 Required by the runner:

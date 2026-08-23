@@ -37,6 +37,7 @@ Job fields:
 """
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -1670,6 +1671,107 @@ def _heartbeat_loop():
                 pass
         
         _heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
+
+
+#: Name of the exclusive-startup lock, taken under ``queue_root``.
+RUNNER_LOCK_NAME = "runner.lock"
+
+#: Exit code when another runner already holds the lock. Distinct from 1 so
+#: a supervisor can tell "already running" from a real startup failure.
+EXIT_RUNNER_LOCKED = 3
+
+#: Held open for the process's lifetime. flock is released when the fd
+#: closes, so dropping this reference would silently release the lock.
+_runner_lock_file = None
+
+
+def describe_lock_holder() -> str:
+    """Best-effort description of whichever runner holds the lock.
+
+    Reads ``runners`` for processes that never recorded a clean shutdown.
+    A state.db lives on a local filesystem (sqlite WAL needs shared
+    memory), so a competing runner is necessarily on this host and
+    ``os.kill(pid, 0)`` settles liveness exactly — no heartbeat-staleness
+    guessing. PermissionError means the pid exists but belongs to another
+    user, which is still alive.
+    """
+    if _state_db_conn is None:
+        return "another runner (state.db unavailable, cannot identify it)"
+    try:
+        with _state_db_lock:
+            rows = _state_db_conn.execute(
+                """SELECT runner_id, hostname, pid, started_at, last_heartbeat_at
+                   FROM runners WHERE stopped_at IS NULL
+                   ORDER BY last_heartbeat_at DESC""",
+            ).fetchall()
+    except Exception:
+        return "another runner (could not read the runners table)"
+
+    host = socket.gethostname()
+    for row in rows:
+        runner_id, hostname, pid, started_at, heartbeat = (
+            row[0], row[1], row[2], row[3], row[4],
+        )
+        if hostname != host or not pid:
+            continue
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            continue
+        except (PermissionError, OSError):
+            pass  # exists, just not ours to signal
+        return (f"runner {runner_id} (pid {pid}, started {started_at}, "
+                f"last heartbeat {heartbeat})")
+    return "another runner (no live pid recorded; check for a stale process)"
+
+
+def acquire_runner_lock(queue_root: Path) -> bool:
+    """Take the exclusive runner lock, or report that we could not.
+
+    Multi-runner is not supported. Every startup sweep below is global and
+    unqualified — reap_orphans marks all inflight rows DEAD,
+    _reset_building_markers discards queued confirm jobs — so a second
+    runner corrupts the first's read model and opens the duplicate-enqueue
+    guard. Refusing to start is what makes those sweeps sound: hold the
+    lock and, by construction, every inflight row is genuinely an orphan.
+
+    flock rather than a lockfile or a mkdir lock (dev-env's CacheLock):
+    the kernel releases it when the process dies, so a SIGKILLed runner
+    does not block every later restart. That failure mode is exactly the
+    crash this lock exists to recover from.
+
+    Scoped to ``queue_root`` because the filesystem queue is the source of
+    truth for what processes next. Two runners pointed at different queue
+    roots but the same DPORTSV3_STATE_DB would still both start and fight
+    over the read model; that is not this lock's job.
+    """
+    global _runner_lock_file
+    lock_path = queue_root / RUNNER_LOCK_NAME
+    try:
+        handle = open(lock_path, "w")
+    except OSError as exc:
+        print(f"error: cannot open runner lock {lock_path}: {exc}",
+              file=sys.stderr)
+        return False
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    _runner_lock_file = handle
+    return True
+
+
+def release_runner_lock() -> None:
+    """Drop the lock. Closing the fd is what releases it."""
+    global _runner_lock_file
+    if _runner_lock_file is None:
+        return
+    try:
+        _runner_lock_file.close()
+    except OSError:
+        pass
+    _runner_lock_file = None
 
 
 def deregister_runner() -> None:
@@ -4392,6 +4494,16 @@ def main(argv: list[str] | None = None) -> int:
                     f"stubbed {n} previously-unseen env(s) into env_health_status")
         except Exception as exc:
             log(queue_root, "WARN", f"stub_unprobed_envs failed: {exc}")
+    # Before any sweep runs, and before this process records itself in
+    # `runners` — a refused runner must not appear as a participant.
+    if not acquire_runner_lock(queue_root):
+        holder = describe_lock_holder()
+        print(f"error: another runner already owns {queue_root}: {holder}",
+              file=sys.stderr)
+        log(queue_root, "ERROR",
+            f"refusing to start: {holder} already owns this queue")
+        return EXIT_RUNNER_LOCKED
+
     register_runner()
     start_heartbeat()
 
@@ -4572,6 +4684,7 @@ def main(argv: list[str] | None = None) -> int:
         stop_heartbeat()
         update_runner_status("stopped", job_id=None, stage=None)
         deregister_runner()
+        release_runner_lock()
 
     return 0
 
