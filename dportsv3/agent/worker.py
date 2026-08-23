@@ -1736,14 +1736,14 @@ def validate_dops(env: str, origin: str) -> dict:
     ``_verify_conversion`` after the agent finishes — this is the
     cheap inner-loop validation, not a replacement.
 
-    Invokes the dportsv3 script via the ``DELTAPORTS_ROOT`` env var
-    that dev-env's ``build_env_dict`` sets inside the chroot — the
-    binary lives in the DeltaPorts checkout and isn't on the
-    chroot's PATH. Using the env var (not a hardcoded path)
-    survives a future relocation.
+    Invokes the wrapper via the ``POLYTROPOS_ROOT`` env var that
+    dev-env's ``build_env_dict`` sets inside the chroot — it isn't on
+    the chroot's PATH. The overlay it checks is addressed via
+    ``DELTAPORTS_ROOT``: two different trees since the repository
+    split, and the wrapper is not in the ports one.
     """
     cmd = (
-        '"$DELTAPORTS_ROOT/dportsv3" dsl check '
+        '"$POLYTROPOS_ROOT/bin/dportsv3" dsl check '
         '"$DELTAPORTS_ROOT/ports/$1/overlay.dops"'
     )
     p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)

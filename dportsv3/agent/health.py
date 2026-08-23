@@ -230,29 +230,31 @@ def _check_dports_compose(env: str) -> HealthCheck:
     env, which exercises the same import path as compose without
     actually composing anything.
     """
-    # Resolve dportsv3 via $DELTAPORTS_ROOT (set inside the chroot
-    # by dev-env's build_env_dict) rather than hardcoding the path.
-    # See validate_dops in worker.py for the same convention.
-    sh_cmd = '"$DELTAPORTS_ROOT/dportsv3" --version'
+    # Resolve the wrapper via $POLYTROPOS_ROOT (set inside the chroot by
+    # dev-env's build_env_dict) rather than hardcoding the path. NOT
+    # $DELTAPORTS_ROOT: that is the ports tree, and the wrapper only lived
+    # there before the repository split. Note the bin/ — in this repo the
+    # repo-root `dportsv3` name belongs to the Python package.
+    sh_cmd = '"$POLYTROPOS_ROOT/bin/dportsv3" --version'
     try:
         p = _run_in_env(env, "/bin/sh", "-c", sh_cmd, timeout=15)
     except subprocess.TimeoutExpired:
         return HealthCheck(
             name="dports_compose", status="broken",
-            detail="$DELTAPORTS_ROOT/dportsv3 --version timed out (>15s) inside env",
+            detail="$POLYTROPOS_ROOT/bin/dportsv3 --version timed out (>15s) inside env",
             operator_action="check the env's venv state",
         )
     if p.returncode == 0:
         return HealthCheck(
             name="dports_compose", status="ok",
-            detail=(p.stdout.strip() or "$DELTAPORTS_ROOT/dportsv3 --version OK"),
+            detail=(p.stdout.strip() or "$POLYTROPOS_ROOT/bin/dportsv3 --version OK"),
         )
     stderr = (p.stderr or "").strip()
     # Surface the missing-deps message verbatim; that's the most
     # actionable diagnostic and what python_runtime would also catch.
     return HealthCheck(
         name="dports_compose", status="broken",
-        detail=f"$DELTAPORTS_ROOT/dportsv3 --version failed (rc={p.returncode}): {stderr[:500]}",
+        detail=f"$POLYTROPOS_ROOT/bin/dportsv3 --version failed (rc={p.returncode}): {stderr[:500]}",
         operator_action=(
             "run `dportsv3 dev-env health {env}` for per-aspect detail; "
             "if python_runtime is broken, fix it first"
