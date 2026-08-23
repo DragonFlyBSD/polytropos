@@ -36,14 +36,21 @@ class EnvResolution:
     source: str            # "job" | "tracker" | "cli_flag" | "auto" | "none"
     refusal_reason: str | None = None
     available_envs: tuple[str, ...] = ()
+    #: Set when the env list could not be read at all, as opposed to
+    #: being genuinely empty. Callers that must not proceed on a guess
+    #: check this rather than ``available_envs == ()``.
+    enumeration_error: str | None = None
 
 
-def list_available_envs() -> tuple[str, ...]:
-    """Enumerate envs from the filesystem via EnvironmentStore.
+def list_available_envs_detailed() -> tuple[tuple[str, ...], str | None]:
+    """Enumerate envs, and say *why* the list is empty when it is.
 
-    Returns a sorted tuple of env names. Empty tuple if the store
-    can't be loaded (no cache root, not running as root, etc.) —
-    callers treat that as "no envs known".
+    Returns ``(names, error)``. ``error`` is non-None only when the store
+    could not be read at all. That is a different situation from "no
+    envs exist" and takes a different operator action, so the two must
+    not collapse into the same empty tuple — see poly-i7y, where a
+    non-root runner read the store as empty and ran with the
+    dsynth-busy gate switched off.
     """
     # Deferred import of a *declared* dependency (see pyproject). It stays
     # inside the function so importing the agent stays cheap, and so a
@@ -56,21 +63,47 @@ def list_available_envs() -> tuple[str, ...]:
         # A broken install, not an empty machine. Say so — the operator
         # action ("reinstall the generator venv") has nothing to do with
         # the one they'd infer from "no envs exist" ("create an env").
-        _log.error("list_available_envs: dports_dev_env is not importable "
-                   "(%s) — the generator venv is missing its dev-env "
-                   "dependency; reinstall it", exc)
-        return ()
+        msg = (f"dports_dev_env is not importable ({exc}) — the generator "
+               f"venv is missing its dev-env dependency; reinstall it")
+        _log.error("list_available_envs: %s", msg)
+        return (), msg
 
     try:
-        store = EnvironmentStore(load_config())
-        return tuple(sorted(info.name for _, info in store.list_infos()))
+        config = load_config()
+    except Exception as exc:
+        msg = (f"the dev-env config could not be loaded "
+               f"({type(exc).__name__}: {exc})")
+        _log.error("list_available_envs: %s", msg)
+        return (), msg
+
+    try:
+        store = EnvironmentStore(config)
+        names = tuple(sorted(info.name for _, info in store.list_infos()))
+    except PermissionError as exc:
+        msg = (f"the dev-env store at {config.envs_dir} is not readable "
+               f"({exc.strerror}) — every dev-env command requires root, "
+               f"so run the runner as root")
+        _log.error("list_available_envs: %s", msg)
+        return (), msg
     except Exception as exc:
         # Log so a broken config doesn't masquerade as "no envs exist"
         # — symptoms diverge (auto-pick refusal vs. "create one") and
-        # the WARN tells the operator which one they're actually in.
-        _log.warning("list_available_envs: failed to enumerate envs (%s: %s); "
-                     "treating as empty", type(exc).__name__, exc)
-        return ()
+        # the message tells the operator which one they're actually in.
+        msg = (f"enumerating envs failed ({type(exc).__name__}: {exc})")
+        _log.error("list_available_envs: %s", msg)
+        return (), msg
+
+    return names, None
+
+
+def list_available_envs() -> tuple[str, ...]:
+    """Enumerate envs from the filesystem via EnvironmentStore.
+
+    Returns a sorted tuple of env names. Empty tuple if the store can't
+    be read; callers that need to tell *why* it was empty want
+    :func:`list_available_envs_detailed` instead.
+    """
+    return list_available_envs_detailed()[0]
 
 
 def resolve_env_for_job(
@@ -79,12 +112,14 @@ def resolve_env_for_job(
     cli_env: str | None = None,
     *,
     available_envs: Iterable[str] | None = None,
+    enumeration_error: str | None = None,
 ) -> EnvResolution:
     """Resolve the dev-env to use for ``job``.
 
     ``available_envs`` is the enumerable env list; if not supplied
-    we call :func:`list_available_envs`. Pass an explicit value in
-    tests to avoid touching the host filesystem.
+    we call :func:`list_available_envs_detailed`. Pass an explicit
+    value in tests to avoid touching the host filesystem, with
+    ``enumeration_error`` to simulate an unreadable store.
     """
     # Step 1: job carries its own env (hook-driven).
     if job is not None:
@@ -120,17 +155,20 @@ def resolve_env_for_job(
         return EnvResolution(env=cli_env, source="cli_flag")
 
     # Step 4: auto-pick if exactly one env exists.
-    envs = (
-        tuple(available_envs)
-        if available_envs is not None
-        else list_available_envs()
-    )
+    if available_envs is not None:
+        envs = tuple(available_envs)
+    else:
+        envs, enumeration_error = list_available_envs_detailed()
     if len(envs) == 1:
         return EnvResolution(env=envs[0], source="auto",
                              available_envs=envs)
 
     # Step 5: refuse.
-    if len(envs) == 0:
+    if enumeration_error:
+        # Not an empty machine — an unreadable one. Saying "create an
+        # env" here sends the operator at the wrong problem.
+        reason = f"could not enumerate dev-envs: {enumeration_error}"
+    elif len(envs) == 0:
         reason = (
             "no dev-envs exist; create one with "
             "`dportsv3 dev-env create NAME --target TARGET`"
@@ -144,4 +182,5 @@ def resolve_env_for_job(
     return EnvResolution(
         env=None, source="none",
         refusal_reason=reason, available_envs=envs,
+        enumeration_error=enumeration_error,
     )

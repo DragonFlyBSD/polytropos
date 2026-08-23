@@ -157,6 +157,19 @@ def resolve_env_for_gate() -> str | None:
     return val
 
 
+def _no_env_reason() -> str:
+    """Operator-facing reason the runner has no env, for the gate.
+
+    Distinguishes "no envs exist" from "several exist, pick one" from
+    "the store could not be read" — three different fixes.
+    """
+    try:
+        r = resolve_env_or_reason(None)
+    except Exception as exc:  # never let the gate's message crash the gate
+        return f"no dev-env resolved ({type(exc).__name__}: {exc})"
+    return r.refusal_reason or "no dev-env resolved"
+
+
 def resolve_env_or_reason(job: dict | None):
     """Like resolve_env but returns the full EnvResolution so callers
     can surface refusal_reason in their error path."""
@@ -1743,6 +1756,10 @@ RUNNER_LOCK_NAME = "runner.lock"
 #: Exit code when another runner already holds the lock. Distinct from 1 so
 #: a supervisor can tell "already running" from a real startup failure.
 EXIT_RUNNER_LOCKED = 3
+
+#: Exit code when the dev-env store cannot be read. Distinct from 1 and 3
+#: because the operator action is specific: run as root. See poly-i7y.
+EXIT_ENV_UNREADABLE = 4
 
 #: Held open for the process's lifetime. flock is released when the fd
 #: closes, so dropping this reference would silently release the lock.
@@ -4586,6 +4603,23 @@ def main(argv: list[str] | None = None) -> int:
                     f"stubbed {n} previously-unseen env(s) into env_health_status")
         except Exception as exc:
             log(queue_root, "WARN", f"stub_unprobed_envs failed: {exc}")
+    # poly-i7y: an env store we cannot read is not an empty machine. Every
+    # dev-env subcommand calls require_root(), so a runner that cannot
+    # enumerate envs cannot exec into one either — it would run jobs with
+    # the dsynth-busy gate switched off, which is how buildbase gets
+    # corrupted. Refuse before taking the lock, so the refusal costs a
+    # live runner nothing.
+    from dportsv3.agent.env_resolver import (  # noqa: PLC0415
+        list_available_envs_detailed,
+    )
+    _, env_list_error = list_available_envs_detailed()
+    if env_list_error:
+        print(f"error: cannot enumerate dev-envs: {env_list_error}",
+              file=sys.stderr)
+        log(queue_root, "ERROR",
+            f"refusing to start: cannot enumerate dev-envs: {env_list_error}")
+        return EXIT_ENV_UNREADABLE
+
     # Before any sweep runs, and before this process records itself in
     # `runners` — a refused runner must not appear as a participant.
     if not acquire_runner_lock(queue_root):
@@ -4704,19 +4738,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if not runner_env:
         log(queue_root, "WARN",
-            "no dev-env resolved at runner start; dsynth-busy gating "
-            "disabled. Concurrent dsynth runs in the same env may "
-            "corrupt buildbase. Set an active env in the tracker UI "
-            "or pass --env NAME.")
+            "no dev-env resolved at runner start; the runner will hold "
+            "instead of processing jobs, because without an env there is "
+            "no dsynth-busy gate and concurrent dsynth runs corrupt "
+            "buildbase. Set an active env in the tracker UI or pass "
+            "--env NAME.")
 
     _last_busy_reason = ""
     _last_health_reason = ""
+    _last_no_env_reason = ""
     health_cache_seconds = int(
         os.environ.get("DP_HARNESS_HEALTH_CACHE_SECONDS", "60")
     )
 
     def _gate_blocked() -> bool:
-        nonlocal _last_busy_reason, _last_health_reason
+        nonlocal _last_busy_reason, _last_health_reason, _last_no_env_reason
         # Re-resolve per cycle (cached for 1 s) so operator selection
         # in the tracker UI takes effect without a runner restart.
         runner_env = resolve_env_for_gate() or ""
@@ -4749,7 +4785,27 @@ def main(argv: list[str] | None = None) -> int:
                 _last_health_reason = ""
 
         if not runner_env:
-            return False
+            # poly-i7y: no env means dsynth_active() has nothing to ask
+            # about, so the busy gate is not "off" — it is unanswerable.
+            # Hold rather than run ungated. Reversible from the tracker
+            # UI: selecting an env re-resolves on the next tick.
+            reason = _no_env_reason()
+            if reason != _last_no_env_reason:
+                log(queue_root, "INFO", f"runner paused: {reason}")
+                activity_log(queue_root, "no_env",
+                             "no dev-env resolved; holding jobs "
+                             "(dsynth-busy gate unavailable)",
+                             extra={"reason": reason[:500]})
+                _last_no_env_reason = reason
+            update_runner_status(
+                "paused", job_id=None,
+                stage=f"no_dev_env: {reason[:120]}",
+            )
+            return True
+        if _last_no_env_reason:
+            log(queue_root, "INFO",
+                f"runner resumed: dev-env {runner_env} resolved")
+            _last_no_env_reason = ""
         busy, reason = dsynth_active(runner_env, queue_root)
         if busy and reason != _last_busy_reason:
             log(queue_root, "INFO", f"runner paused: {reason}")
@@ -4764,7 +4820,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.once:
             if _gate_blocked():
-                log(queue_root, "INFO", "skipping --once: dsynth active")
+                log(queue_root, "INFO",
+                    f"skipping --once: {_current_stage or 'gate blocked'}")
             else:
                 batch = claim_next_job_batch(queue_root)
                 if batch:

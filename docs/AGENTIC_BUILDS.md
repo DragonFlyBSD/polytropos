@@ -87,6 +87,19 @@ and having claimed nothing yet, it knows every leftover is a leftover:
   `dev-env shell` does not mark an env busy, so sweeping envs the runner
   does not own could mean `rm -rf` inside a tree someone is working in.
 
+**No env, no jobs.** The dsynth-busy gate asks "is a build running in this
+env?", so with no env resolved there is nothing to ask. The runner holds
+instead of processing jobs ungated, and reports `no_dev_env` with the reason.
+Selecting an env in the tracker UI resumes it on the next tick; `--env NAME`
+does the same at startup. A single env on the host is auto-picked and needs
+no action.
+
+If the env store cannot be *read* at all, that is a different situation and
+the runner exits `4` at startup rather than holding. Every `dev-env`
+subcommand requires root, so a runner that cannot enumerate envs could not
+exec into one either — "no envs exist" and "you are not root" take opposite
+operator actions and must not read the same.
+
 ## Environment
 
 Required by the runner:
