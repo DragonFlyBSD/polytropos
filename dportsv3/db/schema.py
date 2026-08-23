@@ -147,7 +147,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_transition_at TEXT,
     retire_reason TEXT,
     -- canonical relation to the occurrence it works on
-    bundle_id TEXT
+    bundle_id TEXT,
+    -- which runner last transitioned this job (see runners.runner_id).
+    -- Recorded only; no code branches on it.
+    owner_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -185,6 +188,19 @@ CREATE TABLE IF NOT EXISTS runner_status (
     started_at TEXT,
     updated_at TEXT,
     extra_json TEXT
+);
+
+-- One row per runner process. Distinct from runner_status, which stays a
+-- singleton because it is the UI's "what is the runner doing" panel. This
+-- table is the forensic record of who did what, and the substrate a future
+-- multi-runner lease would build on.
+CREATE TABLE IF NOT EXISTS runners (
+    runner_id TEXT PRIMARY KEY,
+    hostname TEXT,
+    pid INTEGER,
+    started_at TEXT,
+    last_heartbeat_at TEXT,
+    stopped_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS env_health_status (
@@ -447,6 +463,7 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN confirm_failure_count "
     "INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
 )
 
 

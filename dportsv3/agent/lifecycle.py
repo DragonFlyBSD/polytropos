@@ -334,6 +334,7 @@ def apply(
     *,
     actor: str = "runner",
     detail: dict | None = None,
+    owner: str | None = None,
 ) -> JobState:
     """Atomic state transition.
 
@@ -347,6 +348,11 @@ def apply(
 
     ``detail`` is an optional dict serialized into
     ``job_events.detail_json``.
+
+    ``owner`` stamps ``jobs.owner_id`` with the runner that made this
+    transition. Recorded for forensics only — nothing reads it. Left
+    untouched when ``None`` so a hook-side transition does not erase
+    the runner that claimed the job.
     """
     if not job_id:
         raise ValueError("job_id required")
@@ -375,24 +381,28 @@ def apply(
         # runner-side enqueue inserts it; the hook inserts via the
         # artifact-store endpoint). Upsert by job_id so apply() works
         # whether or not the row pre-exists.
+        # COALESCE keeps the existing owner when this transition carries
+        # none, so a hook-side event does not blank the claiming runner.
         if retire_reason is not None:
             conn.execute(
-                """INSERT INTO jobs (job_id, state, last_transition_at, retire_reason)
+                """INSERT INTO jobs (job_id, state, last_transition_at, retire_reason, owner_id)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                     state=excluded.state,
+                     last_transition_at=excluded.last_transition_at,
+                     retire_reason=excluded.retire_reason,
+                     owner_id=COALESCE(excluded.owner_id, jobs.owner_id)""",
+                (job_id, new_state.value, ts, retire_reason, owner),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO jobs (job_id, state, last_transition_at, owner_id)
                    VALUES (?, ?, ?, ?)
                    ON CONFLICT(job_id) DO UPDATE SET
                      state=excluded.state,
                      last_transition_at=excluded.last_transition_at,
-                     retire_reason=excluded.retire_reason""",
-                (job_id, new_state.value, ts, retire_reason),
-            )
-        else:
-            conn.execute(
-                """INSERT INTO jobs (job_id, state, last_transition_at)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(job_id) DO UPDATE SET
-                     state=excluded.state,
-                     last_transition_at=excluded.last_transition_at""",
-                (job_id, new_state.value, ts),
+                     owner_id=COALESCE(excluded.owner_id, jobs.owner_id)""",
+                (job_id, new_state.value, ts, owner),
             )
 
         # Resolution propagation: if this event closes the agent's
@@ -476,6 +486,13 @@ def reap_orphans(conn: sqlite3.Connection, actor: str = "runner") -> int:
     CLAIMED, TRIAGING, TRIAGED, PATCHING, VERIFYING. QUEUED stays
     queued (those are claimable). Terminal states (DONE, ESCALATED,
     DEAD) are untouched.
+
+    Deliberately NOT scoped by ``jobs.owner_id``. Scoping would skip the
+    previous process's rows — which are exactly the orphans — and leave
+    them inflight forever, jamming the duplicate-enqueue guard. Scoping
+    only becomes correct once a runner's liveness is queryable, i.e.
+    alongside leases. Until then a single runner is assumed, and the
+    assumption is what makes the unscoped sweep sound.
 
     Returns the count of reaped jobs.
     """

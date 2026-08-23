@@ -42,6 +42,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -49,6 +50,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -161,6 +163,44 @@ def resolve_env_or_reason(job: dict | None):
     return resolve_env_for_job(job, _state_db_conn, cli_env=_CLI_ENV_DEFAULT)
 _heartbeat_stop_event = threading.Event()
 _heartbeat_thread: threading.Thread | None = None
+
+#: Identity of this runner process, stable for its lifetime. Written to
+#: ``runners`` at startup and stamped onto every job this process
+#: transitions. Multi-runner is deliberately not supported yet: nothing
+#: reads this to decide anything. It exists so that when leases arrive
+#: there is already a history of who owned what, and so a second runner
+#: on a shared state.db is visible in the table rather than invisible.
+#: hostname+pid alone can recycle across reboots, hence the suffix.
+_runner_id: str = ""
+
+
+def runner_id() -> str:
+    global _runner_id
+    if not _runner_id:
+        _runner_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    return _runner_id
+
+
+def register_runner() -> None:
+    """Record this process in ``runners``. Best-effort, like every other
+    write to the read model."""
+    if _state_db_conn is None:
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    try:
+        with _state_db_lock:
+            _state_db_conn.execute(
+                """INSERT INTO runners
+                   (runner_id, hostname, pid, started_at, last_heartbeat_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(runner_id) DO UPDATE SET
+                     last_heartbeat_at = excluded.last_heartbeat_at,
+                     stopped_at = NULL""",
+                (runner_id(), socket.gethostname(), os.getpid(), ts, ts),
+            )
+            _state_db_conn.commit()
+    except Exception as exc:
+        print(f"Warning: could not register runner: {exc}", file=sys.stderr)
 _current_job_id: str | None = None
 _current_stage: str | None = None
 
@@ -468,7 +508,8 @@ def _apply_transition(
         return False
     try:
         with _state_db_lock:
-            lifecycle.apply(_state_db_conn, job_id, event, actor=actor, detail=detail)
+            lifecycle.apply(_state_db_conn, job_id, event, actor=actor,
+                            detail=detail, owner=runner_id())
         return True
     except lifecycle.IllegalTransition as exc:
         print(f"Warning: illegal transition {event} on {job_id}: {exc}",
@@ -1619,11 +1660,33 @@ def _heartbeat_loop():
                         """UPDATE runner_status SET updated_at = ? WHERE id = 1""",
                         (ts,)
                     )
+                    _state_db_conn.execute(
+                        """UPDATE runners SET last_heartbeat_at = ?
+                           WHERE runner_id = ?""",
+                        (ts, runner_id()),
+                    )
                     _state_db_conn.commit()
             except Exception:
                 pass
         
         _heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
+
+
+def deregister_runner() -> None:
+    """Stamp ``runners.stopped_at`` on clean shutdown. A crashed runner
+    leaves it NULL with a stale heartbeat, which is the distinction that
+    matters."""
+    if _state_db_conn is None:
+        return
+    try:
+        with _state_db_lock:
+            _state_db_conn.execute(
+                "UPDATE runners SET stopped_at = ? WHERE runner_id = ?",
+                (datetime.now(timezone.utc).isoformat(), runner_id()),
+            )
+            _state_db_conn.commit()
+    except Exception as exc:
+        print(f"Warning: could not deregister runner: {exc}", file=sys.stderr)
 
 
 def start_heartbeat():
@@ -4329,6 +4392,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"stubbed {n} previously-unseen env(s) into env_health_status")
         except Exception as exc:
             log(queue_root, "WARN", f"stub_unprobed_envs failed: {exc}")
+    register_runner()
     start_heartbeat()
 
     # Reap any inflight-ish jobs left over from a previous runner
@@ -4507,6 +4571,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         stop_heartbeat()
         update_runner_status("stopped", job_id=None, stage=None)
+        deregister_runner()
 
     return 0
 
