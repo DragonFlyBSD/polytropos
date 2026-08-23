@@ -377,7 +377,6 @@ def apply_and_build(
     # parallel to worker.reset_port so the two stay easy to keep
     # in sync.
     def _post_build_cleanup() -> None:
-        rel = f"ports/{origin}"
 
         # 1. Best-effort WRKDIR wipe. Failure surfaces as a warning in
         # stderr_tail but does not flip the result; runs first so the
@@ -401,46 +400,19 @@ def apply_and_build(
             existing = result.get("stderr_tail") or ""
             result["stderr_tail"] = (existing + warn)[-2000:]
 
-        # 2. Reset ONLY ports/<origin> back to HEAD. `git apply --3way`
-        # implies --index, so the applied diff (incl. brand-new files
-        # like overlay.dops) is STAGED — a plain `git checkout HEAD --`
-        # + `git clean` can't remove a staged new file, so it leaked
-        # onto the base branch via the verify-branch drop. The three
-        # scoped steps cover every shape without a whole-tree reset
-        # (which could discard unrelated changes if verify ever ran on
-        # the wrong branch):
-        #   2a. `git reset -- <rel>`     unstages everything under rel
-        #       (staged-new files become untracked; staged deletions/
-        #       mods become unstaged).
-        #   2b. `git checkout -- <rel>`  reverts the now-unstaged tracked
-        #       mods/deletions back to HEAD. Tolerate a pathspec
-        #       no-match (a brand-new port dir absent from HEAD) with
-        #       `|| true`.
-        #   2c. `git clean -fd -- <rel>` removes the leftover untracked
-        #       files (the formerly-staged new files from 2a).
-        cleanup = runner.run(
-            ["/bin/sh", "-c",
-             f"cd {PORTS_DIR} && "
-             f"git reset -q -- {shlex.quote(rel)} && "
-             f"{{ git checkout -q -- {shlex.quote(rel)} 2>/dev/null "
-             f"|| true; }} && "
-             f"git clean -fd -- {shlex.quote(rel)}", "_"],
-            env=env, capture_output=True,
-        )
-        if cleanup.returncode != 0:
-            warn = (
-                f"\n[25g post-build cleanup failed: rc={cleanup.returncode}; "
-                f"env's {rel} may have leftover state]\n"
-                + (cleanup.stderr or "")[-512:]
-            )
-            existing = result.get("stderr_tail") or ""
-            result["stderr_tail"] = (existing + warn)[-2000:]
-            # Substrate reset is load-bearing — if it failed, skip
-            # the reapply so we don't compose against a half-reset
-            # substrate.
-            return
+        # The scoped git reset that used to sit here is gone. It undid the
+        # applied diff so the next verify run started clean — needed while
+        # every verify shared one checkout. Since B1 a verify run gets its own
+        # worktree, destroyed with the job, so there is nothing to undo.
+        #
+        # It also worked around a leak worth remembering: `git apply --3way`
+        # implies --index, so applied files are STAGED, and a plain
+        # `git checkout HEAD --` + `git clean` cannot remove a staged new
+        # file — it reached the base branch via the verify-branch drop. A
+        # worktree that is thrown away cannot leak onto any branch, which is
+        # what test_verify_state_cannot_reach_the_base_branch pins.
 
-        # 3. Re-materialize the compose tree from the now-reset
+        # 2. Re-materialize the compose tree from the baseline
         # substrate. Best-effort: a failure here means baseline HEAD
         # itself doesn't compose cleanly — that was the state when
         # verify started, so it isn't a regression we should mask as

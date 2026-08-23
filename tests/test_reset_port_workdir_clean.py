@@ -1,5 +1,11 @@
-"""``reset_port`` wipes the per-origin WRKDIR, resets the substrate
-to HEAD, and re-materializes the compose tree from baseline.
+"""``reset_port`` wipes the per-origin WRKDIR and re-materializes the
+compose tree from baseline.
+
+It no longer resets the source checkout: since B1 each job works in its
+own worktree that is destroyed with the job, so one job's writes cannot
+reach the next one through a shared tree. What remains is the state that
+lives *outside* the worktree and is shared across jobs — the WRKDIR under
+``/work/obj`` and the composed tree under ``/work/artifacts/compose``.
 
 Cross-run pollution before this evolved: early Step 25g only did
 the substrate reset, leaving WRKDIR populated; that became the
@@ -11,23 +17,19 @@ rather than the agent's last patched output — otherwise an
 operator verify (or the next attempt's first read) starts against
 stale compose output.
 
-Stage order: ``make clean`` (best-effort) → substrate reset
-(load-bearing) → ``reapply`` (best-effort). ``make clean`` runs
-first against the still-patched substrate because its in-tree
-Makefile is what the existing WRKDIR was authored against;
-``reapply`` runs last against the now-reset substrate so the
-composed tree reflects HEAD. A ``reapply`` failure is treated as
-"baseline already broken" — surfaced but not flipped to ok=False.
+Stage order: ``make clean`` (best-effort) → ``reapply`` (best-effort).
+``make clean`` runs first against the still-patched substrate because its
+in-tree Makefile is what the existing WRKDIR was authored against. A
+``reapply`` failure is treated as "baseline already broken" — surfaced but
+not flipped to ok=False.
 
 Tests cover:
-- Successful all three stages → ok=True, workdir_clean_ok=True,
-  reapply_ok=True, calls fired in the documented order.
+- Both stages succeed → ok=True, workdir_clean_ok=True, reapply_ok=True,
+  calls fired in the documented order.
 - ``make clean`` failure → ok=True, workdir_clean_ok=False,
-  workdir_clean_error present; substrate reset and reapply still
-  run.
-- Substrate reset failure → ok=False, reapply NOT invoked.
-- ``reapply`` failure → ok=True, reapply_ok=False, reapply_error
-  present.
+  workdir_clean_error present; reapply still runs.
+- ``reapply`` failure → ok=True, reapply_ok=False, reapply_error present.
+- No git runs at all — the substrate reset is gone.
 - WRKSRC + materialize caches are cleared on every reset.
 """
 
@@ -52,15 +54,13 @@ def _clear_caches():
     worker._MATERIALIZE_STATE.clear()
 
 
-def _make_exec_recorder(reset_rc=0, clean_rc=0, reapply_rc=0,
-                        reset_out="", reset_err="",
+def _make_exec_recorder(clean_rc=0, reapply_rc=0,
                         clean_out="", clean_err="",
                         reapply_out="", reapply_err=""):
-    """Return (recorded_calls, fake_exec). The fake routes by argv
-    shape: ``reapply`` as argv[0] → reapply; otherwise a
-    ``/bin/sh -c <cmd>`` shape with ``git checkout`` in the cmd →
-    substrate reset, ``make `` in the cmd → workdir clean. Other
-    invocations raise to flag unexpected calls."""
+    """Return (recorded_calls, fake_exec). The fake routes by argv shape:
+    ``reapply`` as argv[0] → reapply; a ``/bin/sh -c <cmd>`` with ``make ``
+    in the cmd → workdir clean. Any git, or anything else, raises — git in
+    particular because reset_port must not touch the source checkout."""
     calls: list[tuple[str, ...]] = []
 
     def _fake(env, *argv, **kwargs):
@@ -69,9 +69,10 @@ def _make_exec_recorder(reset_rc=0, clean_rc=0, reapply_rc=0,
             return SimpleNamespace(returncode=reapply_rc,
                                    stdout=reapply_out, stderr=reapply_err)
         cmd = argv[-1] if argv else ""
-        if "git checkout" in cmd:
-            return SimpleNamespace(returncode=reset_rc,
-                                   stdout=reset_out, stderr=reset_err)
+        if "git " in cmd:
+            raise AssertionError(
+                f"reset_port must not run git any more: {cmd!r}"
+            )
         if "make " in cmd:
             return SimpleNamespace(returncode=clean_rc,
                                    stdout=clean_out, stderr=clean_err)
@@ -80,7 +81,7 @@ def _make_exec_recorder(reset_rc=0, clean_rc=0, reapply_rc=0,
     return calls, _fake
 
 
-def test_reset_port_runs_clean_then_substrate_then_reapply(monkeypatch):
+def test_reset_port_runs_clean_then_reapply(monkeypatch):
     calls, fake = _make_exec_recorder()
     monkeypatch.setattr(worker, "_exec", fake)
 
@@ -89,19 +90,14 @@ def test_reset_port_runs_clean_then_substrate_then_reapply(monkeypatch):
     assert result["ok"] is True
     assert result["workdir_clean_ok"] is True
     assert result["reapply_ok"] is True
-    # C2: substrate reset is whole-tree, so leftovers outside the origin
-    # subtree (failed-run dirt, slave→master writes) are rolled back too.
-    assert result["paths_changed"] == ["."]
-    # Three invocations in the documented order: clean (runs
-    # against the still-patched substrate), then substrate reset,
-    # then reapply (against the now-reset baseline).
-    assert len(calls) == 3
+    # Two invocations, in order: clean against the still-patched substrate,
+    # then reapply. The substrate reset that sat between them is gone — the
+    # job's worktree is thrown away instead. The recorder asserts on any git.
+    assert len(calls) == 2
     assert "make " in calls[0][-1]
     assert "WRKDIRPREFIX=" in calls[0][-1]
-    assert "git checkout HEAD -- ." in calls[1][-1]
-    assert "git clean -fd" in calls[1][-1]
-    assert calls[2][0] == "reapply"
-    assert calls[2][1] == "devel/foo"
+    assert calls[1][0] == "reapply"
+    assert calls[1][1] == "devel/foo"
 
 
 def test_reset_port_clears_wrksrc_and_materialize_caches(monkeypatch):
@@ -119,9 +115,8 @@ def test_reset_port_clears_wrksrc_and_materialize_caches(monkeypatch):
 
 
 def test_reset_port_tolerates_make_clean_failure(monkeypatch):
-    """make clean is best-effort. Failure surfaces as workdir_clean_*
-    keys but does not flip the result to ok=False — substrate reset
-    (load-bearing) still runs and succeeds."""
+    """make clean is best-effort. Failure surfaces as workdir_clean_* keys
+    but does not flip the result to ok=False — reapply still runs."""
     calls, fake = _make_exec_recorder(
         clean_rc=2, clean_err="make: no such target 'clean'",
     )
@@ -132,9 +127,9 @@ def test_reset_port_tolerates_make_clean_failure(monkeypatch):
     assert result["ok"] is True
     assert result["workdir_clean_ok"] is False
     assert "make: no such target" in result["workdir_clean_error"]
-    # All three stages still ran — make clean failure must not
-    # short-circuit the substrate reset or reapply.
-    assert len(calls) == 3
+    # Both stages still ran — a make clean failure must not short-circuit
+    # reapply.
+    assert len(calls) == 2
 
 
 def test_reset_port_tolerates_reapply_failure(monkeypatch):
@@ -152,28 +147,6 @@ def test_reset_port_tolerates_reapply_failure(monkeypatch):
     assert result["ok"] is True
     assert result["reapply_ok"] is False
     assert "E_COMPOSE_APPLY_FAILED" in result["reapply_error"]
-
-
-def test_reset_port_substrate_failure_skips_reapply(monkeypatch):
-    """If the substrate reset itself fails, don't proceed to
-    reapply — the compose tree we'd regenerate would be against a
-    half-reset substrate. The result must reflect the
-    substrate-reset error."""
-    calls, fake = _make_exec_recorder(
-        reset_rc=128, reset_err="fatal: not a git repository",
-    )
-    monkeypatch.setattr(worker, "_exec", fake)
-
-    result = worker.reset_port("test-env", "devel/foo")
-
-    assert result["ok"] is False
-    assert result["rc"] == 128
-    assert "fatal: not a git repository" in result["stderr_tail"]
-    # Only the clean + substrate commands fired; reapply was
-    # skipped because we're returning early on substrate failure.
-    assert len(calls) == 2
-    assert "make " in calls[0][-1]
-    assert "git checkout" in calls[1][-1]
 
 
 def test_reset_port_clears_caches_even_on_make_clean_failure(monkeypatch):

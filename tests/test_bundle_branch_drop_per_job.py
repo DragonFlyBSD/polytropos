@@ -54,8 +54,8 @@ def test_drop_helper_noop_without_env_or_bundle(monkeypatch, tmp_path):
     called: list = []
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "drop_bundle_branch",
-        lambda env, bundle_id: called.append((env, bundle_id))
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: called.append((env, bundle_id))
         or {"ok": True, "removed": True},
     )
     runner._drop_bundle_branch_for_job(
@@ -197,8 +197,8 @@ def test_checkout_verify_wrapper_fails_without_env_or_bundle(monkeypatch, tmp_pa
     called: list = []
     from dportsv3.agent import worker
     monkeypatch.setattr(
-        worker, "checkout_verify_branch",
-        lambda env, bundle_id: called.append((env, bundle_id)) or {"ok": True},
+        worker, "create_job_worktree",
+        lambda env, bundle_id, kind="verify": called.append((env, bundle_id)) or {"ok": True},
     )
     assert runner._checkout_verify_branch_for_job(
         queue_root=tmp_path, job_id="j", env=None, bundle_id="b",

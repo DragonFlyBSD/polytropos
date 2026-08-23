@@ -1283,11 +1283,18 @@ def assert_port_clean(env: str, origin: str) -> dict:
 
 
 def reset_port(env: str, origin: str) -> dict:
-    """Step 25g: wipe the per-origin WRKDIR, reset the env's
-    ``ports/<origin>/`` subtree to git HEAD, and re-materialize the
-    compose tree from that baseline — so the next job starts from a
-    pristine WRKDIR, a pristine substrate, and a baseline-derived
-    composed tree.
+    """Wipe the per-origin WRKDIR and re-materialize the compose tree, so the
+    next job starts from a pristine WRKDIR and a baseline-derived composed
+    tree.
+
+    Both of those live outside the job's worktree — ``/work/obj`` and
+    ``/work/artifacts/compose`` — and are shared across jobs, so destroying
+    the worktree does not clean them and this still has work to do.
+
+    What it no longer does is reset the source checkout. That stage existed to
+    stop one job's escaped writes reaching the next one through the shared
+    checkout; since B1 each job works in its own worktree, which is destroyed
+    with the job.
 
     Stages, in order:
 
@@ -1299,12 +1306,7 @@ def reset_port(env: str, origin: str) -> dict:
        (or any .DragonFly fragments) still reflects the patched
        state ``make clean`` was authored against.
 
-    2. Substrate reset (load-bearing)::
-
-           git checkout HEAD -- ports/<origin>
-           git clean -fd ports/<origin>
-
-    3. ``reapply <origin>`` — regenerate
+    2. ``reapply <origin>`` — regenerate
        ``/work/artifacts/compose/<target>/<origin>/`` from the
        now-reset substrate. Without this, the compose tree still
        carries whatever the agent's last reapply produced from its
@@ -1322,38 +1324,29 @@ def reset_port(env: str, origin: str) -> dict:
     code path that holds a cached path/hash sees the cache miss and
     re-derives.
 
-    Stage 2 is the only load-bearing stage — its failure flips
-    ``ok`` to false. Stages 1 and 3 are best-effort; their
-    failures surface as ``workdir_clean_*`` / ``reapply_*`` keys
-    in the result.
+    Both stages are best-effort: their failures surface as
+    ``workdir_clean_*`` / ``reapply_*`` keys in the result but do not flip
+    ``ok``. Nothing here is load-bearing any more — the stage that was is
+    gone, and correctness now rests on the worktree being thrown away.
     """
-    rel = f"ports/{origin}"
-
     # 1. Best-effort WRKDIR cleanup — runs against the still-patched
     # substrate (the in-tree Makefile/.DragonFly is what ``make clean``
     # was authored against). ok stays True even on failure.
     workdir = _clean_port_workdir(env, origin)
 
-    # 2. Substrate reset — load-bearing. Whole-tree (not just
-    # ports/<origin>) so writes that escaped the origin subtree — e.g.
-    # a slave port whose patch landed in the master's PATCHDIR, or a
-    # prior failed attempt's leftovers — are rolled back too. Without
-    # this, those edits persist in the shared checkout and poison the
-    # next job's classify/compose.
-    cmd = (
-        "cd /work/DeltaPorts && "
-        "git checkout HEAD -- . && "
-        "git clean -fd"
-    )
-    p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts")
-    out = (p.stdout or "")
-    if p.returncode != 0:
-        return _exec_result(
-            p.returncode, out, (p.stderr or ""),
-            error="reset_port failed (whole-tree checkout/clean)",
-        )
+    # The substrate reset that used to sit here is gone. It ran
+    # `git checkout HEAD -- . && git clean -fd` over the whole tree because
+    # writes that escaped ports/<origin> — a slave port patched via its
+    # master's PATCHDIR, a failed attempt's leftovers — would otherwise
+    # persist in the shared checkout and poison the next job. There is no
+    # shared checkout now: the job's tree is a worktree that is destroyed with
+    # the job, so those writes cannot outlive it.
+    #
+    # The other two stages stay. They clean the WRKDIR under /work/obj and the
+    # composed tree under /work/artifacts/compose, both of which live outside
+    # the worktree and are shared across jobs.
 
-    # 3. Re-materialize the compose tree from the now-reset substrate.
+    # 2. Re-materialize the compose tree from the baseline substrate.
     # Best-effort: a failure here reflects baseline state we didn't
     # cause and shouldn't mask as a reset failure.
     rp = _exec(env, "reapply", origin)
@@ -1362,8 +1355,6 @@ def reset_port(env: str, origin: str) -> dict:
     result = {
         "ok": True,
         "origin": origin,
-        "paths_changed": ["."],
-        "stdout_tail": out[-1024:],
         "workdir_clean_ok": bool(workdir.get("ok")),
         "reapply_ok": reapply_ok,
     }
@@ -1449,22 +1440,17 @@ def _clean_port_workdir(env: str, origin: str) -> dict:
 
 
 # --------------------------------------------------------------------
-# Per-bundle branch lifecycle (Step 30 slice 1).
+# Per-bundle branches.
 #
-# Each bundle gets its own branch ``bundle/<bundle_id>`` in the env's
-# ``/work/DeltaPorts`` git. All convert / patch / verify work for that
-# bundle lands on the branch — so the env's base branch (master/main)
-# stays at upstream and no convert commits accumulate across bundles.
+# Each bundle gets its own branch ``bundle/<bundle_id>``, so the env's base
+# branch stays at upstream and no convert commits accumulate across bundles.
+# A bundle's convert → retriage → patch chain reuses the branch; verify runs
+# on a throwaway ``bundle/<id>-verify`` recut from base each time.
 #
-# Lifecycle:
-# - Job dispatch calls ``checkout_bundle_branch`` before any worker.*
-#   call that touches the substrate. Idempotent: re-entry on the same
-#   bundle (convert → retriage → patch chain) reuses the branch.
-# - Terminal resolution sweep calls ``drop_bundle_branch`` to garbage-
-#   collect branches whose bundle landed at accepted / rejected /
-#   discarded. Slice 4.
-# - Failed-mid-flight bundles keep their branch until the operator
-#   resolves them via take-over / retry / discard.
+# The branch is checked out by ``create_job_worktree``, in a worktree of its
+# own that is destroyed at job end. Nothing switches branches on a shared
+# checkout any more, so there is no lifecycle to sequence and nothing to
+# restore afterwards.
 # --------------------------------------------------------------------
 
 # Per-env cache of the resolved base branch (``master``/``main``).
@@ -1512,105 +1498,6 @@ def _branch_name_for(bundle_id: str) -> str:
     if name.endswith(".job"):
         name = name[:-len(".job")]
     return f"bundle/{name}"
-
-
-def checkout_bundle_branch(env: str, bundle_id: str) -> dict:
-    """Ensure the env's ``/work/DeltaPorts`` is checked out on the
-    branch dedicated to ``bundle_id``.
-
-    Three cases:
-
-    - Current branch is already ``bundle/<bundle_id>``: no-op,
-      returns ``reused=True``.
-    - Branch exists but isn't current (e.g. another bundle's job ran
-      in this env between this bundle's convert and patch jobs):
-      ``git checkout`` it.
-    - Branch doesn't exist (first job for this bundle): switch to
-      base branch first to avoid branching off some other bundle's
-      branch, then ``git checkout -b`` to create.
-
-    Returns a standard worker result dict with extra keys:
-    ``branch``, ``base``, ``reused``, ``created``.
-
-    Best-effort on the base-switch step: if the env's working tree
-    can't be reset cleanly the function fails — the caller's job
-    should not proceed against an unknown branch state.
-    """
-    if not bundle_id:
-        return {
-            "ok": False,
-            "error": "bundle_id is required",
-        }
-    branch = _branch_name_for(bundle_id)
-    base = _resolve_bundle_base_branch(env)
-
-    # Detect current branch.
-    cur_p = _exec(
-        env, "/bin/sh", "-c",
-        "cd /work/DeltaPorts && git rev-parse --abbrev-ref HEAD",
-        cwd="/work/DeltaPorts",
-    )
-    if cur_p.returncode != 0:
-        return _exec_result(
-            cur_p.returncode, cur_p.stdout, cur_p.stderr,
-            error="rev-parse HEAD failed", branch=branch, base=base,
-        )
-    current = (cur_p.stdout or "").strip()
-    if current == branch:
-        return {
-            "ok": True, "branch": branch, "base": base,
-            "reused": True, "created": False,
-        }
-
-    # Does the branch already exist?
-    exists_p = _exec(
-        env, "/bin/sh", "-c",
-        f"cd /work/DeltaPorts && "
-        f"git rev-parse --verify --quiet "
-        f"refs/heads/{shlex.quote(branch)}",
-        cwd="/work/DeltaPorts",
-    )
-    branch_exists = exists_p.returncode == 0
-
-    if branch_exists:
-        # Switch to existing branch directly.
-        co_p = _exec(
-            env, "/bin/sh", "-c",
-            f"cd /work/DeltaPorts && "
-            f"git checkout {shlex.quote(branch)}",
-            cwd="/work/DeltaPorts",
-        )
-        if co_p.returncode != 0:
-            return _exec_result(
-                co_p.returncode, co_p.stdout, co_p.stderr,
-                error=f"checkout {branch} failed",
-                branch=branch, base=base,
-            )
-        return {
-            "ok": True, "branch": branch, "base": base,
-            "reused": True, "created": False,
-        }
-
-    # Create the branch off the base. Switch to base first so we
-    # don't accidentally branch off some other bundle's branch that
-    # might be currently checked out.
-    create_cmd = (
-        f"cd /work/DeltaPorts && "
-        f"git checkout {shlex.quote(base)} && "
-        f"git checkout -b {shlex.quote(branch)}"
-    )
-    create_p = _exec(env, "/bin/sh", "-c", create_cmd,
-                     cwd="/work/DeltaPorts")
-    if create_p.returncode != 0:
-        return _exec_result(
-            create_p.returncode, create_p.stdout, create_p.stderr,
-            error=f"create branch {branch} failed",
-            branch=branch, base=base,
-        )
-    return {
-        "ok": True, "branch": branch, "base": base,
-        "reused": False, "created": True,
-    }
 
 
 # In-chroot layout. Deliberately literals rather than an import of
@@ -1763,100 +1650,6 @@ def destroy_job_worktree(
     )
 
 
-def _drop_branch(env: str, branch: str, restore_to: str, base: str) -> dict:
-    """Force-delete ``branch``, restoring ``restore_to`` first if the
-    branch is currently checked out (git refuses to delete the
-    current branch).
-
-    ``restore_to`` is the ref to switch to before the delete — the
-    base branch for ``drop_bundle_branch``, or the operator's
-    pre-verify ref for ``drop_verify_branch``. If restoring it fails
-    (e.g. the recorded ref was itself a transient branch that's since
-    gone), falls back to ``base`` so the env never lands in a stuck
-    state on a branch about to be deleted.
-
-    Idempotent: ``ok=True, removed=False, reason='branch_absent'``
-    when the branch doesn't exist.
-    """
-    cur_p = _exec(
-        env, "/bin/sh", "-c",
-        "cd /work/DeltaPorts && git rev-parse --abbrev-ref HEAD",
-        cwd="/work/DeltaPorts",
-    )
-    current = (cur_p.stdout or "").strip() if cur_p.returncode == 0 else ""
-
-    exists_p = _exec(
-        env, "/bin/sh", "-c",
-        f"cd /work/DeltaPorts && "
-        f"git rev-parse --verify --quiet "
-        f"refs/heads/{shlex.quote(branch)}",
-        cwd="/work/DeltaPorts",
-    )
-    if exists_p.returncode != 0:
-        return {
-            "ok": True, "branch": branch, "base": base,
-            "restored_to": None, "removed": False, "reason": "branch_absent",
-        }
-
-    if current == branch:
-        sw_p = _exec(
-            env, "/bin/sh", "-c",
-            f"cd /work/DeltaPorts && git checkout {shlex.quote(restore_to)}",
-            cwd="/work/DeltaPorts",
-        )
-        if sw_p.returncode != 0 and restore_to != base:
-            # Recorded ref unrestorable — fall back to base so we can
-            # still get off the branch we're about to delete.
-            restore_to = base
-            sw_p = _exec(
-                env, "/bin/sh", "-c",
-                f"cd /work/DeltaPorts && git checkout {shlex.quote(base)}",
-                cwd="/work/DeltaPorts",
-            )
-        if sw_p.returncode != 0:
-            return _exec_result(
-                sw_p.returncode, sw_p.stdout, sw_p.stderr,
-                error=f"checkout {restore_to} before drop failed",
-                branch=branch, base=base,
-            )
-
-    del_p = _exec(
-        env, "/bin/sh", "-c",
-        f"cd /work/DeltaPorts && git branch -D {shlex.quote(branch)}",
-        cwd="/work/DeltaPorts",
-    )
-    if del_p.returncode != 0:
-        return _exec_result(
-            del_p.returncode, del_p.stdout, del_p.stderr,
-            error=f"git branch -D {branch} failed",
-            branch=branch, base=base,
-        )
-    return {
-        "ok": True, "branch": branch, "base": base,
-        "restored_to": restore_to, "removed": True,
-    }
-
-
-def drop_bundle_branch(env: str, bundle_id: str) -> dict:
-    """Delete the env's ``bundle/<bundle_id>`` branch, switching to
-    the base branch first if it's currently checked out.
-
-    Slice 4's terminal-resolution sweep calls this once a bundle
-    reaches accepted / rejected / discarded — the branch's history
-    has either been captured in a delivered PR or is meaningfully
-    abandoned, so the env can reclaim the namespace.
-
-    Idempotent: returns ``ok=True, removed=False`` when the branch
-    doesn't exist. ``-D`` (force) is used because the branch may
-    carry commits that aren't on any other ref.
-    """
-    if not bundle_id:
-        return {"ok": False, "error": "bundle_id is required"}
-    branch = _branch_name_for(bundle_id)
-    base = _resolve_bundle_base_branch(env)
-    return _drop_branch(env, branch, base, base)
-
-
 def _verify_branch_name_for(bundle_id: str) -> str:
     """Throwaway branch name verify-fix runs on: ``bundle/<id>-verify``.
 
@@ -1866,90 +1659,6 @@ def _verify_branch_name_for(bundle_id: str) -> str:
     is the complete canonical artifact, so no prior commits are
     needed."""
     return _branch_name_for(bundle_id) + "-verify"
-
-
-def checkout_verify_branch(env: str, bundle_id: str) -> dict:
-    """Put the env on a fresh ``bundle/<id>-verify`` branch cut from
-    base, recording the ref that was checked out before so the caller
-    can restore it after the run.
-
-    Unlike :func:`checkout_bundle_branch` (which *reuses* an existing
-    branch), verify always resets to base via ``git checkout -B`` —
-    the verify gate replays changes.diff (the complete branch-vs-base
-    artifact) on a clean base, independent of the patch agent's branch
-    which Slice 4 may already have dropped.
-
-    Returns the standard result dict plus ``branch``, ``base``,
-    ``previous_ref`` (the ref to restore on drop; a branch name, or a
-    commit SHA when HEAD was detached), and ``created``.
-    """
-    if not bundle_id:
-        return {"ok": False, "error": "bundle_id is required"}
-    branch = _verify_branch_name_for(bundle_id)
-    base = _resolve_bundle_base_branch(env)
-
-    cur_p = _exec(
-        env, "/bin/sh", "-c",
-        "cd /work/DeltaPorts && git rev-parse --abbrev-ref HEAD",
-        cwd="/work/DeltaPorts",
-    )
-    if cur_p.returncode != 0:
-        return _exec_result(
-            cur_p.returncode, cur_p.stdout, cur_p.stderr,
-            error="rev-parse HEAD failed", branch=branch, base=base,
-        )
-    previous_ref = (cur_p.stdout or "").strip()
-    if previous_ref == "HEAD":
-        # Detached HEAD — record the commit SHA so we can return to it.
-        sha_p = _exec(
-            env, "/bin/sh", "-c",
-            "cd /work/DeltaPorts && git rev-parse HEAD",
-            cwd="/work/DeltaPorts",
-        )
-        previous_ref = (sha_p.stdout or "").strip() or base
-    if previous_ref == branch:
-        # Re-verify while the throwaway branch is still current (prior
-        # run didn't clean up). Don't try to restore to a branch we're
-        # about to recreate/delete — fall back to base.
-        previous_ref = base
-
-    create_cmd = (
-        f"cd /work/DeltaPorts && "
-        f"git checkout {shlex.quote(base)} && "
-        f"git checkout -B {shlex.quote(branch)}"
-    )
-    create_p = _exec(env, "/bin/sh", "-c", create_cmd,
-                     cwd="/work/DeltaPorts")
-    if create_p.returncode != 0:
-        return _exec_result(
-            create_p.returncode, create_p.stdout, create_p.stderr,
-            error=f"create verify branch {branch} failed",
-            branch=branch, base=base, previous_ref=previous_ref,
-        )
-    return {
-        "ok": True, "branch": branch, "base": base,
-        "previous_ref": previous_ref, "created": True,
-    }
-
-
-def drop_verify_branch(
-    env: str, bundle_id: str, restore_ref: str | None = None,
-) -> dict:
-    """Delete the ``bundle/<id>-verify`` branch, restoring the ref
-    that was checked out before the verify run (``restore_ref``, as
-    returned by :func:`checkout_verify_branch`'s ``previous_ref``).
-
-    Falls back to base when ``restore_ref`` is None or names the
-    verify branch itself. Idempotent on a missing branch.
-    """
-    if not bundle_id:
-        return {"ok": False, "error": "bundle_id is required"}
-    branch = _verify_branch_name_for(bundle_id)
-    base = _resolve_bundle_base_branch(env)
-    restore_to = restore_ref or base
-    if restore_to == branch:
-        restore_to = base
-    return _drop_branch(env, branch, restore_to, base)
 
 
 def commit_port_changes(

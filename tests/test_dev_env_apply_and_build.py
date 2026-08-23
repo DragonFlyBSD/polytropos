@@ -144,10 +144,10 @@ def test_no_diff_happy_path_returns_zero(fake_env, monkeypatch) -> None:
     assert result["dsynth_exit"] == 0
     assert result["applied_diff_sha256"] is None
     assert "apply-and-build-devel_foo.log" in result["log_path"]
-    # reapply + dtest, then post-build cleanup (WRKDIR clean +
-    # substrate reset + baseline reapply) which now runs for every
-    # path.
-    assert len(fake_env.calls) == 5
+    # reapply + dtest, then post-build cleanup (WRKDIR clean + baseline
+    # reapply). The substrate reset that sat between them is gone — the
+    # job's worktree is thrown away instead.
+    assert len(fake_env.calls) == 4
     reapply_argv = " ".join(fake_env.calls[0]["argv"])
     dtest_argv = " ".join(fake_env.calls[1]["argv"])
     assert "reapply devel/foo" in reapply_argv
@@ -170,9 +170,9 @@ def test_diff_path_is_staged_into_writable_and_applied(fake_env, monkeypatch, tm
                                    diff=str(diff), json=True))
 
     assert rc == 0
-    # dirty check, apply, reapply, dtest, then post-build cleanup (3 calls:
-    # WRKDIR wipe + substrate reset + baseline reapply).
-    assert len(fake_env.calls) == 7
+    # dirty check, apply, reapply, dtest, then post-build cleanup
+    # (WRKDIR wipe + baseline reapply).
+    assert len(fake_env.calls) == 6
     assert "git status --porcelain" in " ".join(fake_env.calls[0]["argv"])
     apply_argv = " ".join(fake_env.calls[1]["argv"])
     assert "git apply --3way" in apply_argv
@@ -351,67 +351,13 @@ def test_diff_path_runs_post_build_cleanup(
     apply_and_build(fake_env.env_name, "devel/foo", diff_path=str(diff))
 
     shell_calls = _post_build_calls(fake_env.calls)
-    assert any("git reset -q --" in c[2] for c in shell_calls)
+    # The WRKDIR lives outside the job's worktree, so it still needs wiping.
     assert any(
         "WRKDIRPREFIX=/work/obj" in c[2] and "clean" in c[2]
         for c in shell_calls
     )
-
-
-def test_baseline_reapply_skipped_when_substrate_reset_fails(
-    fake_env, monkeypatch, tmp_path,
-) -> None:
-    """Substrate reset failure should not cascade — skip the
-    baseline reapply (would compose against a half-reset substrate)
-    and surface the substrate-reset stderr to the operator. Matches
-    worker.reset_port's ordering."""
-    from dports_dev_env.cli import apply_and_build
-    import subprocess as _sp
-
-    diff = tmp_path / "fix.diff"
-    diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n")
-
-    # Queue outcomes so the substrate reset fails. The runner
-    # consumes outcomes from a list, in order — earlier apply +
-    # reapply + dtest + WRKDIR-wipe stages consume the first ones,
-    # then the substrate reset gets rc=1.
-    fake_env.runner.outcomes = [
-        _sp.CompletedProcess([], 0, "", ""),     # dirty check → clean
-        _sp.CompletedProcess([], 0, "", ""),     # diff apply
-        _sp.CompletedProcess([], 0, "", ""),     # reapply
-        _sp.CompletedProcess([], 0, "", ""),     # dsynth (dtest)
-        _sp.CompletedProcess([], 0, "", ""),     # WRKDIR wipe
-        _sp.CompletedProcess(                    # substrate reset → fails
-            [], 1, "", "fatal: not a git repository",
-        ),
-    ]
-
-    apply_and_build(
-        fake_env.env_name, "devel/foo",
-        diff_path=str(diff),
-    )
-
-    shell_calls = _post_build_calls(fake_env.calls)
-    assert any("git reset -q --" in c[2] for c in shell_calls)
-    # WRKDIR wipe ran (before substrate reset).
-    assert any(
-        "WRKDIRPREFIX=/work/obj" in c[2] and "clean" in c[2]
-        for c in shell_calls
-    )
-    # Baseline reapply must NOT fire when substrate reset failed —
-    # otherwise we'd compose against a half-reset substrate. Look
-    # for the cleanup-stage reapply specifically (the build-stage
-    # `reapply devel/foo` ran before the failure).
-    cleanup_reapplies = [
-        c for c in shell_calls
-        if "reapply devel/foo" in c[2]
-        and "git reset" not in c[2]
-        and "git checkout" not in c[2]
-    ]
-    # The first match is the build-stage reapply; the cleanup-stage
-    # reapply would be a second one. Substrate-reset failure → only
-    # the build-stage occurrence is present.
-    assert len(cleanup_reapplies) == 1
+    # The source checkout does not: it goes with the worktree.
+    assert not any("git reset" in c[2] for c in shell_calls)
 
 
 def test_cleanup_reapply_failure_does_not_flip_ok(
@@ -424,14 +370,13 @@ def test_cleanup_reapply_failure_does_not_flip_ok(
     from dports_dev_env.cli import apply_and_build
     import subprocess as _sp
 
-    # No-diff path: 5 chroot calls — reapply (build), dtest, WRKDIR
-    # wipe, substrate reset, cleanup reapply. Make the last one fail
-    # while everything before it succeeds.
+    # No-diff path: 4 chroot calls — reapply (build), dtest, WRKDIR wipe,
+    # cleanup reapply. Make the last one fail while everything before it
+    # succeeds.
     fake_env.runner.outcomes = [
         _sp.CompletedProcess([], 0, "", ""),     # reapply (build)
         _sp.CompletedProcess([], 0, "", ""),     # dtest
         _sp.CompletedProcess([], 0, "", ""),     # WRKDIR wipe
-        _sp.CompletedProcess([], 0, "", ""),     # substrate reset
         _sp.CompletedProcess(                    # cleanup reapply → fails
             [], 2, "", "compose: E_COMPOSE_APPLY_FAILED on ports/devel/foo",
         ),
