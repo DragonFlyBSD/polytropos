@@ -51,34 +51,96 @@ def _exec_recorder(scripts: dict[str, tuple[int, str, str]]):
 # --- _resolve_bundle_base_branch -------------------------------------
 
 
-def test_base_branch_reads_origin_head(monkeypatch):
+def test_base_branch_reads_the_checked_out_branch(monkeypatch):
+    """The authority is what ports-main actually has checked out.
+
+    dev-env clones it with --single-branch --branch <deltaports_branch>,
+    so its HEAD is the branch the env was built on.
+    """
     calls, fake = _exec_recorder({
-        "symbolic-ref": (0, "origin/main\n", ""),
+        "rev-parse": (0, "2026Q3\n", ""),
     })
     monkeypatch.setattr(worker, "_exec", fake)
 
-    assert worker._resolve_bundle_base_branch("e1") == "main"
+    assert worker._resolve_bundle_base_branch("e1") == "2026Q3"
     # Cached on second call — no extra subprocess.
-    assert worker._resolve_bundle_base_branch("e1") == "main"
-    assert sum("symbolic-ref" in c for c in calls) == 1
+    assert worker._resolve_bundle_base_branch("e1") == "2026Q3"
+    assert sum("rev-parse" in c for c in calls) == 1
 
 
-def test_base_branch_fallback_to_master(monkeypatch):
-    """When the symbolic-ref isn't set, the shell command's
-    ``|| echo master`` fallback fires and we get master."""
-    calls, fake = _exec_recorder({
-        "symbolic-ref": (0, "master\n", ""),  # echo master path
-    })
+def test_base_branch_reads_ports_main_not_the_symlink(monkeypatch):
+    """PORTS_DIR points into a job's worktree while one runs, so plumbing
+    must address the real checkout."""
+    calls, fake = _exec_recorder({"rev-parse": (0, "master\n", "")})
     monkeypatch.setattr(worker, "_exec", fake)
 
-    # The wrapper command echoes "master" when symbolic-ref fails;
-    # the function should pass that through after the origin/ strip.
-    assert worker._resolve_bundle_base_branch("e1") == "master"
+    worker._resolve_bundle_base_branch("e1")
+    cmd = " ".join(calls)
+    assert worker.PORTS_MAIN_DIR in cmd
+    assert f"-C {worker.PORTS_DIR}" not in cmd
+
+
+def test_base_branch_refuses_when_it_cannot_be_read(monkeypatch):
+    """No silent default. This is the regression: the old code sent any
+    failure through '|| echo master', so every env resolved to master
+    whether or not that was its branch."""
+    calls, fake = _exec_recorder({"rev-parse": (128, "", "fatal: not a git repo")})
+    monkeypatch.setattr(worker, "_exec", fake)
+
+    assert worker._resolve_bundle_base_branch("e1") is None
+
+
+def test_base_branch_refuses_on_detached_head(monkeypatch):
+    """rev-parse prints the literal 'HEAD' when detached, and a branch name
+    is required — the worktree is created with `-b <new> <base>`."""
+    calls, fake = _exec_recorder({"rev-parse": (0, "HEAD\n", "")})
+    monkeypatch.setattr(worker, "_exec", fake)
+
+    assert worker._resolve_bundle_base_branch("e1") is None
+
+
+def test_base_branch_refuses_on_empty_output(monkeypatch):
+    calls, fake = _exec_recorder({"rev-parse": (0, "\n", "")})
+    monkeypatch.setattr(worker, "_exec", fake)
+
+    assert worker._resolve_bundle_base_branch("e1") is None
+
+
+@pytest.mark.parametrize("bad", [(128, "", "boom"), (0, "HEAD\n", ""), (0, "\n", "")])
+def test_failed_resolution_is_not_cached(monkeypatch, bad):
+    """Caching a failure is what pinned a wrong base for a whole process.
+
+    Detached HEAD is the case that matters: "HEAD" is a truthy string, so
+    unlike an empty result it would survive in the cache and be handed back
+    as a branch name on every later call.
+    """
+    calls, fake = _exec_recorder({"rev-parse": bad})
+    monkeypatch.setattr(worker, "_exec", fake)
+    assert worker._resolve_bundle_base_branch("e1") is None
+    assert "e1" not in worker._BUNDLE_BASE_BRANCH_CACHE
+
+    calls2, fake2 = _exec_recorder({"rev-parse": (0, "main\n", "")})
+    monkeypatch.setattr(worker, "_exec", fake2)
+    assert worker._resolve_bundle_base_branch("e1") == "main"
+
+
+def test_worktree_creation_refuses_without_a_base(monkeypatch):
+    """The two halves compose: no base means no worktree, and under
+    poly-m7o no worktree means the job is retired rather than run."""
+    monkeypatch.setattr(worker, "_resolve_bundle_base_branch", lambda env: None)
+    ran = []
+    monkeypatch.setattr(worker, "_exec", lambda *a, **k: ran.append(a))
+
+    result = worker.create_job_worktree("e1", "b1", "patch")
+
+    assert result["ok"] is False
+    assert "base branch" in result["error"]
+    assert ran == [], "touched the env despite having no base"
 
 
 def test_base_branch_per_env_cache(monkeypatch):
     calls, fake = _exec_recorder({
-        "symbolic-ref": (0, "origin/main\n", ""),
+        "rev-parse": (0, "master\n", ""),
     })
     monkeypatch.setattr(worker, "_exec", fake)
 
@@ -86,7 +148,7 @@ def test_base_branch_per_env_cache(monkeypatch):
     worker._resolve_bundle_base_branch("env-b")
     # Two separate envs, two separate cache entries → two
     # subprocess invocations.
-    assert sum("symbolic-ref" in c for c in calls) == 2
+    assert sum("rev-parse" in c for c in calls) == 2
 
 
 # --- checkout_bundle_branch ------------------------------------------

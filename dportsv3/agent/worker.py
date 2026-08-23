@@ -1454,37 +1454,50 @@ def _clean_port_workdir(env: str, origin: str) -> dict:
 # --------------------------------------------------------------------
 
 # Per-env cache of the resolved base branch (``master``/``main``).
-# ``git symbolic-ref refs/remotes/origin/HEAD`` is deterministic but
-# costs a subprocess per call; the env's base doesn't change during
-# its lifetime so cache is safe.
+# Reading it costs a subprocess per call and an env's base does not change
+# during its lifetime, so caching is safe — but only successful reads go in.
+# Caching a value derived from a failed read is what made the previous
+# implementation return a wrong base for the whole process lifetime.
 _BUNDLE_BASE_BRANCH_CACHE: dict[str, str] = {}
 
 
-def _resolve_bundle_base_branch(env: str) -> str:
-    """Detect the env's base branch (the branch new bundle/<id>
-    branches should be created from).
+def _resolve_bundle_base_branch(env: str) -> str | None:
+    """The branch new ``bundle/<id>`` branches are cut from, or None.
 
-    Reads ``git symbolic-ref refs/remotes/origin/HEAD`` inside the
-    env's ``/work/DeltaPorts`` and strips the ``refs/remotes/origin/``
-    prefix. Falls back to ``master`` when the symbolic-ref is not set
-    (rare — clones from a mirror usually have it). Cached per env.
+    Reads the branch actually checked out in ``PORTS_MAIN_DIR``. That is the
+    right authority: dev-env clones that checkout with
+    ``git clone --single-branch --branch <deltaports_branch>``, so its HEAD
+    *is* the branch the env was built on, and nothing moves it afterwards —
+    ``sync``'s ``reset --hard`` moves the branch pointer without detaching,
+    and ``update`` fast-forwards.
+
+    This used to read ``git symbolic-ref refs/remotes/origin/HEAD``, on the
+    stated assumption that a mirror clone usually sets it. ``--single-branch``
+    never sets it, so that read failed on every env and the ``|| echo master``
+    fallback supplied the answer every time — correct only where the branch
+    happened to be ``master``.
+
+    Addresses ``PORTS_MAIN_DIR``, not ``PORTS_DIR``: the latter is the
+    agent-facing symlink, which points into a job's worktree while one runs.
+
+    Returns None when the branch cannot be determined — a failed command, no
+    output, or a detached HEAD. Callers must refuse to build rather than
+    guess; cutting a bundle branch from the wrong base is silent and
+    poisons everything branched from it afterwards.
     """
     cached = _BUNDLE_BASE_BRANCH_CACHE.get(env)
     if cached:
         return cached
     p = _exec(
         env, "/bin/sh", "-c",
-        "cd /work/DeltaPorts && "
-        "git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null "
-        "|| echo master",
-        cwd="/work/DeltaPorts",
+        f"git -C {shlex.quote(PORTS_MAIN_DIR)} rev-parse --abbrev-ref HEAD",
+        cwd="/work",
     )
-    raw = (p.stdout or "").strip()
-    # ``--short`` already strips ``refs/remotes/`` but the result is
-    # still ``origin/<branch>``. Strip the remote prefix.
-    if raw.startswith("origin/"):
-        raw = raw[len("origin/"):]
-    base = raw or "master"
+    base = (p.stdout or "").strip()
+    # "HEAD" is what rev-parse prints for a detached checkout — a branch name
+    # is required, since the worktree is created with `-b <new> <base>`.
+    if p.returncode != 0 or not base or base == "HEAD":
+        return None
     _BUNDLE_BASE_BRANCH_CACHE[env] = base
     return base
 
@@ -1564,6 +1577,17 @@ def create_job_worktree(env: str, bundle_id: str, kind: str = "patch") -> dict:
         else _verify_branch_name_for(bundle_id)
     )
     base = _resolve_bundle_base_branch(env)
+    if base is None:
+        return {
+            "ok": False,
+            "error": (
+                f"could not determine the base branch from "
+                f"{PORTS_MAIN_DIR} in env {env!r} (detached HEAD, or the "
+                f"checkout is unreadable). Refusing to guess: a bundle "
+                f"branch cut from the wrong base is silent."
+            ),
+            "branch": branch,
+        }
     name = _job_worktree_name(bundle_id, kind)
     worktree = f"/work/{name}"
     q_wt, q_branch, q_base = shlex.quote(worktree), shlex.quote(branch), shlex.quote(base)
