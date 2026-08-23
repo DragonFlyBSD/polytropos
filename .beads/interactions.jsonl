@@ -23,3 +23,4 @@
 {"id":"int-99d8f8d968ff7d38b361e923a94f0fda","kind":"field_change","created_at":"2026-08-20T22:52:43.072891Z","actor":"Fred [bot]","issue_id":"poly-15g.6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-7172e995ddf8bfe87d95200845c0fd26","kind":"field_change","created_at":"2026-08-23T12:18:29.01875Z","actor":"Fred [bot]","issue_id":"poly-n5b","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-6a4f50b83953a1336aaa8202ccea1ee7","kind":"field_change","created_at":"2026-08-23T13:06:31.700863Z","actor":"Fred [bot]","issue_id":"poly-qla","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-26ac53b2af1105ff42dfe466768fa0d5","kind":"field_change","created_at":"2026-08-23T14:17:02.147525Z","actor":"Fred [bot]","issue_id":"poly-s9m.2","extra":{"field":"status","new_value":"deferred","old_value":"open"}}
