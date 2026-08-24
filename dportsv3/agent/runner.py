@@ -4592,17 +4592,6 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     init_state_db(queue_root)
-    # Populate env_health_status with stub rows for every env on
-    # disk so the tracker UI dropdown reflects the runner's view of
-    # available envs even before the first health probe fires.
-    if _state_db_conn is not None:
-        try:
-            n = stub_unprobed_envs()
-            if n:
-                log(queue_root, "INFO",
-                    f"stubbed {n} previously-unseen env(s) into env_health_status")
-        except Exception as exc:
-            log(queue_root, "WARN", f"stub_unprobed_envs failed: {exc}")
     # poly-i7y: an env store we cannot read is not an empty machine. Every
     # dev-env subcommand calls require_root(), so a runner that cannot
     # enumerate envs cannot exec into one either — it would run jobs with
@@ -4620,6 +4609,17 @@ def main(argv: list[str] | None = None) -> int:
             f"refusing to start: cannot enumerate dev-envs: {env_list_error}")
         return EXIT_ENV_UNREADABLE
 
+    # Populate env_health_status with stub rows for every env on
+    # disk so the tracker UI dropdown reflects the runner's view of
+    # available envs even before the first health probe fires.
+    if _state_db_conn is not None:
+        try:
+            n = stub_unprobed_envs()
+            if n:
+                log(queue_root, "INFO",
+                    f"stubbed {n} previously-unseen env(s) into env_health_status")
+        except Exception as exc:
+            log(queue_root, "WARN", f"stub_unprobed_envs failed: {exc}")
     # Before any sweep runs, and before this process records itself in
     # `runners` — a refused runner must not appear as a participant.
     if not acquire_runner_lock(queue_root):
