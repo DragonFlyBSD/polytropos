@@ -1,0 +1,81 @@
+#!/bin/sh
+
+# PROVIDE: polytropos_tracker
+# REQUIRE: LOGIN FILESYSTEMS
+# KEYWORD: shutdown
+
+#
+# The build tracker: web UI, read API and SSE.
+#
+# WARNING: the tracker has no authentication, and its API can start
+# builds and spend LLM credit. It binds every interface by default
+# because the dashboard is meant to be opened from your desk. Run it on
+# a trusted network, or set polytropos_tracker_bind="127.0.0.1" and
+# reach it over an ssh tunnel.
+#
+# Add the following line to /etc/rc.conf to enable it:
+# polytropos_tracker_enable="YES"
+#
+# Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
+# polytropos_tracker_enable (bool)  Set to "NO" by default.
+# polytropos_tracker_bind   (str)   Listen address. Default 0.0.0.0.
+# polytropos_tracker_port   (str)   Listen port. Default 8080.
+# polytropos_chat_env       (str)   Credentials for the fix-chat panel.
+#                                   Absent means chat is disabled.
+#
+
+. /etc/rc.subr
+
+name="polytropos_tracker"
+rcvar=polytropos_tracker_enable
+desc="Polytropos build tracker"
+
+load_rc_config $name
+
+: ${polytropos_tracker_enable="NO"}
+: ${polytropos_conf="/usr/local/etc/polytropos.conf"}
+[ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
+
+: ${polytropos_root="/usr/local/share/polytropos"}
+: ${polytropos_user="polytropos"}
+: ${polytropos_logs_root="/build/synth/logs"}
+: ${polytropos_log_dir="/var/log/polytropos"}
+: ${polytropos_state_db="${polytropos_logs_root}/evidence/state.db"}
+: ${polytropos_artifact_root="${polytropos_logs_root}/evidence"}
+: ${polytropos_chat_env="/usr/local/etc/polytropos/chat.env"}
+: ${polytropos_tracker_bind="0.0.0.0"}
+: ${polytropos_tracker_port="8080"}
+
+pidfile="/var/run/${name}.pid"
+logfile="${polytropos_log_dir}/tracker.log"
+
+polytropos_tracker_env="DPORTSV3_NO_BOOTSTRAP=1 \
+DPORTSV3_STATE_DB=${polytropos_state_db} \
+DPORTSV3_ARTIFACT_ROOT=${polytropos_artifact_root}"
+
+command="/usr/sbin/daemon"
+command_args="-f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
+    ${polytropos_root}/bin/dportsv3 tracker serve \
+    --bind ${polytropos_tracker_bind} \
+    --port ${polytropos_tracker_port}"
+
+start_precmd="polytropos_tracker_prestart"
+
+polytropos_tracker_prestart()
+{
+	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
+		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
+	fi
+	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
+
+	# The fix-chat panel calls an LLM from inside the tracker, so this
+	# service needs credentials too — a separate file from the runner's,
+	# because this one runs as ${polytropos_user} and must be able to
+	# read it. Absent is a supported state: DP_HARNESS_CHAT_MODEL unset
+	# disables the feature (503 on the endpoint, panel hidden).
+	if [ -r "${polytropos_chat_env}" ]; then
+		. "${polytropos_chat_env}"
+	fi
+}
+
+run_rc_command "$1"

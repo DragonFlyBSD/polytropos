@@ -1,0 +1,110 @@
+#!/bin/sh
+
+# PROVIDE: polytropos_runner
+# REQUIRE: LOGIN FILESYSTEMS polytropos_artifact_store polytropos_tracker
+# KEYWORD: shutdown
+
+#
+# The agent queue runner: claims jobs written by the dsynth hooks and
+# runs triage/patch against a dev-env.
+#
+# This one runs as ROOT and must. Every `dev-env` subcommand calls
+# require_root(), and a non-root runner refuses to start with exit 4
+# rather than running with the dsynth-busy gate switched off. Do not
+# add polytropos_user here.
+#
+# Because it runs as root while the rest of the tree belongs to
+# ${polytropos_user}, it starts with umask 002 so the files it creates
+# stay group-writable for the two unprivileged services.
+#
+# Add the following line to /etc/rc.conf to enable it:
+# polytropos_runner_enable="YES"
+#
+# Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
+# polytropos_runner_enable   (bool) Set to "NO" by default.
+# polytropos_queue_root      (str)  Where the hooks write .job files.
+# polytropos_runner_dev_env  (str)  Default dev-env name. Empty means
+#                                   "let the tracker or auto-pick decide".
+# polytropos_harness_env     (str)  File holding the LLM credentials.
+#
+
+. /etc/rc.subr
+
+name="polytropos_runner"
+rcvar=polytropos_runner_enable
+desc="Polytropos agent queue runner"
+
+load_rc_config $name
+
+: ${polytropos_runner_enable="NO"}
+: ${polytropos_conf="/usr/local/etc/polytropos.conf"}
+[ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
+
+: ${polytropos_root="/usr/local/share/polytropos"}
+: ${polytropos_logs_root="/build/synth/logs"}
+: ${polytropos_log_dir="/var/log/polytropos"}
+: ${polytropos_state_db="${polytropos_logs_root}/evidence/state.db"}
+: ${polytropos_queue_root="${polytropos_logs_root}/evidence/queue"}
+: ${polytropos_tracker_url="http://127.0.0.1:8080"}
+: ${polytropos_artifact_store_url="http://127.0.0.1:8788"}
+: ${polytropos_harness_env="/usr/local/etc/polytropos/harness.env"}
+: ${polytropos_runner_dev_env=""}
+
+pidfile="/var/run/${name}.pid"
+logfile="${polytropos_log_dir}/runner.log"
+
+# NOTE: ${name}_env is rc.subr's own knob for the child environment, which
+# is why the dev-env name above is polytropos_runner_dev_env and not
+# polytropos_runner_env. Setting the latter here would silently replace
+# this.
+polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
+DPORTSV3_STATE_DB=${polytropos_state_db} \
+DPORTSV3_TRACKER_URL=${polytropos_tracker_url} \
+ARTIFACT_STORE_URL=${polytropos_artifact_store_url}"
+
+_dev_env_flag=""
+[ -n "${polytropos_runner_dev_env}" ] && \
+	_dev_env_flag="--env ${polytropos_runner_dev_env}"
+
+# No `daemon -r`: it restarts the child whatever the exit code, and this
+# program exits 3 when another runner holds the lock and 4 when it cannot
+# read the dev-env store. Supervising those would spin forever on a
+# misconfiguration instead of surfacing it.
+command="/usr/sbin/daemon"
+command_args="-f -o ${logfile} -p ${pidfile} -t ${name} \
+    ${polytropos_root}/bin/dportsv3 agent-queue-runner \
+    --queue-root ${polytropos_queue_root} ${_dev_env_flag}"
+
+start_precmd="polytropos_runner_prestart"
+
+polytropos_runner_prestart()
+{
+	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
+		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
+	fi
+
+	# The queue root is where the dsynth hooks drop .job files. The
+	# runner requires the four subdirectories to exist and exits 1
+	# naming the missing one, so create them rather than fail at start.
+	for _d in pending inflight done failed; do
+		install -d -m 0775 "${polytropos_queue_root}/${_d}" || return 1
+	done
+	install -d -m 0755 "${polytropos_log_dir}" || return 1
+
+	if [ -r "${polytropos_harness_env}" ]; then
+		if [ -n "$(find "${polytropos_harness_env}" -perm +077 2>/dev/null)" ]; then
+			warn "${polytropos_harness_env} is readable beyond its owner; it holds API keys (chmod 600)"
+		fi
+		. "${polytropos_harness_env}"
+	else
+		warn "no ${polytropos_harness_env}; the runner will start without LLM credentials and every job will fail"
+	fi
+
+	# Root writing into a tree owned by ${polytropos_user}: without this
+	# the tracker and artifact-store cannot write the files this process
+	# creates. The failure looks like a read-only database, not a
+	# permission error.
+	umask 002
+}
+
+run_rc_command "$1"

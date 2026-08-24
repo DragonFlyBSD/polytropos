@@ -1,0 +1,66 @@
+#!/bin/sh
+
+# PROVIDE: polytropos_artifact_store
+# REQUIRE: LOGIN FILESYSTEMS
+# KEYWORD: shutdown
+
+#
+# Receives build bundles from the dsynth hooks and writes them into the
+# evidence tree. Loopback-only by default: nothing outside this host has
+# any reason to post bundles.
+#
+# Add the following line to /etc/rc.conf to enable it:
+# polytropos_artifact_store_enable="YES"
+#
+# Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
+# polytropos_artifact_store_enable (bool)  Set to "NO" by default.
+# polytropos_artifact_store_bind   (str)   Listen address. Default 127.0.0.1.
+# polytropos_artifact_store_port   (str)   Listen port. Default 8788.
+#
+
+. /etc/rc.subr
+
+name="polytropos_artifact_store"
+rcvar=polytropos_artifact_store_enable
+desc="Polytropos artifact store"
+
+load_rc_config $name
+
+: ${polytropos_artifact_store_enable="NO"}
+: ${polytropos_conf="/usr/local/etc/polytropos.conf"}
+[ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
+
+: ${polytropos_root="/usr/local/share/polytropos"}
+: ${polytropos_user="polytropos"}
+: ${polytropos_logs_root="/build/synth/logs"}
+: ${polytropos_log_dir="/var/log/polytropos"}
+: ${polytropos_artifact_store_bind="127.0.0.1"}
+: ${polytropos_artifact_store_port="8788"}
+
+pidfile="/var/run/${name}.pid"
+logfile="${polytropos_log_dir}/artifact-store.log"
+
+# DPORTSV3_NO_BOOTSTRAP: bin/dportsv3 will otherwise create and populate
+# the venv on first run. A service start is the wrong moment to discover
+# the network is down, so a deployment installs dependencies ahead of
+# time and this stays off.
+polytropos_artifact_store_env="DPORTSV3_NO_BOOTSTRAP=1"
+
+command="/usr/sbin/daemon"
+command_args="-f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
+    ${polytropos_root}/bin/dportsv3 artifact-store \
+    --logs-root ${polytropos_logs_root} \
+    --bind ${polytropos_artifact_store_bind} \
+    --port ${polytropos_artifact_store_port}"
+
+start_precmd="polytropos_artifact_store_prestart"
+
+polytropos_artifact_store_prestart()
+{
+	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
+		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
+	fi
+	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
+}
+
+run_rc_command "$1"
