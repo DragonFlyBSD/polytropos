@@ -11,6 +11,7 @@ from dportsv3.commands.compose import cmd_compose
 from dportsv3.commands.compose_report import cmd_compose_report
 from dportsv3.commands.dsl import cmd_dsl
 from dportsv3.commands.migrate import cmd_migrate
+from dportsv3.commands.tracker import DEFAULT_BIND as tracker_default_bind_value
 from dportsv3.commands.tracker import cmd_tracker
 
 
@@ -503,6 +504,14 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
 
     serve = tracker_sub.add_parser("serve", help="Run tracker HTTP server")
     serve.add_argument("--port", type=int, default=8080, help="Listen port")
+    serve.add_argument(
+        "--bind",
+        default=tracker_default_bind_value,
+        help="Address to listen on (default: %(default)s — every "
+             "interface). The tracker has no authentication, so binding "
+             "it beyond a trusted network exposes the build and chat "
+             "endpoints to anyone who can reach the port.",
+    )
     serve.add_argument(
         "--db",
         type=Path,

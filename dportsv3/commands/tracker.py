@@ -34,6 +34,13 @@ from dportsv3.tracker.client import (
 )
 
 
+#: Address the tracker listens on when nothing says otherwise. Unlike
+#: artifact-store (127.0.0.1) this is the whole LAN, which is a deliberate
+#: choice for a build box on a trusted network — see poly-abr.6. It is a
+#: default rather than a literal so a deployment can say otherwise.
+DEFAULT_BIND = "0.0.0.0"
+
+
 def cmd_tracker(args: Namespace) -> int:
     """Dispatch tracker subcommands."""
     action = getattr(args, "tracker_action", None)
@@ -111,7 +118,10 @@ def _cmd_serve(args: Namespace) -> int:
 
     db_path = _resolve_state_db_path(args)
     app = create_app(db_path)
-    uvicorn.run(app, host="0.0.0.0", port=int(args.port))
+    # getattr, not args.bind: _cmd_serve is also reachable with a
+    # hand-built Namespace, and an older one has no bind attribute.
+    bind = getattr(args, "bind", None) or DEFAULT_BIND
+    uvicorn.run(app, host=bind, port=int(args.port))
     return 0
 
 

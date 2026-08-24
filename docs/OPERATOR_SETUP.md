@@ -136,7 +136,7 @@ bin/dportsv3 artifact-store --logs-root $LOGS_ROOT
 # Shell B — tracker (UI + read API + SSE)
 DPORTSV3_STATE_DB=$STATE_DB \
 DPORTSV3_ARTIFACT_ROOT=$ARTIFACT_ROOT \
-  bin/dportsv3 tracker serve --port 8080
+  bin/dportsv3 tracker serve --port 8080 --bind 0.0.0.0
 
 # Shell C — queue runner (claims jobs, runs triage/patch)
 DPORTSV3_STATE_DB=$STATE_DB \
@@ -148,6 +148,20 @@ ARTIFACT_STORE_URL=http://127.0.0.1:8788 \
 Order doesn't matter; each is idempotent on schema init. Open
 `http://localhost:8080/` in a browser and confirm the dashboard
 loads (it'll be empty until a build runs).
+
+`--bind` defaults to `0.0.0.0`, so the tracker is reachable from the
+whole network. That is deliberate — the dashboard is meant to be opened
+from your desk, not from the build box — but the tracker has **no
+authentication**, and its API can start builds and spend LLM credit. Run
+it on a trusted network, or pass `--bind 127.0.0.1` and reach it through
+an ssh tunnel:
+
+```sh
+ssh -L 8080:localhost:8080 buildbox
+```
+
+artifact-store defaults to `127.0.0.1` instead: it only ever receives
+bundles from hooks running on the same host.
 
 ## 7. Run a build
 
