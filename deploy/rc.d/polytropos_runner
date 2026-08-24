@@ -83,6 +83,16 @@ polytropos_runner_prestart()
 		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
 	fi
 
+	# `dev-env` is a separate venv with a separate install stamp, and
+	# the wrapper checks it on every single call. This process reaches a
+	# dev-env from 21 different functions, so a stale stamp under
+	# DPORTSV3_NO_BOOTSTRAP=1 does not fail once — it fails every job,
+	# with the reason buried in per-job output. Fail here instead.
+	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
+	    dev-env --help >/dev/null 2>&1; then
+		err 1 "the dev-env venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 dev-env --help"
+	fi
+
 	# The queue root is where the dsynth hooks drop .job files. The
 	# runner requires the four subdirectories to exist and exits 1
 	# naming the missing one, so create them rather than fail at start.

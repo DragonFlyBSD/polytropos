@@ -66,6 +66,15 @@ polytropos_tracker_prestart()
 	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
 		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
 	fi
+
+	# The wrapper compares an install stamp against the venv on every
+	# run, and DPORTSV3_NO_BOOTSTRAP=1 turns a mismatch into exit 1
+	# rather than an install. Catch that here: otherwise the service
+	# starts cleanly and fails at the first request instead.
+	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
+	    --version >/dev/null 2>&1; then
+		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 --version"
+	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 
 	# The fix-chat panel calls an LLM from inside the tracker, so this

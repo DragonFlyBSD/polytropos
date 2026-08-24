@@ -248,3 +248,135 @@ def test_no_credentials_in_the_world_readable_config() -> None:
         if line.strip().startswith("#"):
             continue
         assert "API_KEY" not in line, line
+
+
+# --- the stale-venv guard (poly-abr.7) ----------------------------------
+
+def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
+    """Execute a script's start_precmd with a fake bin/dportsv3.
+
+    Returns (returncode, stderr). The wrapper stub exits ``wrapper_rc``,
+    which is how a stale install stamp presents: bin/dportsv3 compares a
+    stamp on every run and, with DPORTSV3_NO_BOOTSTRAP=1 set, exits 1
+    instead of installing.
+    """
+    root = tmp_path / "checkout"
+    (root / "bin").mkdir(parents=True)
+    wrapper = root / "bin" / "dportsv3"
+    wrapper.write_text(f"#!/bin/sh\nexit {wrapper_rc}\n")
+    wrapper.chmod(0o755)
+
+    stub = tmp_path / "rc.subr"
+    stub.write_text(STUB_RC_SUBR)
+
+    src = (RC_D / service).read_text().replace(". /etc/rc.subr", f'. "{stub}"')
+    script = tmp_path / service
+    script.write_text(src)
+
+    import getpass
+    variables = {
+        "polytropos_root": str(root),
+        "polytropos_user": getpass.getuser(),
+        "polytropos_log_dir": str(tmp_path / "log"),
+        "polytropos_queue_root": str(tmp_path / "queue"),
+        "polytropos_conf": str(tmp_path / "absent.conf"),
+        "polytropos_harness_env": str(tmp_path / "absent.env"),
+        "polytropos_chat_env": str(tmp_path / "absent.env"),
+        **(extra_vars or {}),
+    }
+    preamble = "".join(f'{k}="{v}"\n' for k, v in variables.items())
+    driver = tmp_path / "driver.sh"
+    driver.write_text(f'{preamble}. "{script}" start\neval "$start_precmd"\n')
+    p = subprocess.run(["/bin/sh", str(driver)], capture_output=True, text=True)
+    return p.returncode, p.stderr
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_stale_venv_refuses_to_start(tmp_path, service) -> None:
+    """A stale stamp must stop the service, not every job it runs.
+
+    Verified on x6: with DPORTSV3_NO_BOOTSTRAP=1 the wrapper exits 1 and
+    prints 'dev-env bootstrap required'. The runner reaches a dev-env
+    from 21 functions, so without this guard the service starts fine and
+    then fails everything, with the reason in per-job output.
+    """
+    rc, err = run_precmd(tmp_path, service, wrapper_rc=1)
+    assert rc != 0, "started with a stale venv"
+    assert "stale or missing" in err, err
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_healthy_venv_starts(tmp_path, service) -> None:
+    rc, err = run_precmd(tmp_path, service, wrapper_rc=0)
+    assert rc == 0, err
+
+
+def test_runner_probes_the_dev_env_branch() -> None:
+    """dev-env is a separate venv with a separate stamp, so probing
+    `--version` would pass while every dev-env call still failed."""
+    text = (RC_D / "polytropos_runner").read_text()
+    assert "dev-env --help" in text
+
+
+@pytest.mark.parametrize("service", ["polytropos_artifact_store",
+                                     "polytropos_tracker"])
+def test_http_services_probe_the_generator_branch(service) -> None:
+    text = (RC_D / service).read_text()
+    assert "--version" in text
+
+
+def test_missing_wrapper_is_caught_before_the_stamp_probe(tmp_path) -> None:
+    """The clearer error wins: 'set polytropos_root' beats 'stale venv'
+    when the path is simply wrong."""
+    stub = tmp_path / "rc.subr"
+    stub.write_text(STUB_RC_SUBR)
+    src = (RC_D / "polytropos_runner").read_text().replace(
+        ". /etc/rc.subr", f'. "{stub}"')
+    script = tmp_path / "polytropos_runner"
+    script.write_text(src)
+    driver = tmp_path / "d.sh"
+    driver.write_text(
+        f'polytropos_root="{tmp_path}/nope"\n'
+        f'polytropos_conf="{tmp_path}/absent.conf"\n'
+        f'. "{script}" start\neval "$start_precmd"\n')
+    p = subprocess.run(["/bin/sh", str(driver)], capture_output=True, text=True)
+    assert p.returncode != 0
+    assert "set polytropos_root" in p.stderr
+
+
+def test_runner_creates_the_queue_subdirs(tmp_path) -> None:
+    """The runner exits 1 naming a missing queue subdirectory, and x6 has
+    no queue root at all today."""
+    rc, err = run_precmd(tmp_path, "polytropos_runner")
+    assert rc == 0, err
+    for sub in ("pending", "inflight", "done", "failed"):
+        assert (tmp_path / "queue" / sub).is_dir()
+
+
+def test_world_readable_secrets_warn(tmp_path) -> None:
+    """find -perm +077, verified on DragonFly: quiet at 600, warns at 640."""
+    secret = tmp_path / "harness.env"
+    secret.write_text("export DP_HARNESS_TRIAGE_API_KEY=x\n")
+    secret.chmod(0o644)
+    rc, err = run_precmd(tmp_path, "polytropos_runner",
+                         extra_vars={"polytropos_harness_env": str(secret)})
+    assert rc == 0
+    assert "readable beyond its owner" in err
+
+
+def test_mode_600_secrets_are_quiet(tmp_path) -> None:
+    secret = tmp_path / "harness.env"
+    secret.write_text("export DP_HARNESS_TRIAGE_API_KEY=x\n")
+    secret.chmod(0o600)
+    rc, err = run_precmd(tmp_path, "polytropos_runner",
+                         extra_vars={"polytropos_harness_env": str(secret)})
+    assert rc == 0
+    assert "readable beyond its owner" not in err
+
+
+def test_absent_credentials_warn_but_start(tmp_path) -> None:
+    """Starting without keys is legal — every job fails, but the service
+    coming up is what lets the operator see that in the tracker."""
+    rc, err = run_precmd(tmp_path, "polytropos_runner")
+    assert rc == 0
+    assert "without LLM credentials" in err

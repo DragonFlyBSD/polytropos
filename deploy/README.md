@@ -16,9 +16,26 @@ subcommand calls `require_root()`, and a non-root runner refuses to
 start with exit 4 rather than running with the dsynth-busy gate off.
 
 Because root writes into a tree owned by `polytropos`, the runner starts
-with `umask 002` and the evidence directories are setgid. Without that,
-the tracker fails to write `state.db-wal` and the symptom looks like a
-read-only database rather than a permission problem.
+with `umask 002`. Without it the tracker cannot write `state.db-wal`,
+and SQLite reports that as a *read-only database* rather than as a
+permission error — you would go looking in the wrong place.
+
+`umask 002` is the whole mechanism, and it is enough. Measured on
+DragonFly 6.5 (HAMMER2): a new file inherits its group from the parent
+directory whether or not that directory is setgid, so the setgid bit
+Linux would need here is redundant. What is *not* redundant is the
+umask — at root's default 022 the same file comes out `rw-r--r--` and
+the service user cannot write it:
+
+    umask 002, plain dir   -> -rw-rw-r-- root polytropos   works
+    umask 002, setgid dir  -> -rw-rw-r-- root polytropos   identical
+    umask 022, either      -> -rw-r--r-- root polytropos   broken
+
+The umask survives the whole path — rc script, `bin/dportsv3`, the
+Python CLI, and into the chroot, where `umask` reports 0002.
+
+Group inheritance only applies to *new* files, so the install has to
+`chgrp -R` an existing tree once.
 
 ## Files
 
