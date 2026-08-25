@@ -36,19 +36,19 @@ desc="Polytropos agent queue runner"
 
 load_rc_config $name
 
-: ${polytropos_runner_enable="NO"}
-: ${polytropos_conf="/usr/local/etc/polytropos.conf"}
+: ${polytropos_runner_enable:="NO"}
+: ${polytropos_conf:="/usr/local/etc/polytropos.conf"}
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
-: ${polytropos_root="/usr/local/share/polytropos"}
-: ${polytropos_logs_root="/build/synth/logs"}
-: ${polytropos_log_dir="/var/log/polytropos"}
-: ${polytropos_state_db="${polytropos_logs_root}/evidence/state.db"}
-: ${polytropos_queue_root="${polytropos_logs_root}/evidence/queue"}
-: ${polytropos_tracker_url="http://127.0.0.1:8080"}
-: ${polytropos_artifact_store_url="http://127.0.0.1:8788"}
-: ${polytropos_harness_env="/usr/local/etc/polytropos/harness.env"}
-: ${polytropos_runner_dev_env=""}
+: ${polytropos_root:="/usr/local/share/polytropos"}
+: ${polytropos_logs_root:="/build/synth/logs"}
+: ${polytropos_log_dir:="/var/log/polytropos"}
+: ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
+: ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
+: ${polytropos_tracker_url:="http://127.0.0.1:8080"}
+: ${polytropos_artifact_store_url:="http://127.0.0.1:8788"}
+: ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
+: ${polytropos_runner_dev_env:=""}
 
 pidfile="/var/run/${name}.pid"
 logfile="${polytropos_log_dir}/runner.log"
@@ -66,12 +66,19 @@ _dev_env_flag=""
 [ -n "${polytropos_runner_dev_env}" ] && \
 	_dev_env_flag="--env ${polytropos_runner_dev_env}"
 
-# No `daemon -r`: it restarts the child whatever the exit code, and this
-# program exits 3 when another runner holds the lock and 4 when it cannot
-# read the dev-env store. Supervising those would spin forever on a
-# misconfiguration instead of surfacing it.
+# No `daemon -r`, deliberately, and not for lack of precedent: ports such
+# as net-mgmt/bosun and net-mgmt/telegraf run `daemon -fcr -P ...` and
+# supervise. It is wrong here. -r restarts the child whatever the exit
+# code, and this program uses exit 3 (another runner holds the lock) and
+# exit 4 (dev-env store unreadable) as configuration signals. Supervising
+# those spins at one restart a second instead of surfacing them.
+#
+# Note for anyone adding -r later: it must come with -P, not -p. rc.subr
+# signals whatever is in $pidfile, and with -p that is the child — the
+# supervisor would simply restart it. The ports above use -P for exactly
+# this reason.
 command="/usr/sbin/daemon"
-command_args="-f -o ${logfile} -p ${pidfile} -t ${name} \
+command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} \
     ${polytropos_root}/bin/dportsv3 agent-queue-runner \
     --queue-root ${polytropos_queue_root} ${_dev_env_flag}"
 

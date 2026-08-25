@@ -14,6 +14,7 @@
 #
 # Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
 # polytropos_artifact_store_enable (bool)  Set to "NO" by default.
+# polytropos_home                  (str)   HOME for the service user.
 # polytropos_artifact_store_bind   (str)   Listen address. Default 127.0.0.1.
 # polytropos_artifact_store_port   (str)   Listen port. Default 8788.
 #
@@ -26,16 +27,17 @@ desc="Polytropos artifact store"
 
 load_rc_config $name
 
-: ${polytropos_artifact_store_enable="NO"}
-: ${polytropos_conf="/usr/local/etc/polytropos.conf"}
+: ${polytropos_artifact_store_enable:="NO"}
+: ${polytropos_conf:="/usr/local/etc/polytropos.conf"}
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
-: ${polytropos_root="/usr/local/share/polytropos"}
-: ${polytropos_user="polytropos"}
-: ${polytropos_logs_root="/build/synth/logs"}
-: ${polytropos_log_dir="/var/log/polytropos"}
-: ${polytropos_artifact_store_bind="127.0.0.1"}
-: ${polytropos_artifact_store_port="8788"}
+: ${polytropos_root:="/usr/local/share/polytropos"}
+: ${polytropos_user:="polytropos"}
+: ${polytropos_logs_root:="/build/synth/logs"}
+: ${polytropos_home:="/var/db/polytropos"}
+: ${polytropos_log_dir:="/var/log/polytropos"}
+: ${polytropos_artifact_store_bind:="127.0.0.1"}
+: ${polytropos_artifact_store_port:="8788"}
 
 pidfile="/var/run/${name}.pid"
 logfile="${polytropos_log_dir}/artifact-store.log"
@@ -44,10 +46,15 @@ logfile="${polytropos_log_dir}/artifact-store.log"
 # the venv on first run. A service start is the wrong moment to discover
 # the network is down, so a deployment installs dependencies ahead of
 # time and this stays off.
-polytropos_artifact_store_env="DPORTSV3_NO_BOOTSTRAP=1"
+# HOME is not set by `daemon -u`: verified on DragonFly that a
+# child dropped to an unprivileged user still inherits HOME=/root,
+# which it cannot read. www/grist-core exports HOME for the same
+# reason. Anything using Path.home() or a ~/.cache would fail in a
+# way that points nowhere near this file.
+polytropos_artifact_store_env="HOME=${polytropos_home} DPORTSV3_NO_BOOTSTRAP=1"
 
 command="/usr/sbin/daemon"
-command_args="-f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
+command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
     ${polytropos_root}/bin/dportsv3 artifact-store \
     --logs-root ${polytropos_logs_root} \
     --bind ${polytropos_artifact_store_bind} \
@@ -75,6 +82,7 @@ polytropos_artifact_store_prestart()
 		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 artifact-store --help"
 	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
+	install -d -o "${polytropos_user}" -m 0755 "${polytropos_home}" || return 1
 }
 
 run_rc_command "$1"

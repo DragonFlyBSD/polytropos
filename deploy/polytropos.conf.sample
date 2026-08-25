@@ -1,7 +1,7 @@
 # Shared configuration for the Polytropos services.
 #
 # Installed as /usr/local/etc/polytropos.conf and sourced by all three
-# rc.d scripts. Every setting uses the `: ${var="value"}` form, which
+# rc.d scripts. Every setting uses the `: ${var:="value"}` form, which
 # assigns only when the variable is unset — so the precedence is:
 #
 #     /etc/rc.conf   (highest — rc.subr reads it before this file)
@@ -16,27 +16,32 @@
 # DPORTSV3_CONFIG_DIR, DPORTS_DEV_TOOL_ROOT and DPORTSV3_CMD for everything
 # downstream. Pointing this at anything other than a real checkout will not
 # work.
-: ${polytropos_root="/usr/local/share/polytropos"}
+: ${polytropos_root:="/usr/local/share/polytropos"}
 
 # The unprivileged account that owns the evidence tree and runs the two
 # HTTP services. The queue runner ignores this and runs as root, because
 # dev-env requires it.
-: ${polytropos_user="polytropos"}
-: ${polytropos_group="polytropos"}
+: ${polytropos_user:="polytropos"}
+: ${polytropos_group:="polytropos"}
+
+# HOME for the two services that drop privileges. `daemon -u` lowers the
+# uid but leaves HOME inherited from root, so it has to be said here or
+# they run with HOME=/root and cannot read it.
+: ${polytropos_home:="/var/db/polytropos"}
 
 # The one path everything else is derived from.
-: ${polytropos_logs_root="/build/synth/logs"}
+: ${polytropos_logs_root:="/build/synth/logs"}
 
 # Derived. Override individually only if your layout differs from the
 # one the dsynth hooks and OPERATOR_SETUP.md assume.
-: ${polytropos_state_db="${polytropos_logs_root}/evidence/state.db"}
-: ${polytropos_artifact_root="${polytropos_logs_root}/evidence"}
-: ${polytropos_queue_root="${polytropos_logs_root}/evidence/queue"}
+: ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
+: ${polytropos_artifact_root:="${polytropos_logs_root}/evidence"}
+: ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
 
 # Service output. daemon(8) appends each service's stdout/stderr here.
 # Nothing rotates these yet — see poly-abr.4. The pidfiles are already in
 # place, which is what a newsyslog entry will need.
-: ${polytropos_log_dir="/var/log/polytropos"}
+: ${polytropos_log_dir:="/var/log/polytropos"}
 
 # --- listeners ---------------------------------------------------------
 #
@@ -44,16 +49,16 @@
 # spend LLM credit. 0.0.0.0 is a deliberate choice for a trusted network.
 # Set 127.0.0.1 and use `ssh -L 8080:localhost:8080 buildbox` if that is
 # not your situation.
-: ${polytropos_tracker_bind="0.0.0.0"}
-: ${polytropos_tracker_port="8080"}
+: ${polytropos_tracker_bind:="0.0.0.0"}
+: ${polytropos_tracker_port:="8080"}
 
 # The artifact store only ever receives bundles from hooks on this host.
-: ${polytropos_artifact_store_bind="127.0.0.1"}
-: ${polytropos_artifact_store_port="8788"}
+: ${polytropos_artifact_store_bind:="127.0.0.1"}
+: ${polytropos_artifact_store_port:="8788"}
 
 # How the runner reaches the other two. Keep in step with the ports above.
-: ${polytropos_tracker_url="http://127.0.0.1:8080"}
-: ${polytropos_artifact_store_url="http://127.0.0.1:8788"}
+: ${polytropos_tracker_url:="http://127.0.0.1:8080"}
+: ${polytropos_artifact_store_url:="http://127.0.0.1:8788"}
 
 # --- runner ------------------------------------------------------------
 
@@ -61,7 +66,7 @@
 # no active env recorded. Leave empty on a single-env host: the runner
 # auto-picks when exactly one exists. With several envs and nothing set,
 # the runner holds rather than running with the dsynth-busy gate off.
-: ${polytropos_runner_dev_env=""}
+: ${polytropos_runner_dev_env:=""}
 
 # Where the LLM credentials live. Mode 600, root-owned.
-: ${polytropos_harness_env="/usr/local/etc/polytropos/harness.env"}
+: ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}

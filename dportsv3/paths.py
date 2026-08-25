@@ -147,6 +147,57 @@ def resolve_delta_root(explicit: Path | str | None = None) -> Path:
     return root
 
 
+def tool_root(explicit: Path | str | None = None) -> Path:
+    """This tool's own checkout — the thing a deployment installs from.
+
+    Comes from ``$DPORTS_DEV_TOOL_ROOT``, which ``bin/dportsv3`` exports for
+    the checkout it lives in. That wrapper is the one component entitled to
+    know the repository layout, which is what keeps a ``parents[N]`` walk out
+    of this package. ``dports_dev_env.builder`` resolves the same variable
+    for the same reason; this is the generator side of that contract.
+
+    An installed console script has no repository above it to find, so an
+    operator invoking one directly has to say where the checkout is rather
+    than have a path guessed for them.
+    """
+    if explicit is not None:
+        root, source = Path(explicit), "--tool-root"
+    else:
+        raw = os.environ.get("DPORTS_DEV_TOOL_ROOT", "").strip()
+        if not raw:
+            raise MissingInput(
+                "no polytropos checkout specified: pass --tool-root, or set "
+                "$DPORTS_DEV_TOOL_ROOT. Invoking via bin/dportsv3 sets it "
+                "for you."
+            )
+        root, source = Path(raw), "$DPORTS_DEV_TOOL_ROOT"
+
+    root = root.expanduser()
+    if not root.is_dir():
+        raise MissingInput(
+            f"{root} is not a directory. (Taken from {source}.)"
+        )
+    return root
+
+
+def deploy_dir(explicit: Path | str | None = None) -> Path:
+    """The tracked ``deploy/`` tree: rc.d scripts and config samples.
+
+    Part of the checkout rather than the installed package — these are
+    files a deployment copies into ``/usr/local/etc``, not data the tool
+    reads at runtime, and shipping them inside the wheel would put them
+    somewhere no operator would think to look.
+    """
+    root = tool_root(explicit)
+    path = root / "deploy"
+    if not (path / "rc.d").is_dir():
+        raise MissingInput(
+            f"{path} has no rc.d/ — {root} does not look like a polytropos "
+            f"checkout. Pass --tool-root, or set $DPORTS_DEV_TOOL_ROOT."
+        )
+    return path
+
+
 def require_dir(path: Path, what: str) -> Path:
     """Assert a directory of package data is present.
 

@@ -295,6 +295,7 @@ def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
         "polytropos_root": str(root),
         "polytropos_user": getpass.getuser(),
         "polytropos_log_dir": str(tmp_path / "log"),
+        "polytropos_home": str(tmp_path / "home"),
         "polytropos_queue_root": str(tmp_path / "queue"),
         "polytropos_conf": str(tmp_path / "absent.conf"),
         "polytropos_harness_env": str(tmp_path / "absent.env"),
@@ -413,3 +414,70 @@ def test_absent_credentials_warn_but_start(tmp_path) -> None:
     rc, err = run_precmd(tmp_path, "polytropos_runner")
     assert rc == 0
     assert "without LLM credentials" in err
+
+
+# --- conventions taken from the ports tree ------------------------------
+
+@pytest.mark.parametrize("path", [
+    "rc.d/polytropos_artifact_store", "rc.d/polytropos_tracker",
+    "rc.d/polytropos_runner", "polytropos.conf.sample",
+])
+def test_defaults_use_the_colon_form(path) -> None:
+    """`: ${x:="v"}` not `: ${x="v"}`.
+
+    Measured across 400 rc.d scripts in the FreeBSD ports tree: the colon
+    form outnumbers the other roughly 3 to 1, and it is the safer one —
+    it substitutes the default for an empty value too, so a knob left as
+    polytropos_tracker_bind="" in rc.conf does not become an empty bind
+    address.
+    """
+    import re
+    text = (DEPLOY / path).read_text()
+    bare = re.findall(r': \$\{([a-z_]+)=', text)
+    assert bare == [], f"plain-equals defaults: {bare}"
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_daemon_chdirs_to_root(tmp_path, service) -> None:
+    """-c, as every ports example does: a service holding a cwd keeps that
+    filesystem busy and blocks an unmount."""
+    got = run_service(tmp_path, service)
+    assert got["ARGS"].startswith("-c "), got["ARGS"]
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_supervision_and_pidfile_flag_agree(tmp_path, service) -> None:
+    """-r with -p is the trap: rc.subr signals whatever is in $pidfile, so
+    with the *child* pidfile the supervisor just restarts it. Either both
+    change together or neither does."""
+    args = run_service(tmp_path, service)["ARGS"]
+    supervised = " -r " in args or " -R " in args
+    child_pidfile = " -p " in args
+    assert not (supervised and child_pidfile), args
+
+
+# --- HOME across the privilege drop -------------------------------------
+
+@pytest.mark.parametrize("service", ["polytropos_artifact_store",
+                                     "polytropos_tracker"])
+def test_home_is_set_for_dropped_privileges(tmp_path, service) -> None:
+    """Verified on DragonFly: `daemon -u` lowers the uid and leaves HOME
+    alone, so a child running as the service user still sees HOME=/root
+    and cannot read it. Anything reaching for Path.home() or a ~/.cache
+    fails somewhere that points nowhere near this script."""
+    got = run_service(tmp_path, service)
+    assert "HOME=/var/db/polytropos" in got["ENV"], got["ENV"]
+
+
+def test_runner_does_not_override_home(tmp_path) -> None:
+    """It stays root, so the inherited HOME is already right."""
+    got = run_service(tmp_path, "polytropos_runner")
+    assert "HOME=" not in got["ENV"], got["ENV"]
+
+
+def test_service_home_matches_the_installer() -> None:
+    """The rc default and the account the installer creates must agree, or
+    the services get a HOME that belongs to nobody."""
+    from dportsv3.commands import deploy
+    text = (DEPLOY / "polytropos.conf.sample").read_text()
+    assert f'polytropos_home:="{deploy.SERVICE_HOME}"' in text
