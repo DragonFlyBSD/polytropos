@@ -65,9 +65,14 @@ polytropos_artifact_store_prestart()
 	# run, and DPORTSV3_NO_BOOTSTRAP=1 turns a mismatch into exit 1
 	# rather than an install. Catch that here: otherwise the service
 	# starts cleanly and fails at the first request instead.
+	# Probed through the service's own subcommand rather than
+	# --version: the install profile is part of the stamp string, so a
+	# probe has to use the same argv shape the service will. This one
+	# is the base profile either way, but saying so explicitly keeps it
+	# correct if that ever changes (see the note in polytropos_tracker).
 	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
-	    --version >/dev/null 2>&1; then
-		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 --version"
+	    artifact-store --help >/dev/null 2>&1; then
+		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 artifact-store --help"
 	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 }

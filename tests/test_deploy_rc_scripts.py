@@ -35,6 +35,23 @@ run_rc_command() {
 """
 
 
+def _logical_lines(text):
+    """Collapse `\\`-continued shell lines into single logical lines."""
+    out, buf = [], ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        out.append((buf + line).strip())
+        buf = ""
+    if buf:
+        out.append(buf.strip())
+    return out
+
+
 def run_service(tmp_path, service, conf=None, rc_conf_vars=None):
     """Execute one rc script far enough to see what it would launch."""
     stub = tmp_path / "rc.subr"
@@ -302,7 +319,7 @@ def test_stale_venv_refuses_to_start(tmp_path, service) -> None:
     """
     rc, err = run_precmd(tmp_path, service, wrapper_rc=1)
     assert rc != 0, "started with a stale venv"
-    assert "stale or missing" in err, err
+    assert "is stale" in err, err
 
 
 @pytest.mark.parametrize("service", SERVICES)
@@ -318,11 +335,27 @@ def test_runner_probes_the_dev_env_branch() -> None:
     assert "dev-env --help" in text
 
 
-@pytest.mark.parametrize("service", ["polytropos_artifact_store",
-                                     "polytropos_tracker"])
-def test_http_services_probe_the_generator_branch(service) -> None:
+@pytest.mark.parametrize("service,argv", [
+    ("polytropos_artifact_store", "artifact-store --help"),
+    ("polytropos_tracker", "tracker serve --help"),
+])
+def test_probe_uses_the_services_own_argv(service, argv) -> None:
+    """The install profile is part of the stamp: bin/dportsv3 records
+    "<profile>:<digest>" and picks INSTALL_PROFILE=tracker only when argv
+    is exactly `tracker serve`. A `--version` probe compares against the
+    base stamp, which fails both ways — refusing to start on a
+    tracker-profile venv, and passing on a base-profile venv that
+    `tracker serve` then rejects."""
     text = (RC_D / service).read_text()
-    assert "--version" in text
+    # Join backslash continuations first: the probe is written across two
+    # lines, so a naive per-line check sees "bin/dportsv3" and the flag on
+    # different lines and can never catch a wrong one.
+    logical = _logical_lines(text)
+    probes = [l for l in logical
+              if "bin/dportsv3" in l and "NO_BOOTSTRAP" in l]
+    assert len(probes) == 1, probes
+    assert argv in probes[0], probes[0]
+    assert "--version" not in probes[0], f"probes the wrong profile: {probes[0]}"
 
 
 def test_missing_wrapper_is_caught_before_the_stamp_probe(tmp_path) -> None:

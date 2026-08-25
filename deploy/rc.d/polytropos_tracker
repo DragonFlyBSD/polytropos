@@ -71,9 +71,19 @@ polytropos_tracker_prestart()
 	# run, and DPORTSV3_NO_BOOTSTRAP=1 turns a mismatch into exit 1
 	# rather than an install. Catch that here: otherwise the service
 	# starts cleanly and fails at the first request instead.
+	#
+	# The probe must be `tracker serve`, not `--version`. The install
+	# profile is part of the stamp string — bin/dportsv3 records
+	# "<profile>:<digest>" and selects INSTALL_PROFILE=tracker only when
+	# argv is exactly `tracker serve`. Probing with anything else
+	# compares against the base stamp, which is wrong both ways round:
+	# it refuses to start on a tracker-profile venv, and it passes on a
+	# base-profile venv that `tracker serve` will then reject.
+	# `--help` is handled by argparse after the stamp check, so this
+	# exits 0 without binding a port.
 	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
-	    --version >/dev/null 2>&1; then
-		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 --version"
+	    tracker serve --help >/dev/null 2>&1; then
+		err 1 "the venv at ${polytropos_root} is stale, missing, or lacks the [tracker] extra; run: ${polytropos_root}/bin/dportsv3 tracker serve --help"
 	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 
