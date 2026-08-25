@@ -11,12 +11,25 @@
 # Credentials do NOT belong here: this file is world-readable. See
 # /usr/local/etc/polytropos/harness.env instead.
 
-# Where the checkout lives. The rc scripts exec ${polytropos_root}/bin/dportsv3,
-# which is the entry point that knows the repository layout — it sets
-# DPORTSV3_CONFIG_DIR, DPORTS_DEV_TOOL_ROOT and DPORTSV3_CMD for everything
-# downstream. Pointing this at anything other than a real checkout will not
-# work.
-: ${polytropos_root:="/usr/local/share/polytropos"}
+# The commands the services run. Not a repository path: these are two
+# entry points, and where they come from is nobody's business but the
+# operator's. A packaged install has both in the prefix bindir.
+#
+# From a git checkout, point them at the wrapper instead:
+#
+#     : ${polytropos_cmd:="/home/you/polytropos/bin/dportsv3"}
+#     : ${polytropos_dev_env_cmd:="/home/you/polytropos/bin/dportsv3 dev-env"}
+#
+# The wrapper is the entry point that knows the repository layout — it
+# exports DPORTSV3_CONFIG_DIR, DPORTS_DEV_TOOL_ROOT and DPORTSV3_CMD for
+# everything downstream, and it builds the venv on demand. The packaged
+# console scripts need none of that.
+: ${polytropos_cmd:="/usr/local/bin/dportsv3"}
+
+# Only the runner uses this one: it is how the agent reaches a chroot.
+# The `dportsv3` console script deliberately does NOT implement `dev-env`,
+# so this must be dports-dev-env (or a checkout wrapper plus that word).
+: ${polytropos_dev_env_cmd:="/usr/local/bin/dports-dev-env"}
 
 # The unprivileged account that owns the evidence tree and runs the two
 # HTTP services. The queue runner ignores this and runs as root, because

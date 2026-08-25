@@ -50,6 +50,32 @@ Precedence for every knob, highest first: `/etc/rc.conf`, then
 `polytropos.conf`, then the script's own default. That works because all
 three levels use `: ${var="value"}`, which assigns only when unset.
 
+## No repository required
+
+The scripts name two **commands**, not a checkout:
+
+    polytropos_cmd          default /usr/local/bin/dportsv3
+    polytropos_dev_env_cmd  default /usr/local/bin/dports-dev-env   (runner only)
+
+Both are console scripts a package installs into the prefix bindir, so a
+packaged polytropos runs the whole stack with no source tree and no venv.
+A git checkout is then just another value:
+
+    : ${polytropos_cmd:="/home/you/polytropos/bin/dportsv3"}
+    : ${polytropos_dev_env_cmd:="/home/you/polytropos/bin/dportsv3 dev-env"}
+
+The second knob exists because the `dportsv3` console script deliberately
+does **not** implement `dev-env` — only the checkout wrapper routes that
+word, by exec'ing `dports-dev-env`. The runner exports
+`DPORTS_DEV_ENV_CMD` from this knob so the agent uses the command you
+configured rather than whatever `PATH` happens to hold.
+
+**What still needs a git checkout:** `dev-env create`. It makes a
+`git clone --mirror` of the tool tree and clones your current branch into
+the chroot, so the env tracks the branch you are working on. A packaged
+install can run the services against envs that already exist; creating
+one is a developer action. See `poly-abr.11`.
+
 ## Credentials
 
 Two files, because two different services call an LLM and they run as

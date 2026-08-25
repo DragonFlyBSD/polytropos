@@ -229,3 +229,24 @@ def test_a_checkout_without_deploy_is_reported(tmp_path, monkeypatch, capsys) ->
                                   logs_root=str(tmp_path), dry_run=True))
     assert rc == 1
     assert "does not look like a polytropos checkout" in capsys.readouterr().err
+
+
+# --- the packaged-vs-checkout command gap (poly-abr.9) ------------------
+
+def test_missing_commands_are_detected(tmp_path) -> None:
+    assert dep.missing_commands(tmp_path) == list(dep.EXPECTED_COMMANDS)
+
+
+def test_present_commands_are_not_reported(tmp_path) -> None:
+    (tmp_path / "bin").mkdir()
+    for name in dep.EXPECTED_COMMANDS:
+        (tmp_path / "bin" / name).write_text("#!/bin/sh\n")
+    assert dep.missing_commands(tmp_path) == []
+
+
+def test_partial_install_names_only_what_is_missing(tmp_path) -> None:
+    """dports-dev-env comes from a different distribution than dportsv3,
+    so one can be installed without the other."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "dportsv3").write_text("#!/bin/sh\n")
+    assert dep.missing_commands(tmp_path) == ["dports-dev-env"]

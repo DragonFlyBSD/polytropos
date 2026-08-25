@@ -19,6 +19,7 @@
 # Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
 # polytropos_tracker_enable (bool)  Set to "NO" by default.
 # polytropos_home           (str)   HOME for the service user.
+# polytropos_cmd            (str)   The dportsv3 command to run.
 # polytropos_tracker_bind   (str)   Listen address. Default 0.0.0.0.
 # polytropos_tracker_port   (str)   Listen port. Default 8080.
 # polytropos_chat_env       (str)   Credentials for the fix-chat panel.
@@ -37,7 +38,7 @@ load_rc_config $name
 : ${polytropos_conf:="/usr/local/etc/polytropos.conf"}
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
-: ${polytropos_root:="/usr/local/share/polytropos"}
+: ${polytropos_cmd:="/usr/local/bin/dportsv3"}
 : ${polytropos_user:="polytropos"}
 : ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_home:="/var/db/polytropos"}
@@ -62,7 +63,7 @@ DPORTSV3_ARTIFACT_ROOT=${polytropos_artifact_root}"
 
 command="/usr/sbin/daemon"
 command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
-    ${polytropos_root}/bin/dportsv3 tracker serve \
+    ${polytropos_cmd} tracker serve \
     --bind ${polytropos_tracker_bind} \
     --port ${polytropos_tracker_port}"
 
@@ -70,8 +71,8 @@ start_precmd="polytropos_tracker_prestart"
 
 polytropos_tracker_prestart()
 {
-	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
-		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
+	if ! command -v "${polytropos_cmd}" >/dev/null 2>&1; then
+		err 1 "${polytropos_cmd} not found; set polytropos_cmd — a packaged install has it in the prefix bindir, a checkout at bin/dportsv3"
 	fi
 
 	# The wrapper compares an install stamp against the venv on every
@@ -88,9 +89,9 @@ polytropos_tracker_prestart()
 	# base-profile venv that `tracker serve` will then reject.
 	# `--help` is handled by argparse after the stamp check, so this
 	# exits 0 without binding a port.
-	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
+	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_cmd}" \
 	    tracker serve --help >/dev/null 2>&1; then
-		err 1 "the venv at ${polytropos_root} is stale, missing, or lacks the [tracker] extra; run: ${polytropos_root}/bin/dportsv3 tracker serve --help"
+		err 1 "${polytropos_cmd} does not run; in a checkout the venv is stale or lacks the [tracker] extra — try: ${polytropos_cmd} tracker serve --help"
 	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_home}" || return 1

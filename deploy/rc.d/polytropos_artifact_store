@@ -15,6 +15,7 @@
 # Knobs (see /usr/local/etc/polytropos.conf for the shared ones):
 # polytropos_artifact_store_enable (bool)  Set to "NO" by default.
 # polytropos_home                  (str)   HOME for the service user.
+# polytropos_cmd                   (str)   The dportsv3 command to run.
 # polytropos_artifact_store_bind   (str)   Listen address. Default 127.0.0.1.
 # polytropos_artifact_store_port   (str)   Listen port. Default 8788.
 #
@@ -31,7 +32,7 @@ load_rc_config $name
 : ${polytropos_conf:="/usr/local/etc/polytropos.conf"}
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
-: ${polytropos_root:="/usr/local/share/polytropos"}
+: ${polytropos_cmd:="/usr/local/bin/dportsv3"}
 : ${polytropos_user:="polytropos"}
 : ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_home:="/var/db/polytropos"}
@@ -55,7 +56,7 @@ polytropos_artifact_store_env="HOME=${polytropos_home} DPORTSV3_NO_BOOTSTRAP=1"
 
 command="/usr/sbin/daemon"
 command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
-    ${polytropos_root}/bin/dportsv3 artifact-store \
+    ${polytropos_cmd} artifact-store \
     --logs-root ${polytropos_logs_root} \
     --bind ${polytropos_artifact_store_bind} \
     --port ${polytropos_artifact_store_port}"
@@ -64,8 +65,8 @@ start_precmd="polytropos_artifact_store_prestart"
 
 polytropos_artifact_store_prestart()
 {
-	if [ ! -x "${polytropos_root}/bin/dportsv3" ]; then
-		err 1 "${polytropos_root}/bin/dportsv3 is not executable; set polytropos_root"
+	if ! command -v "${polytropos_cmd}" >/dev/null 2>&1; then
+		err 1 "${polytropos_cmd} not found; set polytropos_cmd — a packaged install has it in the prefix bindir, a checkout at bin/dportsv3"
 	fi
 
 	# The wrapper compares an install stamp against the venv on every
@@ -77,9 +78,9 @@ polytropos_artifact_store_prestart()
 	# probe has to use the same argv shape the service will. This one
 	# is the base profile either way, but saying so explicitly keeps it
 	# correct if that ever changes (see the note in polytropos_tracker).
-	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_root}/bin/dportsv3" \
+	if ! DPORTSV3_NO_BOOTSTRAP=1 "${polytropos_cmd}" \
 	    artifact-store --help >/dev/null 2>&1; then
-		err 1 "the venv at ${polytropos_root} is stale or missing; run: ${polytropos_root}/bin/dportsv3 artifact-store --help"
+		err 1 "${polytropos_cmd} does not run; in a checkout the venv is stale or missing — try: ${polytropos_cmd} artifact-store --help"
 	fi
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_home}" || return 1

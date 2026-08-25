@@ -46,6 +46,11 @@ OPERATOR_FILES = (
 
 QUEUE_SUBDIRS = ("pending", "inflight", "done", "failed")
 
+#: The two entry points the rc.d scripts default to. A packaged install puts
+#: both in the prefix bindir; installing from a checkout does not, which is
+#: worth saying out loud rather than leaving to a failed service start.
+EXPECTED_COMMANDS = ("dportsv3", "dports-dev-env")
+
 #: HOME for the service account. `daemon -u` lowers the uid but leaves HOME
 #: as it found it, so the two unprivileged services would otherwise run with
 #: HOME=/root. It has to exist and be theirs.
@@ -201,6 +206,11 @@ def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
             _run(["chmod", "-R", "g+w", str(logs_root)])
 
 
+def missing_commands(prefix: Path) -> list[str]:
+    """Which of the expected entry points are not in ``<prefix>/bin``."""
+    return [c for c in EXPECTED_COMMANDS if not (prefix / "bin" / c).exists()]
+
+
 def cmd_deploy(args: Namespace) -> int:
     if getattr(args, "deploy_action", None) != "install":
         print("usage: dportsv3 deploy install", file=sys.stderr)
@@ -248,6 +258,22 @@ def cmd_deploy(args: Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    absent = missing_commands(prefix)
+    if absent:
+        print(f"""
+note: {', '.join(absent)} not found in {prefix / 'bin'}.
+
+The rc.d scripts default to the packaged console scripts, which only
+exist once polytropos is installed as a package. Installing from a
+checkout does not put them there. Point the scripts at the checkout
+instead, in {prefix}/etc/polytropos.conf:
+
+    : ${{polytropos_cmd:="{deploy.parent}/bin/dportsv3"}}
+    : ${{polytropos_dev_env_cmd:="{deploy.parent}/bin/dportsv3 dev-env"}}
+
+Each service refuses to start until its command runs, so leaving this
+unset fails at `service ... start` rather than silently.""")
+
     print(f"""
 done. To bring the stack up, add to /etc/rc.conf:
 
@@ -256,6 +282,5 @@ done. To bring the stack up, add to /etc/rc.conf:
     polytropos_runner_enable="YES"
 
 then put real credentials in {prefix}/etc/polytropos/harness.env and
-start the services. The runner refuses to start until the venv is
-installed: run {deploy.parent}/bin/dportsv3 --version once first.""")
+start the services.""")
     return 0

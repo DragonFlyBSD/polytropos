@@ -282,6 +282,9 @@ def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
     wrapper = root / "bin" / "dportsv3"
     wrapper.write_text(f"#!/bin/sh\nexit {wrapper_rc}\n")
     wrapper.chmod(0o755)
+    dev_env = root / "bin" / "dports-dev-env"
+    dev_env.write_text(f"#!/bin/sh\nexit {wrapper_rc}\n")
+    dev_env.chmod(0o755)
 
     stub = tmp_path / "rc.subr"
     stub.write_text(STUB_RC_SUBR)
@@ -292,7 +295,8 @@ def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
 
     import getpass
     variables = {
-        "polytropos_root": str(root),
+        "polytropos_cmd": str(wrapper),
+        "polytropos_dev_env_cmd": str(dev_env),
         "polytropos_user": getpass.getuser(),
         "polytropos_log_dir": str(tmp_path / "log"),
         "polytropos_home": str(tmp_path / "home"),
@@ -329,11 +333,21 @@ def test_healthy_venv_starts(tmp_path, service) -> None:
     assert rc == 0, err
 
 
-def test_runner_probes_the_dev_env_branch() -> None:
-    """dev-env is a separate venv with a separate stamp, so probing
-    `--version` would pass while every dev-env call still failed."""
+def test_runner_probes_both_entry_points() -> None:
+    """Two distributions, two venvs, two install stamps. Probing only the
+    generator would pass while every chroot call still failed."""
+    logical = _logical_lines((RC_D / "polytropos_runner").read_text())
+    probes = [l for l in logical if "NO_BOOTSTRAP" in l and l.startswith("if !")]
+    assert len(probes) == 2, probes
+    assert any("agent-queue-runner --help" in l for l in probes), probes
+    assert any("${polytropos_dev_env_cmd}" in l for l in probes), probes
+
+
+def test_runner_tells_the_agent_which_dev_env_command_to_use() -> None:
+    """Otherwise worker.py falls back to PATH, which may hold a different
+    copy than the one the operator configured here."""
     text = (RC_D / "polytropos_runner").read_text()
-    assert "dev-env --help" in text
+    assert "DPORTS_DEV_ENV_CMD=${polytropos_dev_env_cmd}" in text
 
 
 @pytest.mark.parametrize("service,argv", [
@@ -353,15 +367,15 @@ def test_probe_uses_the_services_own_argv(service, argv) -> None:
     # different lines and can never catch a wrong one.
     logical = _logical_lines(text)
     probes = [l for l in logical
-              if "bin/dportsv3" in l and "NO_BOOTSTRAP" in l]
+              if "${polytropos_cmd}" in l and "NO_BOOTSTRAP" in l]
     assert len(probes) == 1, probes
     assert argv in probes[0], probes[0]
     assert "--version" not in probes[0], f"probes the wrong profile: {probes[0]}"
 
 
-def test_missing_wrapper_is_caught_before_the_stamp_probe(tmp_path) -> None:
-    """The clearer error wins: 'set polytropos_root' beats 'stale venv'
-    when the path is simply wrong."""
+def test_missing_command_is_caught_before_the_probe(tmp_path) -> None:
+    """The clearer error wins: 'set polytropos_cmd' beats 'does not run'
+    when the command simply is not there."""
     stub = tmp_path / "rc.subr"
     stub.write_text(STUB_RC_SUBR)
     src = (RC_D / "polytropos_runner").read_text().replace(
@@ -370,12 +384,12 @@ def test_missing_wrapper_is_caught_before_the_stamp_probe(tmp_path) -> None:
     script.write_text(src)
     driver = tmp_path / "d.sh"
     driver.write_text(
-        f'polytropos_root="{tmp_path}/nope"\n'
+        f'polytropos_cmd="{tmp_path}/nope/dportsv3"\n'
         f'polytropos_conf="{tmp_path}/absent.conf"\n'
         f'. "{script}" start\neval "$start_precmd"\n')
     p = subprocess.run(["/bin/sh", str(driver)], capture_output=True, text=True)
     assert p.returncode != 0
-    assert "set polytropos_root" in p.stderr
+    assert "set polytropos_cmd" in p.stderr
 
 
 def test_runner_creates_the_queue_subdirs(tmp_path) -> None:
@@ -481,3 +495,40 @@ def test_service_home_matches_the_installer() -> None:
     from dportsv3.commands import deploy
     text = (DEPLOY / "polytropos.conf.sample").read_text()
     assert f'polytropos_home:="{deploy.SERVICE_HOME}"' in text
+
+
+# --- no repository in the scripts (poly-abr.9) --------------------------
+
+@pytest.mark.parametrize("path", [
+    "rc.d/polytropos_artifact_store", "rc.d/polytropos_tracker",
+    "rc.d/polytropos_runner", "polytropos.conf.sample", "README.md",
+])
+def test_nothing_assumes_a_checkout_layout(path) -> None:
+    """The scripts must name commands, not a repository.
+
+    Once this ships as a dport there is no checkout: the package installs
+    the two console scripts into the prefix bindir. A checkout is then one
+    possible value for polytropos_cmd, not the assumption.
+    """
+    text = (DEPLOY / path).read_text()
+    offenders = [l for l in text.splitlines()
+                 if "polytropos_root" in l and not l.strip().startswith("#")]
+    assert offenders == [], offenders
+
+
+@pytest.mark.parametrize("service,default", [
+    ("polytropos_artifact_store", "/usr/local/bin/dportsv3"),
+    ("polytropos_tracker", "/usr/local/bin/dportsv3"),
+    ("polytropos_runner", "/usr/local/bin/dportsv3"),
+])
+def test_command_defaults_to_the_packaged_path(tmp_path, service, default) -> None:
+    got = run_service(tmp_path, service)
+    assert default in got["ARGS"], got["ARGS"]
+
+
+def test_a_checkout_is_just_another_value(tmp_path) -> None:
+    """Setting the knob to a wrapper has to work — that is the whole point
+    of making it a command rather than a root."""
+    got = run_service(tmp_path, "polytropos_tracker", rc_conf_vars={
+        "polytropos_cmd": "/home/you/polytropos/bin/dportsv3"})
+    assert "/home/you/polytropos/bin/dportsv3 tracker serve" in got["ARGS"]
