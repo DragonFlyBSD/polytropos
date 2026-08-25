@@ -136,7 +136,49 @@ all turns — works out of the box, no extra config.
 
 ## 6. Start the three services
 
-In three separate shells or under your service manager of choice:
+Two ways. Use the first on a machine that should keep running; the
+second is for a checkout you are iterating on.
+
+### As services (supported)
+
+```sh
+sudo bin/dportsv3 deploy install --dry-run   # shows every step, changes nothing
+sudo bin/dportsv3 deploy install
+```
+
+That creates the `polytropos` account, installs three rc.d scripts, a
+shared config, two credential stubs and a newsyslog entry, creates the
+queue directories, and hands `$LOGS_ROOT` to the service account.
+
+Installing from a checkout does **not** put the console scripts in
+`/usr/local/bin`, so tell the scripts where the commands are — the
+installer prints these exact lines when it detects that:
+
+```sh
+# /usr/local/etc/polytropos.conf
+: ${polytropos_cmd:="/home/you/polytropos/bin/dportsv3"}
+: ${polytropos_dev_env_cmd:="/home/you/polytropos/bin/dportsv3 dev-env"}
+```
+
+Put real credentials in `/usr/local/etc/polytropos/harness.env`, then:
+
+```sh
+# /etc/rc.conf
+polytropos_artifact_store_enable="YES"
+polytropos_tracker_enable="YES"
+polytropos_runner_enable="YES"
+
+service polytropos_artifact_store start
+service polytropos_tracker start
+service polytropos_runner start
+```
+
+Each service refuses to start rather than starting broken: if its
+command does not run, or the runner cannot read the dev-env store, you
+get an error at `service ... start` instead of a service that comes up
+and fails every job. `deploy/README.md` has the full reference.
+
+### In three shells (development)
 
 ```sh
 # Shell A — artifact-store (receives bundles, writes state.db + blobs)
@@ -213,6 +255,49 @@ If you accept the change, apply that diff in your own DeltaPorts
 clone, review, sign, and commit there. The agentic loop never
 touches your authoritative working tree.
 
+## Running it day to day
+
+Once the services are installed, everything below is the whole
+operational surface.
+
+| Want to | Do |
+|---|---|
+| See what is happening | `http://<host>:8080/` |
+| Check a service | `service polytropos_runner status` |
+| Stop one | `service polytropos_runner stop` |
+| Restart after an upgrade | `service polytropos_runner restart` |
+| Read process output | `/var/log/polytropos/<service>.log` |
+| Read the runner's own log | `<queue-root>/runner.log` |
+| Check an env | `bin/dportsv3 env-health <env>` |
+
+**Restarting the runner is safe by design.** It takes an exclusive lock
+on `<queue-root>/runner.lock`, so a second one refuses to start rather
+than racing the first, and on start it cleans up what a dead runner left
+behind: in-flight rows are marked dead, stranded job files move to
+`failed/`, stale per-job worktrees are removed. A job that was mid-flight
+is lost, not corrupted — re-enqueue it from the bundle.
+
+**Upgrading.** Pull, then restart the services. From a checkout, run
+`bin/dportsv3 --version` once first: the wrapper rebuilds the venv when
+`pyproject.toml` changed, and the services deliberately refuse to do that
+themselves at boot. If you skip it they will not start, and will say so.
+
+### When a service will not run
+
+The table below is about the services themselves. For a stack that is up
+but behaving oddly — hooks not firing, triage 401s, budget exhausted —
+see *Common stumbles*.
+
+| Symptom | Cause |
+|---|---|
+| `service start` says the command does not run | Stale or missing venv. Run the command it names. |
+| Runner exits 4 | Not running as root, or the dev-env store is unreadable. Every `dev-env` subcommand needs root. |
+| Runner exits 3 | Another runner holds the queue lock. `service polytropos_runner status`. |
+| Runner is up but claims nothing | No dev-env resolved. Select one in the tracker UI, or set `polytropos_runner_dev_env`. It holds rather than running with the dsynth gate unanswerable. |
+| Runner paused, health broken | `bin/dportsv3 env-health <env>` reports the failing check and the fix. |
+| Every job fails at a chroot step | `polytropos_dev_env_cmd` is wrong or its venv is stale. |
+| Tracker 503s on the chat panel | No `DP_HARNESS_CHAT_MODEL`. That file is optional; the rest works without it. |
+
 ## Common stumbles
 
 | Symptom | Fix |
@@ -226,7 +311,9 @@ touches your authoritative working tree.
 
 ## Upgrading
 
-When you pull new code:
+Restarting the services is covered under *Running it day to day*. The
+part that is easy to forget is the hooks, which live inside each env and
+do not move when you pull:
 
 ```sh
 git pull
@@ -234,6 +321,7 @@ bin/dportsv3 dev-env hooks-status myenv     # are any hooks stale vs. the new so
 bin/dportsv3 dev-env hooks-install myenv    # re-copy (config preserved)
 ```
 
-Then restart the tracker (uvicorn doesn't auto-reload templates or
-static files). Artifact-store + runner read state.db schema on
-startup; migrations are idempotent.
+The tracker must be restarted for template and static-file changes —
+uvicorn does not reload them. Artifact-store and runner read the state.db
+schema at startup and the migrations are idempotent, so their order does
+not matter.
