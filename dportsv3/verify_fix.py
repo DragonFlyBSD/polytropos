@@ -123,28 +123,25 @@ def _default_apply_and_build(env_name: str, origin: str,
     """Invoke the dev-env apply-and-build primitive via the same
     subprocess pattern every other agent operation uses.
 
-    The runner doesn't import ``dports_dev_env`` directly — that
-    package lives outside the generator's venv at
-    ``scripts/tools/dev-env/`` and the worker has historically
-    shelled out via ``dportsv3 dev-env exec`` for every chroot-
-    bound tool (classify_dops, dsynth_build, materialize_dports,
-    etc.). ``worker._run_dportsv3`` resolves the dportsv3 wrapper
-    in order: ``$DPORTSV3_CMD`` override → repo-root sibling →
-    ``shutil.which('dportsv3')`` → RuntimeError. Using that same
-    helper keeps verify-fix consistent with the rest of the agent
-    stack and inherits the production-tested resolution path.
+    The runner doesn't import ``dports_dev_env`` directly — the worker
+    shells out for every chroot-bound tool (classify_dops,
+    dsynth_build, materialize_dports, etc.), and this uses the same
+    helper so verify-fix resolves the entry point identically.
+    ``worker._run_dev_env`` tries ``$DPORTS_DEV_ENV_CMD``, then
+    ``$DPORTSV3_CMD`` + ``dev-env`` for a checkout, then
+    ``dports-dev-env`` on PATH, and raises if none of them answer.
 
     Verify-fix always uses ``--diff`` with the bundle's
     ``analysis/changes.diff`` (the branch-vs-base canonical
     artifact).
     """
-    from dportsv3.agent.worker import _run_dportsv3  # noqa: PLC0415
+    from dportsv3.agent.worker import _run_dev_env  # noqa: PLC0415
 
     argv = [
-        "dev-env", "apply-and-build", env_name, origin, "--json",
+        "apply-and-build", env_name, origin, "--json",
         "--diff", diff_path,
     ]
-    proc = _run_dportsv3(*argv)
+    proc = _run_dev_env(*argv)
     if proc.stderr:
         sys.stderr.write(proc.stderr)
     stdout = (proc.stdout or "").strip()

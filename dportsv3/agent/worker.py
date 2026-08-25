@@ -41,43 +41,54 @@ from pathlib import Path
 # nor the `dportsv3` console script knows about `dev-env` at all.
 #
 # Resolution order:
-#   1. $DPORTSV3_CMD (whitespace-split). The wrapper exports this pointing at
-#      itself, so under normal operation there is nothing to resolve.
-#   2. `dportsv3` on PATH.
+#   1. $DPORTS_DEV_ENV_CMD (whitespace-split). Names the dev-env entry point
+#      outright — what a packaged install sets if it needs to override PATH.
+#   2. $DPORTSV3_CMD + "dev-env". The checkout wrapper exports this pointing
+#      at itself, and it routes `dev-env` by exec'ing dports-dev-env. Honoured
+#      ahead of PATH so a checkout uses ITS OWN dev-env venv rather than some
+#      other copy that happens to be installed.
+#   3. `dports-dev-env` on PATH — the console script of the dev-env
+#      distribution, which is what a port installs into ${PREFIX}/bin.
 # Otherwise, raise at first use.
 #
 # There used to be a step between them: a sibling lookup four parents up from
 # this file. It only resolved while the tool lived inside the DeltaPorts
 # checkout, and it silently outranked PATH.
 #
-# The PATH fallback is a real hazard worth naming: in an active venv,
-# `shutil.which("dportsv3")` finds the *console script*, which has no
-# `dev-env` subcommand — so a `dev-env exec` through it fails with an
-# argparse error rather than anything self-explanatory. That is why the
-# wrapper exports $DPORTSV3_CMD instead of relying on lookup.
-def _resolve_dportsv3_cmd() -> list[str]:
-    override = os.environ.get("DPORTSV3_CMD")
-    if override:
-        return override.split()
-    found = shutil.which("dportsv3")
+# What is deliberately NOT in that list is `dportsv3` on PATH. In an active
+# venv shutil.which("dportsv3") finds the *console script*, which has no
+# `dev-env` subcommand, so a `dev-env exec` through it fails with an argparse
+# error rather than anything self-explanatory. Resolving dports-dev-env
+# directly means the runtime never needs the checkout's shell wrapper at all,
+# which is what lets the three services run from a packaged install.
+def _resolve_dev_env_cmd() -> list[str]:
+    explicit = os.environ.get("DPORTS_DEV_ENV_CMD")
+    if explicit:
+        return explicit.split()
+    wrapper = os.environ.get("DPORTSV3_CMD")
+    if wrapper:
+        return [*wrapper.split(), "dev-env"]
+    found = shutil.which("dports-dev-env")
     if found:
         return [found]
     raise RuntimeError(
-        "could not locate the dportsv3 wrapper. Set $DPORTSV3_CMD to "
-        "bin/dportsv3, or put that wrapper on PATH. Note that the console "
-        "script of the same name is not a substitute: it does not implement "
-        "the `dev-env` subcommand this needs."
+        "could not locate the dev-env entry point. Put `dports-dev-env` on "
+        "PATH, or set $DPORTS_DEV_ENV_CMD to it, or set $DPORTSV3_CMD to a "
+        "checkout's bin/dportsv3. Note that the `dportsv3` console script is "
+        "not a substitute: it does not implement the `dev-env` subcommand "
+        "this needs, and would fail later with an argparse error."
     )
 
 
-_DPORTSV3_CMD: list[str] | None = None
+_DEV_ENV_CMD: list[str] | None = None
 
 
-def _dportsv3_cmd() -> list[str]:
-    global _DPORTSV3_CMD
-    if _DPORTSV3_CMD is None:
-        _DPORTSV3_CMD = _resolve_dportsv3_cmd()
-    return _DPORTSV3_CMD
+def _dev_env_cmd() -> list[str]:
+    """argv prefix that routes a ``dev-env`` subcommand."""
+    global _DEV_ENV_CMD
+    if _DEV_ENV_CMD is None:
+        _DEV_ENV_CMD = _resolve_dev_env_cmd()
+    return _DEV_ENV_CMD
 
 
 # -----------------------------------------------------------------------------
@@ -96,9 +107,10 @@ class EnvPaths:
         return self.writable / "work" / "DeltaPorts"
 
 
-def _run_dportsv3(*args: str) -> subprocess.CompletedProcess:
+def _run_dev_env(*args: str) -> subprocess.CompletedProcess:
+    """Run a ``dev-env`` subcommand. ``args`` excludes the word itself."""
     return subprocess.run(
-        [*_dportsv3_cmd(), *args],
+        [*_dev_env_cmd(), *args],
         capture_output=True, text=True, check=False,
     )
 
@@ -142,10 +154,10 @@ def env_paths(env: str) -> EnvPaths:
     only once. The env_dir for a given name is immutable for the
     lifetime of that env, so caching is safe.
     """
-    p1 = _run_dportsv3("dev-env", "path", env)
+    p1 = _run_dev_env("path", env)
     if p1.returncode != 0:
         raise RuntimeError(f"dev-env path failed: {(p1.stderr or p1.stdout).strip()}")
-    p2 = _run_dportsv3("dev-env", "path", env, "--writable")
+    p2 = _run_dev_env("path", env, "--writable")
     if p2.returncode != 0:
         raise RuntimeError(f"dev-env path --writable failed: {(p2.stderr or p2.stdout).strip()}")
     return EnvPaths(env_dir=Path(p1.stdout.strip()), writable=Path(p2.stdout.strip()))
@@ -160,7 +172,7 @@ def env_verify(env: str) -> dict:
     tool ops operate on the writable overlay directly, and
     ``dportsv3 dev-env exec`` auto-mounts on demand for chroot ops.
     """
-    p = _run_dportsv3("dev-env", "status", env)
+    p = _run_dev_env("status", env)
     if p.returncode != 0:
         raise RuntimeError(f"dev-env status failed: {(p.stderr or p.stdout).strip()}")
     info = json.loads(p.stdout.strip())
@@ -804,7 +816,7 @@ def _exec(
     than hanging).
     """
     return subprocess.run(
-        [*_dportsv3_cmd(), "dev-env", "exec", "--quiet", "--cwd", cwd, env, "--", *argv],
+        [*_dev_env_cmd(), "exec", "--quiet", "--cwd", cwd, env, "--", *argv],
         capture_output=True,
         text=True,
         check=False,

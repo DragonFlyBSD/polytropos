@@ -110,10 +110,10 @@ def _run_in_env(env: str, *argv: str, timeout: int = 10) -> subprocess.Completed
     Imported lazily so this module is importable without the dev-env
     package present (tests can fully stub the checks).
     """
-    from dportsv3.agent.worker import _dportsv3_cmd
+    from dportsv3.agent.worker import _dev_env_cmd
 
     return subprocess.run(
-        [*_dportsv3_cmd(), "dev-env", "exec", "--quiet", env, "--", *argv],
+        [*_dev_env_cmd(), "exec", "--quiet", env, "--", *argv],
         capture_output=True,
         text=True,
         check=False,
@@ -147,7 +147,7 @@ def _check_python_runtime(env: str) -> HealthCheck:
         return HealthCheck(
             name="python_runtime", status="broken",
             detail=f"dportsv3 CLI not found: {exc}",
-            operator_action="ensure dportsv3 is on PATH or set DPORTSV3_CMD",
+            operator_action="ensure dports-dev-env is on PATH, or set $DPORTS_DEV_ENV_CMD / $DPORTSV3_CMD",
         )
 
     if p.returncode == 0:
