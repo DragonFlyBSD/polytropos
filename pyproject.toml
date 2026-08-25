@@ -63,3 +63,12 @@ artifacts = [
     "dportsv3/agent/dops_quickref.md",
     "dportsv3/data/config/*.sample",
 ]
+
+# The rc.d scripts and their config samples live at the repo root, where an
+# operator browsing the checkout will find them, but they have to survive
+# packaging too — `dportsv3 deploy install` is how a host without a checkout
+# gets them. force-include keeps one source of truth and lands a copy inside
+# the package, which paths.deploy_dir() then resolves downward like every
+# other bundled input.
+[tool.hatch.build.targets.wheel.force-include]
+"deploy" = "dportsv3/data/deploy"

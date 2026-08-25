@@ -50,6 +50,10 @@ BUNDLED_CONFIG_DIR = _PKG / "data" / "config"
 #: Agent playbooks, read at runtime to select failure-repair patterns.
 AGENT_PLAYBOOKS_DIR = _PKG / "agent" / "playbooks"
 
+#: rc.d scripts and config samples, as they land in an installed wheel.
+#: Absent from a source checkout — see :func:`deploy_dir`.
+BUNDLED_DEPLOY_DIR = _PKG / "data" / "deploy"
+
 
 class MissingInput(RuntimeError):
     """A required input could not be resolved.
@@ -181,19 +185,39 @@ def tool_root(explicit: Path | str | None = None) -> Path:
 
 
 def deploy_dir(explicit: Path | str | None = None) -> Path:
-    """The tracked ``deploy/`` tree: rc.d scripts and config samples.
+    """The rc.d scripts and config samples that a deployment installs.
 
-    Part of the checkout rather than the installed package — these are
-    files a deployment copies into ``/usr/local/etc``, not data the tool
-    reads at runtime, and shipping them inside the wheel would put them
-    somewhere no operator would think to look.
+    Order: an explicit ``--tool-root``, then the copy inside the installed
+    package, then the ``deploy/`` directory of the checkout named by
+    ``$DPORTS_DEV_TOOL_ROOT``.
+
+    Both of the last two are needed and neither is redundant. A wheel
+    carries the files at :data:`BUNDLED_DEPLOY_DIR` (pyproject
+    force-includes them), which is what lets a packaged install deploy
+    without any source tree. An editable install has no such copy — the
+    package directory *is* the source tree — so a checkout resolves
+    through the tool root instead. Preferring the bundled copy means a
+    packaged host never depends on an environment variable.
     """
-    root = tool_root(explicit)
+    if explicit is not None:
+        path = Path(explicit).expanduser() / "deploy"
+        if not (path / "rc.d").is_dir():
+            raise MissingInput(
+                f"{path} has no rc.d/ — {explicit} does not look like a "
+                f"polytropos checkout."
+            )
+        return path
+
+    if (BUNDLED_DEPLOY_DIR / "rc.d").is_dir():
+        return BUNDLED_DEPLOY_DIR
+
+    root = tool_root()
     path = root / "deploy"
     if not (path / "rc.d").is_dir():
         raise MissingInput(
-            f"{path} has no rc.d/ — {root} does not look like a polytropos "
-            f"checkout. Pass --tool-root, or set $DPORTS_DEV_TOOL_ROOT."
+            f"no deploy files found. This install has none bundled at "
+            f"{BUNDLED_DEPLOY_DIR}, and {path} has no rc.d/. Pass "
+            f"--tool-root, or set $DPORTS_DEV_TOOL_ROOT, to a checkout."
         )
     return path
 
