@@ -54,10 +54,17 @@ SERVICE_HOME = Path("/var/db/polytropos")
 
 @dataclass(frozen=True)
 class Action:
-    """One step. ``kind`` is what to do, ``detail`` is what a human reads."""
+    """One step.
+
+    ``detail`` is for a human to read; ``target`` is what :func:`apply`
+    acts on. Keeping them apart matters — an earlier version re-derived
+    the target by string-matching the detail, which is the kind of thing
+    that works until a path gains a space.
+    """
     kind: str
     detail: str
-    skipped: str | None = None   # reason, when the step is already satisfied
+    target: Path | str | None = None
+    skipped: str | None = None
 
 
 def _user_exists(name: str) -> bool:
@@ -94,29 +101,30 @@ def plan(
     actions: list[Action] = []
 
     if group_exists(group):
-        actions.append(Action("group", f"group {group}",
+        actions.append(Action("group", f"group {group}", group,
                               skipped="already exists"))
     else:
-        actions.append(Action("group", f"create group {group}"))
+        actions.append(Action("group", f"create group {group}", group))
     if user_exists(user):
-        actions.append(Action("user", f"user {user}",
+        actions.append(Action("user", f"user {user}", user,
                               skipped="already exists"))
     else:
-        actions.append(Action("user", f"create user {user}"))
+        actions.append(Action("user", f"create user {user}", user))
 
     rc_dir = prefix / "etc" / "rc.d"
-    actions.append(Action("mkdir", f"{rc_dir}",
+    actions.append(Action("mkdir", f"{rc_dir}", rc_dir,
                           skipped="already exists" if rc_dir.is_dir() else None))
     for script in RC_SCRIPTS:
         src = deploy / "rc.d" / script
         if not src.is_file():
             raise paths.MissingInput(f"missing rc script in the checkout: {src}")
         # Tool-owned: always replaced, even when present.
-        actions.append(Action("rc_script", f"{src} -> {rc_dir / script} (0755)"))
+        actions.append(Action("rc_script", f"{src} -> {rc_dir / script} (0755)",
+                              script))
 
     etc = prefix / "etc"
     actions.append(Action(
-        "mkdir", f"{etc / 'polytropos'}",
+        "mkdir", f"{etc / 'polytropos'}", etc / "polytropos",
         skipped="already exists" if (etc / "polytropos").is_dir() else None))
     for sample, rel, mode, group_owned in OPERATOR_FILES:
         src = deploy / sample
@@ -125,20 +133,20 @@ def plan(
         dst = etc / rel
         owner = f"root:{group}" if group_owned else "root"
         actions.append(Action(
-            "operator_file", f"{dst} ({oct(mode)[2:]}, {owner})",
+            "operator_file", f"{dst} ({oct(mode)[2:]}, {owner})", rel,
             skipped="exists; left as it is" if dst.exists() else None))
 
     actions.append(Action(
-        "mkdir_owned", f"{SERVICE_HOME} (owned by {user}:{group})",
+        "mkdir_owned", f"{SERVICE_HOME} (owned by {user}:{group})", SERVICE_HOME,
         skipped="already exists" if SERVICE_HOME.is_dir() else None))
 
     evidence = logs_root / "evidence"
     for sub in QUEUE_SUBDIRS:
         d = evidence / "queue" / sub
-        actions.append(Action("mkdir", f"{d}",
+        actions.append(Action("mkdir", f"{d}", d,
                               skipped="already exists" if d.is_dir() else None))
     actions.append(Action(
-        "chown", f"{logs_root} -> {user}:{group}, recursively",
+        "chown", f"{logs_root} -> {user}:{group}, recursively", logs_root,
         skipped=None if logs_root.exists() else "logs root does not exist yet"))
     return actions
 
@@ -167,25 +175,24 @@ def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
                   "-d", str(SERVICE_HOME), "-s", "/usr/sbin/nologin",
                   "-c", "Polytropos services"])
         elif action.kind == "mkdir":
-            Path(action.detail).mkdir(parents=True, exist_ok=True)
+            Path(action.target).mkdir(parents=True, exist_ok=True)
         elif action.kind == "mkdir_owned":
-            SERVICE_HOME.mkdir(parents=True, exist_ok=True)
-            shutil.chown(SERVICE_HOME, user=user, group=group)
+            path = Path(action.target)
+            path.mkdir(parents=True, exist_ok=True)
+            shutil.chown(path, user=user, group=group)
         elif action.kind == "rc_script":
-            name = action.detail.split(" -> ")[0].rsplit("/", 1)[1]
-            dst = prefix / "etc" / "rc.d" / name
-            shutil.copyfile(deploy / "rc.d" / name, dst)
+            dst = prefix / "etc" / "rc.d" / action.target
+            shutil.copyfile(deploy / "rc.d" / action.target, dst)
             dst.chmod(0o755)
         elif action.kind == "operator_file":
-            for sample, rel, mode, group_owned in OPERATOR_FILES:
-                if action.detail.startswith(str(prefix / "etc" / rel)):
-                    dst = prefix / "etc" / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(deploy / sample, dst)
-                    dst.chmod(mode)
-                    if group_owned:
-                        shutil.chown(dst, user="root", group=group)
-                    break
+            sample, _, mode, group_owned = next(
+                f for f in OPERATOR_FILES if f[1] == action.target)
+            dst = prefix / "etc" / action.target
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(deploy / sample, dst)
+            dst.chmod(mode)
+            if group_owned:
+                shutil.chown(dst, user="root", group=group)
         elif action.kind == "chown":
             # Group inheritance covers new files (BSD takes the group from
             # the parent directory), but everything already there predates

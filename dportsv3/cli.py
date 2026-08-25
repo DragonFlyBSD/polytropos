@@ -35,6 +35,7 @@ def create_parser() -> argparse.ArgumentParser:
     _register_tracker_parser(subparsers)
     _register_artifact_store_parser(subparsers)
     _register_agent_queue_runner_parser(subparsers)
+    _register_deploy_parser(subparsers)
     from dportsv3.verify_fix import register_parser as _reg_verify_fix
     _reg_verify_fix(subparsers)
     _register_env_health_parser(subparsers)
@@ -708,6 +709,37 @@ def _register_agent_queue_runner_parser(
     )
 
 
+def _register_deploy_parser(subparsers: argparse._SubParsersAction) -> None:
+    """Register the deploy command (rc.d scripts + service account)."""
+    p = subparsers.add_parser(
+        "deploy", help="Install the services onto this host (DragonFly)")
+    sub = p.add_subparsers(dest="deploy_action")
+
+    install = sub.add_parser(
+        "install", help="Install rc.d scripts, config and the service user")
+    install.add_argument(
+        "--prefix", default="/usr/local",
+        help="Install root for etc/rc.d and etc/ (default: %(default)s)")
+    install.add_argument(
+        "--tool-root", default=None,
+        help="The polytropos checkout to install from (default: "
+             "$DPORTS_DEV_TOOL_ROOT, which bin/dportsv3 sets)")
+    install.add_argument(
+        "--user", default="polytropos",
+        help="Service account for the two HTTP services (default: "
+             "%(default)s). The queue runner always runs as root.")
+    install.add_argument(
+        "--group", default="polytropos",
+        help="Group owning the evidence tree (default: %(default)s)")
+    install.add_argument(
+        "--logs-root", default="/build/synth/logs",
+        help="Evidence tree to hand to the service account "
+             "(default: %(default)s)")
+    install.add_argument(
+        "--dry-run", action="store_true",
+        help="Print every step and change nothing")
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     raw = list(argv) if argv is not None else sys.argv[1:]
@@ -770,6 +802,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "env-health":
         return cmd_env_health(args)
+
+    if args.command == "deploy":
+        from dportsv3.commands.deploy import cmd_deploy
+        return cmd_deploy(args)
 
     print(f"Unknown command: {args.command}", file=sys.stderr)
     return 1

@@ -65,12 +65,30 @@ world-readable.
 
 ## Install
 
-    dportsv3 deploy install
+    bin/dportsv3 deploy install --dry-run     # show every step, change nothing
+    sudo bin/dportsv3 deploy install
 
-See `poly-abr.3`. Until that lands, copy the files by hand: the rc.d
-scripts to `/usr/local/etc/rc.d/` (mode 755), the samples to their
-locations above with the `.sample` suffix dropped, then create the
-service user and hand it the evidence tree.
+Run it from the checkout: `bin/dportsv3` exports `$DPORTS_DEV_TOOL_ROOT`,
+which is how the command finds `deploy/` without any package guessing a
+repository path. Pass `--tool-root` if you invoke the console script
+directly.
+
+It creates the `polytropos` user and group, installs the rc.d scripts,
+copies the samples into place, creates the queue subdirectories, and
+hands `$LOGS_ROOT` to the service account. `--prefix`, `--user`,
+`--group` and `--logs-root` override the defaults.
+
+Two rules, and the difference is the point:
+
+* **rc.d scripts are replaced every time.** An upgrade that leaves a
+  stale script behind is worse than one that overwrites it.
+* **Config and credential files are written once and never touched
+  again** — the same rule as the ports framework's `@sample` keyword,
+  which copies `<file>.sample` to `<file>` only when the target is
+  absent. Anything you have edited is yours.
+
+Re-running is safe: every step reports itself as `do` or `skip` first,
+and skipped steps do nothing.
 
 ## Enable
 
