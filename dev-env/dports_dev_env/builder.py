@@ -220,7 +220,26 @@ class EnvironmentBuilder:
         """
         if not root.is_dir() or not looks_right(root):
             raise UsageError(f"{flag}={root} does not look like the {label}: {complaint}")
-        self.run_git(["git", "-C", str(root), "rev-parse", "--git-dir"])
+
+        # A git repository specifically, not merely a directory of files.
+        # `create` mirrors this tree and clones the branch it is on into the
+        # env, so the environment matches what the operator is working on —
+        # history is the input, not a nicety. Say that here: the bare
+        # "command failed: git -C ... rev-parse" this used to raise named
+        # the command and swallowed git's own explanation, which is a poor
+        # answer to "why can't I point this at an installed copy?".
+        probe = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--git-dir"],
+            text=True, capture_output=True,
+        )
+        if probe.returncode != 0:
+            raise UsageError(
+                f"{flag}={root} is not a git repository. `dev-env create` "
+                f"clones the {label} into the environment and tracks the "
+                f"branch it is checked out on, so it needs history rather "
+                f"than just files — an unpacked tarball or an installed "
+                f"copy cannot be used. Point {flag} at a clone."
+            )
         dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain"], text=True, capture_output=True)
         if dirty.stdout.strip():
             warn(f"host {label} has uncommitted changes; only committed state will appear in the env")
@@ -306,7 +325,11 @@ class EnvironmentBuilder:
     def run_git(self, command: list[str]) -> None:
         result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode != 0:
-            raise UsageError(f"command failed: {' '.join(command)}")
+            detail = (result.stderr or result.stdout or "").strip()
+            raise UsageError(
+                f"command failed: {' '.join(command)}"
+                + (f"\n{detail}" if detail else "")
+            )
 
 
 def link_ports_tree(root_dir: Path, target: str = PORTS_LINK_IDLE_TARGET) -> None:

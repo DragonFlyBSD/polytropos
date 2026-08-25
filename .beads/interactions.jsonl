@@ -38,3 +38,4 @@
 {"id":"int-a954c1454ef45ca30cfe7960bac03b9f","kind":"field_change","created_at":"2026-08-25T11:50:43.574131Z","actor":"Fred [bot]","issue_id":"poly-abr.8","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-8cf7241ff2cf30326d898a2690968d5b","kind":"field_change","created_at":"2026-08-25T11:59:24.222986Z","actor":"Fred [bot]","issue_id":"poly-abr.9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-d75fbab5c1af7141223a9b3266c08f43","kind":"field_change","created_at":"2026-08-25T12:02:27.766221Z","actor":"Fred [bot]","issue_id":"poly-abr.10","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-c6e02f9417426a579b146b50cb7f62d5","kind":"field_change","created_at":"2026-08-25T12:04:43.595406Z","actor":"Fred [bot]","issue_id":"poly-abr.11","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}

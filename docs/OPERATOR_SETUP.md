@@ -54,6 +54,15 @@ If you also want pytest + mypy in there:
 
 ## 3. Create a dev-env for your target
 
+`dev-env create` needs the tool tree to be a **git checkout**, not an
+installed copy or an unpacked tarball: it clones the branch you are on
+into the chroot, so the environment matches what you are working on.
+
+That requirement is limited to *creating* an env. The three services only
+ever exec into an env that already exists, so a packaged install runs the
+whole stack without any source tree — see `deploy/README.md`.
+
+
 The dev-env is a chroot with a writable copy-on-write overlay where
 the agent edits files. One per target/origin you want to iterate on.
 
