@@ -42,6 +42,9 @@ OPERATOR_FILES = (
     ("polytropos.conf.sample", "polytropos.conf", 0o644, False),
     ("harness.env.sample", "polytropos/harness.env", 0o600, False),
     ("chat.env.sample", "polytropos/chat.env", 0o640, True),
+    # /etc/newsyslog.conf includes this directory already. Operator-owned
+    # like the rest: retention is a local policy question.
+    ("newsyslog.conf.sample", "newsyslog.conf.d/polytropos.conf", 0o644, False),
 )
 
 QUEUE_SUBDIRS = ("pending", "inflight", "done", "failed")
@@ -128,9 +131,10 @@ def plan(
                               script))
 
     etc = prefix / "etc"
-    actions.append(Action(
-        "mkdir", f"{etc / 'polytropos'}", etc / "polytropos",
-        skipped="already exists" if (etc / "polytropos").is_dir() else None))
+    for sub in ("polytropos", "newsyslog.conf.d"):
+        actions.append(Action(
+            "mkdir", f"{etc / sub}", etc / sub,
+            skipped="already exists" if (etc / sub).is_dir() else None))
     for sample, rel, mode, group_owned in OPERATOR_FILES:
         src = deploy / sample
         if not src.is_file():

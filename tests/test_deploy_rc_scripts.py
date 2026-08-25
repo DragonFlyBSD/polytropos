@@ -532,3 +532,57 @@ def test_a_checkout_is_just_another_value(tmp_path) -> None:
     got = run_service(tmp_path, "polytropos_tracker", rc_conf_vars={
         "polytropos_cmd": "/home/you/polytropos/bin/dportsv3"})
     assert "/home/you/polytropos/bin/dportsv3 tracker serve" in got["ARGS"]
+
+
+# --- log rotation (poly-abr.4) ------------------------------------------
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_both_pidfiles_are_written(tmp_path, service) -> None:
+    """-p for rc to stop the child, -P for newsyslog to signal the
+    supervisor. They are different processes and both are needed."""
+    args = run_service(tmp_path, service)["ARGS"]
+    assert f"-p /var/run/{service}.pid" in args, args
+    assert f"-P /var/run/{service}.sup.pid" in args, args
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_rc_still_stops_the_child(tmp_path, service) -> None:
+    """rc.subr signals $pidfile. It must stay the child: with no -r that
+    stops the service cleanly, and the supervisor exits after it."""
+    got = run_service(tmp_path, service)
+    assert got["PIDFILE"] == f"/var/run/{service}.pid"
+    assert ".sup.pid" not in got["PIDFILE"]
+
+
+def test_rotation_signals_the_supervisor_not_the_service() -> None:
+    """The trap, measured on DragonFly 6.5: SIGUSR1 to the child killed
+    both the service and its supervisor, because SIGUSR1's default
+    disposition terminates a process. To the supervisor it reopened the
+    log with both still running. daemon(8)'s own advice mentions only -p,
+    which reads like the fatal version.
+    """
+    conf = (DEPLOY / "newsyslog.conf.sample").read_text()
+    entries = [l.split() for l in conf.splitlines()
+               if l.startswith("/var/log/polytropos/")]
+    assert len(entries) == len(SERVICES), entries
+    for fields in entries:
+        pidfile, signal = fields[-2], fields[-1]
+        assert pidfile.endswith(".sup.pid"), f"signals the child: {pidfile}"
+        assert signal == "SIGUSR1", fields
+
+
+def test_every_service_log_is_rotated() -> None:
+    """A log with no entry grows without bound on a build box."""
+    conf = (DEPLOY / "newsyslog.conf.sample").read_text()
+    for service in SERVICES:
+        base = service.replace("polytropos_", "").replace("_", "-")
+        assert f"/var/log/polytropos/{base}.log" in conf, base
+
+
+def test_rotation_entries_create_the_file() -> None:
+    """Flag C: the log does not exist until a service first writes, and a
+    rotation entry for a missing file is otherwise skipped."""
+    conf = (DEPLOY / "newsyslog.conf.sample").read_text()
+    for line in conf.splitlines():
+        if line.startswith("/var/log/polytropos/"):
+            assert "C" in line.split()[6], line

@@ -1,0 +1,27 @@
+# Rotation for the Polytropos service logs.
+#
+# Installed as /usr/local/etc/newsyslog.conf.d/polytropos.conf, which
+# /etc/newsyslog.conf already includes:
+#
+#     <include> /usr/local/etc/newsyslog.conf.d/*
+#
+# Columns: logfile owner:group mode count size when flags pidfile signal
+#   count 7    keep seven rotations
+#   size  1000 rotate past ~1 MB
+#   when  *    size only, no time trigger
+#   flags C    create the file if it is missing
+#         Z    gzip the rotated copy
+#
+# THE PIDFILE COLUMN POINTS AT THE SUPERVISOR, not the service.
+# daemon(8) writes two pidfiles: -p holds the child (the Python process)
+# and -P holds the supervisor. Only the supervisor reopens the output
+# file on SIGUSR1. Sending SIGUSR1 to the child instead — which is what
+# daemon(8)'s own rotation advice reads like, since it mentions only -p —
+# kills it: SIGUSR1's default disposition terminates the process.
+# Measured on DragonFly 6.5: signalling the child killed both the service
+# and its supervisor; signalling the supervisor reopened the log with
+# both still running.
+
+/var/log/polytropos/artifact-store.log	root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_artifact_store.sup.pid  SIGUSR1
+/var/log/polytropos/tracker.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_tracker.sup.pid  SIGUSR1
+/var/log/polytropos/runner.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_runner.sup.pid  SIGUSR1

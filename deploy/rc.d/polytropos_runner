@@ -55,6 +55,13 @@ load_rc_config $name
 : ${polytropos_runner_dev_env:=""}
 
 pidfile="/var/run/${name}.pid"
+# The supervisor's own pid, which is a different process from the one in
+# $pidfile. newsyslog signals THIS one to reopen the log after a rotation.
+# Signalling the child instead — which is what daemon(8)'s own advice
+# reads like — sends SIGUSR1 to a Python process, whose default
+# disposition for it is to die. Verified on DragonFly: the service and
+# its supervisor both went away.
+supervisor_pidfile="/var/run/${name}.sup.pid"
 logfile="${polytropos_log_dir}/runner.log"
 
 # NOTE: ${name}_env is rc.subr's own knob for the child environment, which
@@ -83,7 +90,7 @@ _dev_env_flag=""
 # supervisor would simply restart it. The ports above use -P for exactly
 # this reason.
 command="/usr/sbin/daemon"
-command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} \
+command_args="-c -f -o ${logfile} -p ${pidfile} -P ${supervisor_pidfile} -t ${name} \
     ${polytropos_cmd} agent-queue-runner \
     --queue-root ${polytropos_queue_root} ${_dev_env_flag}"
 

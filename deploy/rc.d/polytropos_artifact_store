@@ -41,6 +41,13 @@ load_rc_config $name
 : ${polytropos_artifact_store_port:="8788"}
 
 pidfile="/var/run/${name}.pid"
+# The supervisor's own pid, which is a different process from the one in
+# $pidfile. newsyslog signals THIS one to reopen the log after a rotation.
+# Signalling the child instead — which is what daemon(8)'s own advice
+# reads like — sends SIGUSR1 to a Python process, whose default
+# disposition for it is to die. Verified on DragonFly: the service and
+# its supervisor both went away.
+supervisor_pidfile="/var/run/${name}.sup.pid"
 logfile="${polytropos_log_dir}/artifact-store.log"
 
 # DPORTSV3_NO_BOOTSTRAP: bin/dportsv3 will otherwise create and populate
@@ -55,7 +62,7 @@ logfile="${polytropos_log_dir}/artifact-store.log"
 polytropos_artifact_store_env="HOME=${polytropos_home} DPORTSV3_NO_BOOTSTRAP=1"
 
 command="/usr/sbin/daemon"
-command_args="-c -f -o ${logfile} -p ${pidfile} -t ${name} -u ${polytropos_user} \
+command_args="-c -f -o ${logfile} -p ${pidfile} -P ${supervisor_pidfile} -t ${name} -u ${polytropos_user} \
     ${polytropos_cmd} artifact-store \
     --logs-root ${polytropos_logs_root} \
     --bind ${polytropos_artifact_store_bind} \

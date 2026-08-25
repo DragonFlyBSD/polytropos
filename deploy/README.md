@@ -89,6 +89,33 @@ different users:
 Neither belongs in `polytropos.conf` or `rc.conf` — both are
 world-readable.
 
+## Logs and rotation
+
+`daemon(8)` appends each service's stdout and stderr to
+`/var/log/polytropos/<service>.log`. The runner also keeps its own
+structured `runner.log` under the queue root — that one is unaffected by
+any of this; these files carry tracebacks, uvicorn's access log, and
+anything written before the structured log is open.
+
+Rotation is a newsyslog drop-in at
+`/usr/local/etc/newsyslog.conf.d/polytropos.conf`, which
+`/etc/newsyslog.conf` already includes.
+
+**The pidfile column points at the supervisor, not the service.**
+`daemon(8)` writes two: `-p` holds the child (the Python process) and
+`-P` holds the supervisor. Only the supervisor reopens the output file
+on `SIGUSR1`. Its own rotation advice mentions only `-p`, which reads
+like the fatal version — measured on DragonFly 6.5:
+
+    SIGUSR1 -> child        service and supervisor both died
+    SIGUSR1 -> supervisor   log reopened, both still running
+
+`SIGUSR1`'s default disposition terminates a process, so a rotation
+configured the obvious way would take the stack down nightly.
+
+`service ... stop` is unaffected: rc.subr signals `$pidfile`, which
+stays the child, so stopping remains a clean child exit.
+
 ## Install
 
     bin/dportsv3 deploy install --dry-run     # show every step, change nothing
