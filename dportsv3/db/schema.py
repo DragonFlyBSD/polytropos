@@ -34,9 +34,12 @@ CREATE TABLE IF NOT EXISTS runs (
 -- Issue: one fingerprinted problem grouping many
 -- occurrences (bundles). issue_key = short hash of
 -- (target, origin, fingerprint); every occurrence carries the same key.
--- Lifecycle: unresolved -> resolved (a fix merged upstream) -> regressed
--- (a new occurrence after resolve); muted silences surfacing AND
--- auto-triage. The rollups (times_seen / first_seen / last_seen /
+-- Resolution axis: unresolved -> resolving (a fix accepted) -> resolved (a
+-- confirm build proved it); muted silences surfacing AND auto-triage. That
+-- is the whole stored vocabulary — `regressed` is NOT a state here: a fix
+-- that came back is derived on read from green_head_run_id (C3,
+-- issue_state.derived_regression), so the badge can never disagree with what
+-- the builds actually did. The rollups (times_seen / first_seen / last_seen /
 -- latest_bundle_id) are denormalized so the issue list is one cheap
 -- read; the artifact-store is the sole writer (single-writer invariant).
 CREATE TABLE IF NOT EXISTS issues (
@@ -44,7 +47,9 @@ CREATE TABLE IF NOT EXISTS issues (
     target           TEXT,
     origin           TEXT NOT NULL,
     fingerprint      TEXT,
-    state            TEXT NOT NULL DEFAULT 'unresolved',
+    state            TEXT NOT NULL DEFAULT 'unresolved'
+                     CHECK (state IN ('unresolved', 'resolving',
+                                      'resolved', 'muted')),
     times_seen       INTEGER NOT NULL DEFAULT 0,
     first_seen_at    TEXT,
     last_seen_at     TEXT,
@@ -53,6 +58,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- accepted (state -> resolving); cleared on reopen / recurrence
     delivery_bundle_id TEXT,
     resolved_at      TEXT,
+    -- Legacy. Nothing writes it since C3 made regression a derived read;
+    -- the crossing timestamp comes from the boundary-crossing occurrence.
     regressed_at     TEXT,
     muted_at         TEXT,
     muted_by         TEXT,
@@ -71,7 +78,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- build of its own. The confirm build itself never appears in
     -- build_runs (dsynth hooks are disabled inside the agent dev-env), so
     -- this records the boundary: a LATER farm build re-emitting this
-    -- fingerprint is a genuine regression. C3 derives `regressed` from it.
+    -- fingerprint is a genuine regression. C3 derives `regressed` from it,
+    -- against runs.build_run_id on the occurrence's run.
     green_head_run_id               INTEGER,
     -- A4: consecutive green confirm builds so far. A single green is
     -- provisional (build flakiness: network, toolchain); the issue only
@@ -466,6 +474,23 @@ MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
 )
 
+# One-shot data repair for a state.db written before C3 removed `regressed`
+# from the stored vocabulary. Idempotent: after the first run no row matches.
+# A pre-existing DB keeps its unconstrained `state` column (SQLite cannot add
+# a CHECK by ALTER), so this is what keeps it inside the vocabulary — nothing
+# writes `regressed` any more.
+_RETIRE_STORED_REGRESSED: tuple[str, ...] = (
+    # Resolved and then came back: the resolution axis says resolved, and the
+    # derivation reproduces the badge from the occurrences past the boundary.
+    "UPDATE issues SET state = 'resolved' "
+    "WHERE state = 'regressed' AND resolved_at IS NOT NULL",
+    # No resolved_at means it was flipped out of `resolving` by an arriving
+    # occurrence — a fix that was accepted but never proved. Calling that
+    # `resolved` would claim a resolution that never happened, so it goes back
+    # to the open state it effectively had.
+    "UPDATE issues SET state = 'unresolved' WHERE state = 'regressed'",
+)
+
 
 def init_db(conn: sqlite3.Connection) -> None:
     """Run schema + seeds on an open connection.
@@ -489,4 +514,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
         except sqlite3.OperationalError:
             pass  # column already exists
+    # Not wrapped in the tolerant try above: these are UPDATEs, and swallowing
+    # an OperationalError here would hide a real failure rather than a
+    # duplicate column.
+    for stmt in _RETIRE_STORED_REGRESSED:
+        conn.execute(stmt)
     conn.commit()

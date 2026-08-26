@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 import dportsv3.agent.runner as runner
 from dportsv3.artifact_store import ArtifactStore
 from dportsv3.fingerprint import compute_fingerprint, issue_key
+from dportsv3.tracker import issue_state
 from dportsv3.tracker.agentic_queries import get_issue
 from dportsv3.tracker.server import create_app
 
@@ -69,13 +70,17 @@ def test_issue_lifecycle_arc(arc):
     assert iss["state"] == "resolved" and iss["resolved_at"]
 
     # 4. A fresh occurrence arriving AFTER the resolve regresses the issue
-    #    (the fix came back). times_seen keeps climbing.
+    #    (the fix came back). The ROW stays `resolved` — regression is on the
+    #    build-observation axis and is derived on read (C3) — while the
+    #    operator-facing state reads `regressed`. times_seen keeps climbing.
     occ3_ts = (
         datetime.fromisoformat(iss["resolved_at"]) + timedelta(minutes=1)
     ).isoformat()
     _ingest(store, "b3", occ3_ts)
     iss = get_issue(conn, key)
-    assert iss["state"] == "regressed" and iss["regressed_at"]
+    assert iss["state"] == "resolved"
+    assert issue_state.effective_state(iss) == "regressed"
+    assert issue_state.derived_regression(iss, iss["occurrences"]) == occ3_ts
     assert iss["times_seen"] == 3
 
     # 5. Operator mutes the (regressed) issue.
@@ -105,10 +110,14 @@ def test_issue_lifecycle_arc(arc):
     ).fetchone()
     assert (jrow["state"], jrow["retire_reason"]) == ("dead", "issue_muted")
 
-    # 7. Unmute recomputes the open state: a post-resolve occurrence exists,
-    #    so the issue lands back on regressed (not plain unresolved).
+    # 7. Unmute restores the resolution state it was muted from — `resolved`,
+    #    because that is what the operator's resolve actually decided — and
+    #    the post-resolve occurrence makes the derivation loud again. Mute
+    #    and unmute round-trip without ever inventing a state.
     assert client.post(f"/api/issues/{key}/unmute", json={}).status_code == 200
-    assert get_issue(conn, key)["state"] == "regressed"
+    iss = get_issue(conn, key)
+    assert iss["state"] == "resolved"
+    assert issue_state.effective_state(iss) == "regressed"
 
 
 def test_issue_action_gate_rejects_illegal_and_unknown(arc):

@@ -1310,22 +1310,6 @@ def _record_confirm_failure(queue_root: Path, issue_key: str, *,
     return exhausted
 
 
-def _green_head_watermark(conn: sqlite3.Connection, target: str) -> int | None:
-    """The known-good boundary recorded when a confirm build resolves an issue
-    (A2): the newest ``build_runs`` ordinal for ``target`` at confirm time.
-
-    NOT the confirm build's own id — the confirm build runs inside the agent
-    dev-env with the dsynth hooks disabled, so it never lands in
-    ``build_runs`` at all. What matters for regression detection is the
-    boundary: any LATER farm build that re-emits this fingerprint happened
-    after the fix was proven, so it is a genuine regression (C3 derives that).
-    None when the target has no builds yet."""
-    row = conn.execute(
-        "SELECT MAX(id) FROM build_runs WHERE target = ?", (target,),
-    ).fetchone()
-    return row[0] if row is not None else None
-
-
 def _record_confirm_verdict(queue_root: Path, issue_key: str, generation: int,
                             *, ok: bool, requested_by: str,
                             target: str = "",
@@ -1412,12 +1396,15 @@ def _record_confirm_verdict(queue_root: Path, issue_key: str, generation: int,
                         f"— provisional, requesting another build")
                     terminal_attempted = False
                 else:
+                    from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
+                        green_head_watermark,
+                    )
                     from dportsv3.tracker.routes.issue_actions import (  # noqa: PLC0415
                         resolve_issue_build_confirmed,
                     )
                     new_state = resolve_issue_build_confirmed(
                         _state_db_conn, issue_key, now=now,
-                        green_head_run_id=_green_head_watermark(
+                        green_head_run_id=green_head_watermark(
                             _state_db_conn, target or ""),
                         actor=f"runner-{requested_by}",
                     )

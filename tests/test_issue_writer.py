@@ -9,8 +9,9 @@ belongs to and rolls it up. The invariants pinned here:
   timestamp, advances `last_seen_at` + `latest_bundle_id`;
 - a **re-upsert of the same bundle_id** (status touch) does NOT bump
   rollups — rollups count occurrences, not writes;
-- state transitions on arrival: `resolved`→`regressed` (+event),
-  `muted` stays `muted` (silent bump), others unchanged;
+- an arriving occurrence NEVER moves the issue's state (C3): it rolls up
+  and, when it lands past a resolved fix's known-good boundary, emits
+  `issue_regressed` as a notification — the badge itself is derived on read;
 - a failure with no fingerprint lands on a per-`(target, origin)`
   fallback issue, distinct from any fingerprinted issue;
 - `bundles.issue_key` links the occurrence and is set once at birth.
@@ -43,10 +44,12 @@ def store():
     return s
 
 
-def _up(store, bundle_id, *, errors=None, ts="2026-07-25T00:00:00Z", origin=ORIGIN):
+def _up(store, bundle_id, *, errors=None, ts="2026-07-25T00:00:00Z", origin=ORIGIN,
+        run_id="r1", build_run_id=""):
     payload = {
-        "run_id": "r1", "profile": "p", "ts_utc": ts, "bundle_id": bundle_id,
+        "run_id": run_id, "profile": "p", "ts_utc": ts, "bundle_id": bundle_id,
         "origin": origin, "flavor": "", "result": "failure", "target": TARGET,
+        "build_run_id": build_run_id,
     }
     if errors is not None:
         payload["errors_text"] = errors
@@ -97,7 +100,18 @@ def test_reupsert_same_bundle_does_not_double_count(store):
     assert _issue(store, key)["times_seen"] == 1
 
 
-def test_resolved_issue_regresses_on_new_occurrence(store):
+def _issue_events(store):
+    return [r[0] for r in store.conn.execute(
+        "SELECT type FROM events WHERE type LIKE 'issue_%' ORDER BY id"
+    ).fetchall()]
+
+
+def test_occurrence_past_the_boundary_notifies_without_moving_state(store):
+    """The fix came back — but the row stays `resolved`.
+
+    Regression is on the build-observation axis and derived on read (C3), so
+    the writer's only job here is the rollup plus the notification.
+    """
     key = _key(compute_fingerprint(ERR))
     _up(store, "b1", errors=ERR)
     store.conn.execute(
@@ -107,13 +121,100 @@ def test_resolved_issue_regresses_on_new_occurrence(store):
     store.conn.commit()
     _up(store, "b2", errors=ERR, ts="2026-07-25T09:00:00Z")
     row = _issue(store, key)
-    assert row["state"] == "regressed"
-    assert row["regressed_at"] is not None
+    assert row["state"] == "resolved"
     assert row["times_seen"] == 2
-    events = [r[0] for r in store.conn.execute(
-        "SELECT type FROM events WHERE type LIKE 'issue_%' ORDER BY id"
-    ).fetchall()]
-    assert events == ["issue_created", "issue_regressed"]
+    assert _issue_events(store) == ["issue_created", "issue_regressed"]
+
+
+def test_occurrence_before_the_boundary_does_not_notify(store):
+    """An occurrence that predates the resolution is the old failure being
+    reported late, not a fix that came back."""
+    key = _key(compute_fingerprint(ERR))
+    _up(store, "b1", errors=ERR)
+    store.conn.execute(
+        "UPDATE issues SET state='resolved', resolved_at='2026-07-25T08:00:00Z' WHERE issue_key=?",
+        (key,),
+    )
+    store.conn.commit()
+    _up(store, "b2", errors=ERR, ts="2026-07-25T03:00:00Z")
+    assert _issue(store, key)["state"] == "resolved"
+    assert _issue_events(store) == ["issue_created"]
+
+
+def test_boundary_uses_the_build_ordinal_over_the_clock(store):
+    """With a Green-Head watermark and a build ordinal on the occurrence, the
+    ordinals decide — even when the timestamps say the opposite.
+
+    This is the whole point of the watermark: the build hosts and the store
+    do not share a clock, so a skewed ts_utc must not be able to invent or
+    hide a regression.
+    """
+    key = _key(compute_fingerprint(ERR))
+    _up(store, "b1", errors=ERR, run_id="r1", build_run_id=7)
+    store.conn.execute(
+        "UPDATE issues SET state='resolved', resolved_at='2026-07-25T08:00:00Z', "
+        "green_head_run_id=7 WHERE issue_key=?",
+        (key,),
+    )
+    store.conn.commit()
+    # Build 9 is past the watermark, but its clock reads BEFORE the resolve.
+    _up(store, "b2", errors=ERR, ts="2026-07-25T03:00:00Z",
+        run_id="r2", build_run_id=9)
+    assert _issue_events(store) == ["issue_created", "issue_regressed"]
+
+
+def test_occurrence_at_the_boundary_is_not_a_regression(store):
+    """The watermark records the build that was current when the fix was
+    proven, so that build itself is not past it — only a strictly later one
+    is."""
+    key = _key(compute_fingerprint(ERR))
+    _up(store, "b1", errors=ERR, run_id="r1", build_run_id=7)
+    store.conn.execute(
+        "UPDATE issues SET state='resolved', resolved_at='2026-07-25T01:00:00Z', "
+        "green_head_run_id=7 WHERE issue_key=?",
+        (key,),
+    )
+    store.conn.commit()
+    _up(store, "b2", errors=ERR, ts="2026-07-25T09:00:00Z",
+        run_id="r2", build_run_id=7)
+    assert _issue_events(store) == ["issue_created"]
+
+
+def test_resolving_issue_is_left_to_its_confirm_build(store):
+    """A farm build still failing while the confirm build is in flight is the
+    unfixed port being observed, not a fix that came back. The writer used to
+    rewrite the state to `regressed` and drop the deliverable here."""
+    key = _key(compute_fingerprint(ERR))
+    _up(store, "b1", errors=ERR)
+    store.conn.execute(
+        "UPDATE issues SET state='resolving', delivery_bundle_id='b1' "
+        "WHERE issue_key=?", (key,),
+    )
+    store.conn.commit()
+    _up(store, "b2", errors=ERR, ts="2026-07-25T09:00:00Z")
+    row = _issue(store, key)
+    assert (row["state"], row["delivery_bundle_id"]) == ("resolving", "b1")
+    assert row["times_seen"] == 2
+    assert _issue_events(store) == ["issue_created"]
+
+
+def test_build_ordinal_is_recorded_on_the_run(store):
+    """The link C3 needs: the tracker build_runs ordinal the hook sent,
+    stored on the occurrence's run."""
+    _up(store, "b1", errors=ERR, run_id="r9", build_run_id=42)
+    assert store.conn.execute(
+        "SELECT build_run_id FROM runs WHERE run_id='r9'"
+    ).fetchone()[0] == 42
+
+
+def test_a_later_upsert_without_an_ordinal_keeps_the_recorded_one(store):
+    """Tracking dropping out mid-run must not erase the linkage a previous
+    occurrence established."""
+    _up(store, "b1", errors=ERR, run_id="r9", build_run_id=42)
+    _up(store, "b2", errors=ERR, run_id="r9", build_run_id="")
+    assert store.conn.execute(
+        "SELECT build_run_id FROM runs WHERE run_id='r9'"
+    ).fetchone()[0] == 42
 
 
 def test_muted_issue_stays_muted_but_counts(store):

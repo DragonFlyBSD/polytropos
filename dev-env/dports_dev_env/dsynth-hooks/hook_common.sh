@@ -419,6 +419,29 @@ tracker_load_state() {
 	fi
 }
 
+# The tracker build_runs ordinal for the current run, or nothing.
+#
+# `tracker_load_state` is the strict reader: it aborts the hook when the
+# state file is missing or tracking is off. This one never does. It runs in
+# the failure path, where recording the bundle matters more than linking it,
+# so anything unreadable yields an empty string and the store keeps an
+# occurrence with no ordinal — the regression derivation falls back to
+# timestamps for it. Requires tracker_load_config first (TRACKER_STATE_FILE).
+tracker_run_ordinal() {
+	if [ -z "${TRACKER_STATE_FILE:-}" ] || [ ! -r "$TRACKER_STATE_FILE" ]; then
+		return 0
+	fi
+	state_disabled=$(sed -n 's/^TRACKING_DISABLED=//p' "$TRACKER_STATE_FILE" | head -1)
+	if [ "${state_disabled:-0}" = "1" ]; then
+		return 0
+	fi
+	state_run_id=$(sed -n 's/^RUN_ID=//p' "$TRACKER_STATE_FILE" | head -1)
+	case "${state_run_id:-}" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	printf '%s\n' "$state_run_id"
+}
+
 tracker_write_state() {
 	tmp_file="$TRACKER_STATE_FILE.tmp.$$"
 	umask 077

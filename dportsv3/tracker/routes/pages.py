@@ -30,7 +30,6 @@ from dportsv3.tracker.agentic_queries import (
     get_run,
     issue_for_bundle,
     issues_with_occurrences,
-    list_issues,
     job_events_for_job,
     latest_review_request_for_bundle,
     list_bundles,
@@ -185,16 +184,28 @@ def register(app, ctx):
     ) -> Any:
         target_value = target or None
         state_value = (state or "").strip() or None
-        states = [state_value] if state_value else None
+        # `regressed` is derived, so it cannot be a SQL filter: narrow to the
+        # stored states that could present as the requested one, then filter
+        # exactly on the effective state. Both `resolved` and `regressed`
+        # narrow to stored `resolved` and the split happens here.
+        states = (
+            issue_state.stored_states_for(state_value) if state_value else None
+        )
         with _conn() as conn:
+            issues = issues_with_occurrences(
+                conn, target=target_value, states=states, limit=300
+            )
+            if state_value:
+                issues = [
+                    i for i in issues
+                    if issue_state.effective_state(i) == state_value
+                ]
             return templates.TemplateResponse(
                 request,
                 "agentic_issues.html",
                 {
                     "title": "Issues",
-                    "issues": list_issues(
-                        conn, target=target_value, states=states, limit=300
-                    ),
+                    "issues": issues,
                     "target_options": distinct_targets(conn),
                     "selected_target": target_value,
                     "selected_state": state_value,

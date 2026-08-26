@@ -18,7 +18,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from dportsv3.tracker import issue_state
-from dportsv3.tracker.agentic_queries import get_issue
+from dportsv3.tracker.agentic_queries import (
+    get_issue,
+    green_head_watermark,
+)
 from dportsv3.tracker.routes._common import HTTPException
 
 
@@ -26,27 +29,35 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _recompute_open_state(write_conn: sqlite3.Connection, issue_key: str) -> str:
-    """Whether an issue returning to the worklist is ``regressed`` or just
-    ``unresolved``.
+def _watermark_for_issue(
+    write_conn: sqlite3.Connection, issue_key: str,
+) -> int | None:
+    """The Green-Head boundary for an issue whose target the caller doesn't
+    already hold."""
+    row = write_conn.execute(
+        "SELECT target FROM issues WHERE issue_key = ?", (issue_key,)
+    ).fetchone()
+    return green_head_watermark(write_conn, row["target"] if row else None)
 
-    Regressed is the literal "was fixed, then came back" signal: the issue
-    has a ``resolved_at`` and at least one occurrence after it. A muted
-    issue was always open when muted (the gate forbids muting a resolved
-    one), so this exactly reconstructs its pre-mute open state.
+
+def _recompute_open_state(write_conn: sqlite3.Connection, issue_key: str) -> str:
+    """The resolution state a muted issue returns to when unmuted.
+
+    ``resolved_at`` is the whole answer: an issue that carries one was
+    resolved and then came back (reopen clears it), so it goes back to
+    ``resolved`` and the projection re-derives the ``regressed`` badge from
+    its occurrences. Anything else was plainly open.
+
+    This used to answer "regressed?" itself, by comparing occurrence
+    timestamps against ``resolved_at`` — a second, subtly different
+    definition from the writer's. C3 leaves exactly one.
     """
     row = write_conn.execute(
         "SELECT resolved_at FROM issues WHERE issue_key = ?", (issue_key,)
     ).fetchone()
     resolved_at = (row["resolved_at"] if row is not None else None)
-    if resolved_at:
-        later = write_conn.execute(
-            "SELECT 1 FROM bundles WHERE issue_key = ? AND ts_utc > ? LIMIT 1",
-            (issue_key, resolved_at),
-        ).fetchone()
-        if later is not None:
-            return issue_state.ISSUE_REGRESSED
-    return issue_state.ISSUE_UNRESOLVED
+    return (issue_state.ISSUE_RESOLVED if resolved_at
+            else issue_state.ISSUE_UNRESOLVED)
 
 
 def mute_issue(write_conn: sqlite3.Connection, issue_key: str, *,
@@ -66,8 +77,8 @@ def mute_issue(write_conn: sqlite3.Connection, issue_key: str, *,
 
 def unmute_issue(write_conn: sqlite3.Connection, issue_key: str, *,
                  now: str, actor: str) -> str:
-    """Return a muted issue to the worklist, recomputing unresolved vs
-    regressed from its occurrences. Returns the new state."""
+    """Return a muted issue to the worklist, restoring the resolution state
+    it was muted from. Returns the new state."""
     new_state = _recompute_open_state(write_conn, issue_key)
     write_conn.execute(
         "UPDATE issues SET state = ?, muted_at = NULL, muted_by = NULL, "
@@ -83,11 +94,17 @@ def unmute_issue(write_conn: sqlite3.Connection, issue_key: str, *,
 def resolve_issue(write_conn: sqlite3.Connection, issue_key: str, *,
                   now: str, actor: str) -> str:
     """Manually mark an issue resolved (operator judgement, no merge).
-    Returns the new state (``resolved``)."""
+    Returns the new state (``resolved``).
+
+    Records the Green-Head watermark even though no build proved anything:
+    the operator is asserting the problem is fixed as of now, and the newest
+    build at that moment is exactly the boundary a later recurrence has to be
+    past to count as a regression (C3). Without it this issue would fall back
+    to comparing wall clocks forever."""
     write_conn.execute(
         "UPDATE issues SET state = 'resolved', resolved_at = ?, "
-        "updated_at = ? WHERE issue_key = ?",
-        (now, now, issue_key),
+        "green_head_run_id = ?, updated_at = ? WHERE issue_key = ?",
+        (now, _watermark_for_issue(write_conn, issue_key), now, issue_key),
     )
     from dportsv3.artifact_store import emit_event  # noqa: PLC0415
     emit_event(write_conn, "issue_resolved",
@@ -105,7 +122,18 @@ def mark_issue_resolving(write_conn: sqlite3.Connection, issue_key: str, *,
     ``resolving`` with a newer accepted occurrence). A ``muted`` issue (the
     operator silenced it) or an already-``resolved`` one is left untouched, so
     accepting a stray fix can't override those. Returns the resulting state,
-    or None if the issue vanished. Caller owns the surrounding transaction."""
+    or None if the issue vanished. Caller owns the surrounding transaction.
+
+    A regressed issue is stored ``resolved`` (C3), so `resolved` joins the
+    allowed set exactly when the projection derives ``regressed`` for it —
+    accepting a fix for a problem that came back must work, while a genuinely
+    resolved issue stays as untouchable as it was."""
+    allowed = [issue_state.ISSUE_UNRESOLVED, issue_state.ISSUE_RESOLVING]
+    current = get_issue(write_conn, issue_key)
+    if (current is not None
+            and issue_state.effective_state(current)
+            == issue_state.ISSUE_REGRESSED):
+        allowed.append(issue_state.ISSUE_RESOLVED)
     # Bump requested_build_generation in the SAME statement that flips to
     # `resolving` (C1): recording the desired-build intent rides the state
     # write under the caller's transaction, so a crash leaves either the old
@@ -116,8 +144,8 @@ def mark_issue_resolving(write_conn: sqlite3.Connection, issue_key: str, *,
         "UPDATE issues SET state = 'resolving', delivery_bundle_id = ?, "
         "requested_build_generation = requested_build_generation + 1, "
         "updated_at = ? WHERE issue_key = ? "
-        "AND state IN ('unresolved', 'regressed', 'resolving')",
-        (bundle_id, now, issue_key),
+        f"AND state IN ({','.join('?' * len(allowed))})",
+        (bundle_id, now, issue_key, *allowed),
     )
     if cur.rowcount:
         gen_row = write_conn.execute(
@@ -183,8 +211,9 @@ def reopen_issue_build_failed(
     The accepted fix did not hold, so the issue goes back to ``unresolved``
     rather than sitting in ``resolving`` looking as good as fixed. Clears the
     same delivery/resolution history as the operator
-    :func:`reopen_issue` (``resolved_at`` / ``regressed_at`` /
-    ``delivery_bundle_id``) and stamps the reopen forensics.
+    :func:`reopen_issue` (``resolved_at`` / ``delivery_bundle_id``) and stamps
+    the reopen forensics. Clearing ``resolved_at`` is what retires the
+    derived ``regressed`` badge with it — there is no stored flag to reset.
 
     Guarded to ``state='resolving'`` — the mirror of
     :func:`resolve_issue_build_confirmed`. A muted issue, or one an operator
@@ -196,7 +225,7 @@ def reopen_issue_build_failed(
     None when the guard rejected the transition. Caller owns the transaction."""
     cur = write_conn.execute(
         "UPDATE issues SET state = 'unresolved', resolved_at = NULL, "
-        "regressed_at = NULL, delivery_bundle_id = NULL, "
+        "delivery_bundle_id = NULL, "
         "reopened_at = ?, reopened_by = ?, updated_at = ? "
         "WHERE issue_key = ? AND state = 'resolving'",
         (now, actor, now, issue_key),
@@ -257,7 +286,7 @@ def reopen_issue(write_conn: sqlite3.Connection, issue_key: str, *,
     history cleared. Returns the new state."""
     write_conn.execute(
         "UPDATE issues SET state = 'unresolved', resolved_at = NULL, "
-        "regressed_at = NULL, delivery_bundle_id = NULL, "
+        "delivery_bundle_id = NULL, "
         "reopened_at = ?, reopened_by = ?, "
         "updated_at = ? WHERE issue_key = ?",
         (now, actor, now, issue_key),
@@ -329,7 +358,9 @@ def register(app, ctx):
         if issue is None:
             raise HTTPException(status_code=404,
                                 detail=f"Unknown issue: {issue_key}")
-        state = issue.get("state")
+        # Effective, not stored: a regressed issue's row reads `resolved`
+        # (C3) but it must keep the open-issue controls.
+        state = issue_state.effective_state(issue)
         if not issue_state.issue_action_allowed(action, state):
             raise HTTPException(
                 status_code=409,
@@ -371,7 +402,9 @@ def register(app, ctx):
         if issue is None:
             raise HTTPException(status_code=404,
                                 detail=f"Unknown issue: {issue_key}")
-        state = issue.get("state")
+        # Effective, not stored: a regressed issue's row reads `resolved`
+        # (C3) but it must keep the open-issue controls.
+        state = issue_state.effective_state(issue)
         if not issue_state.issue_action_allowed(action, state):
             raise HTTPException(
                 status_code=409,

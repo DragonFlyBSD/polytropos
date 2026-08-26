@@ -2,7 +2,10 @@
 
 Pins the read-side projection that sits above `fix_state`:
 
-- lifecycle badge per `issue.state` (regressed loud, muted/resolved toned);
+- lifecycle badge per effective state (regressed loud, muted/resolved toned)
+  — the derivation that produces `regressed` from a `resolved` row lives in
+  test_issue_regression_derived.py; these cases feed the effective state
+  directly, which is the contract the badge and the gate are written to;
 - the issue-action gate + UI surface (mute↔unmute, resolve↔reopen);
 - the bucket rule combining lifecycle (surfacing) with the *actionable
   occurrence* (the action band), including the subtle terminal-latest-
@@ -30,13 +33,41 @@ def _occ(bundle_id, resolution, verification=None, ts="2026-07-25T00:00:00Z",
 
 def _issue(state, *, key="k", origin="ftp/curl", target="@2026Q3",
            times_seen=5, occurrences=None):
-    return {
+    """An issue row that projects to `state`.
+
+    `regressed` is derived, never stored (C3): the row says `resolved` and
+    carries a boundary its occurrences are past. Asking for it here builds
+    that shape rather than a row the DB would reject, so the cases below stay
+    honest about what they are testing.
+    """
+    row = {
         "issue_key": key, "state": state, "origin": origin, "target": target,
         "times_seen": times_seen,
         "first_seen_at": "2026-07-20T00:00:00Z",
         "last_seen_at": "2026-07-25T00:00:00Z",
         "occurrences": occurrences or [],
     }
+    if state == "regressed":
+        # No green head: these occurrences carry no build ordinal, so the
+        # boundary is resolved_at and every one of them is past it.
+        row["state"] = "resolved"
+        row["resolved_at"] = "2026-07-01T00:00:00Z"
+    return row
+
+
+def _projected(state):
+    """An issue row that projects to `state`.
+
+    `regressed` is derived, never stored (C3), so the only row that can carry
+    it is a resolved one with an occurrence past its known-good boundary.
+    Building it here keeps these cases on shapes the DB can actually hold.
+    """
+    if state != "regressed":
+        return {"state": state}
+    return {"state": "resolved", "green_head_run_id": 7,
+            "resolved_at": "2026-07-25T00:00:00Z",
+            "occurrences": [{"bundle_id": "b", "build_run_id": 8,
+                             "ts_utc": "2026-07-26T00:00:00Z"}]}
 
 
 # --- lifecycle projection --------------------------------------------------
@@ -49,7 +80,7 @@ def _issue(state, *, key="k", origin="ftp/curl", target="@2026Q3",
     ("muted", "muted", "ignored"),
 ])
 def test_issue_status_projection(state, key, pill):
-    st = I.issue_status({"state": state})
+    st = I.issue_status(_projected(state))
     assert (st.key, st.pill) == (key, pill)
 
 
@@ -61,7 +92,7 @@ def test_issue_status_unknown_state():
 def test_issue_status_pill_classes_are_known():
     known = {"built", "failed", "skipped", "total", "ignored"}
     for state in ["unresolved", "regressed", "resolved", "muted", None]:
-        assert I.issue_status({"state": state}).pill in known
+        assert I.issue_status(_projected(state)).pill in known
 
 
 # --- action gate + surface -------------------------------------------------
@@ -96,7 +127,7 @@ def test_issue_action_unknown_refused():
 
 def test_issue_actions_surface_matches_gate():
     for state in ["unresolved", "regressed", "resolved", "muted", "resolving"]:
-        acts = I.issue_actions({"state": state})
+        acts = I.issue_actions(_projected(state))
         assert acts == {
             "can_mute": I.issue_action_allowed("mute", state),
             "can_unmute": I.issue_action_allowed("unmute", state),

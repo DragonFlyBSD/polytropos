@@ -53,13 +53,25 @@ def list_issues(
     return [_row_dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
+# Occurrence rows carry the build ordinal of the run they came from, joined
+# from `runs`. `issue_state.occurrence_past_boundary` compares it against the
+# issue's Green-Head watermark to derive `regressed` (C3); without it the
+# derivation falls back to timestamps. LEFT JOIN because an occurrence whose
+# run predates the link — or whose build the tracker never saw — still counts
+# as an occurrence.
+_OCCURRENCE_SELECT = (
+    "SELECT b.*, r.build_run_id AS build_run_id "
+    "FROM bundles b LEFT JOIN runs r ON r.run_id = b.run_id"
+)
+_OCCURRENCE_ORDER = " ORDER BY b.ts_utc DESC, b.bundle_id DESC"
+
+
 def occurrences_for_issue(
     conn: sqlite3.Connection, issue_key: str,
 ) -> list[dict[str, Any]]:
     """The occurrences (bundles) of one issue, newest-first."""
     rows = conn.execute(
-        "SELECT * FROM bundles WHERE issue_key = ? "
-        "ORDER BY ts_utc DESC, bundle_id DESC",
+        f"{_OCCURRENCE_SELECT} WHERE b.issue_key = ?{_OCCURRENCE_ORDER}",
         (issue_key,),
     ).fetchall()
     return [_row_dict(r) for r in rows]
@@ -78,6 +90,30 @@ def get_issue(
         return None
     issue["occurrences"] = occurrences_for_issue(conn, issue_key)
     return issue
+
+
+def green_head_watermark(
+    conn: sqlite3.Connection, target: str | None,
+) -> int | None:
+    """The known-good boundary to record when an issue resolves (A2): the
+    newest ``build_runs`` ordinal for ``target`` at that moment.
+
+    NOT the confirm build's own id — the confirm build runs inside the agent
+    dev-env with the dsynth hooks disabled, so it never lands in
+    ``build_runs`` at all. What matters for regression detection is the
+    boundary: any LATER farm build that re-emits this fingerprint happened
+    after the fix was proven, so it is a genuine regression (C3 derives that
+    in :func:`issue_state.derived_regression`).
+
+    Every writer that sets ``state='resolved'`` calls this — the confirm
+    build, the operator's manual resolve, and the merge reconciler — so an
+    ordinal boundary is the norm and the derivation's timestamp fallback is
+    reserved for rows that predate it. None when the target has no builds yet.
+    """
+    row = conn.execute(
+        "SELECT MAX(id) FROM build_runs WHERE target = ?", (target,),
+    ).fetchone()
+    return row[0] if row is not None else None
 
 
 def issues_needing_build(
@@ -107,8 +143,12 @@ def issue_for_bundle(
     conn: sqlite3.Connection, bundle_id: str,
 ) -> dict[str, Any] | None:
     """The issue a bundle belongs to (joined via ``issue_key``), or None
-    when the bundle has no issue. Used by the runner's mute check."""
-    return _maybe(
+    when the bundle has no issue. Used by the runner's mute check.
+
+    Carries ``occurrences`` like the other issue reads, so the bundle page's
+    badge can derive `regressed` (C3) rather than showing a bare `resolved`
+    for a fix that came back."""
+    issue = _maybe(
         conn.execute(
             "SELECT i.* FROM issues i "
             "JOIN bundles b ON b.issue_key = i.issue_key "
@@ -116,6 +156,9 @@ def issue_for_bundle(
             (bundle_id,),
         ).fetchone()
     )
+    if issue is not None:
+        issue["occurrences"] = occurrences_for_issue(conn, issue["issue_key"])
+    return issue
 
 
 def issues_with_occurrences(
@@ -139,8 +182,9 @@ def issues_with_occurrences(
         return issues
     keys = [i["issue_key"] for i in issues]
     rows = conn.execute(
-        f"SELECT * FROM bundles WHERE issue_key IN ({','.join('?' * len(keys))}) "
-        "ORDER BY ts_utc DESC, bundle_id DESC",
+        f"{_OCCURRENCE_SELECT} "
+        f"WHERE b.issue_key IN ({','.join('?' * len(keys))})"
+        f"{_OCCURRENCE_ORDER}",
         keys,
     ).fetchall()
     by_key: dict[str, list[dict[str, Any]]] = {}

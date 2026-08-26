@@ -122,11 +122,10 @@ def resolve_issue_for_bundle(
     has no ``issue_key`` (degenerate / pre-issue occurrence), the issue is
     already ``resolved``, or it is ``resolving`` (A2: a green confirm build
     resolves it, a red one reopens it — the merge is no longer the
-    authority). A later
-    genuinely-new occurrence re-opens it via the WS3 regression path, so
-    resolving even a ``muted`` issue here is safe — the problem really is
-    gone until it recurs. Emits ``issue_resolved``. Returns the issue_key
-    when it transitioned, else None.
+    authority). A later genuinely-new occurrence surfaces it again as a
+    derived regression (C3), so resolving even a ``muted`` issue here is safe
+    — the problem really is gone until it recurs. Emits ``issue_resolved``.
+    Returns the issue_key when it transitioned, else None.
 
     Runs on the caller's connection inside the caller's transaction — both
     merge callers (the lazy poll and the manual delivery/status endpoint)
@@ -158,10 +157,24 @@ def resolve_issue_for_bundle(
         # manual resolve endpoint remains the escape hatch if the build
         # never runs.
         return None
+    # Boundary for C3's regression derivation: the newest build at merge
+    # time. A later one re-emitting this fingerprint is a genuine regression;
+    # anything at or before it is the failure this merge was fixing.
+    from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
+        green_head_watermark,
+    )
+    trow = write_conn.execute(
+        "SELECT target FROM issues WHERE issue_key = ?", (issue_key,),
+    ).fetchone()
+    # Row or plain tuple — this writer runs on whichever connection the
+    # caller brought, as the reads above already allow for.
+    target = None
+    if trow is not None:
+        target = trow["target"] if isinstance(trow, sqlite3.Row) else trow[0]
     write_conn.execute(
-        "UPDATE issues SET state = 'resolved', resolved_at = ?, updated_at = ? "
-        "WHERE issue_key = ?",
-        (now_iso, now_iso, issue_key),
+        "UPDATE issues SET state = 'resolved', resolved_at = ?, "
+        "green_head_run_id = ?, updated_at = ? WHERE issue_key = ?",
+        (now_iso, green_head_watermark(write_conn, target), now_iso, issue_key),
     )
     from dportsv3.artifact_store import emit_event  # noqa: PLC0415
     emit_event(write_conn, "issue_resolved", {

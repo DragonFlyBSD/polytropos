@@ -27,6 +27,11 @@ bundle_id="${bundle_id}-${ts}"
 
 tracker_load_config
 
+# Which farm build this failure belongs to. Sent with the bundle so the store
+# can place the occurrence against a fix's known-good boundary later (C3)
+# instead of comparing wall clocks across hosts. Empty when tracking is off.
+build_run_id=$(tracker_run_ordinal)
+
 # Distill the failure log up front so the bundle upsert can carry the
 # errors text — the store fingerprints it at ingest to establish issue
 # identity the moment this occurrence is born.
@@ -40,6 +45,7 @@ artifact_store bundle-upsert \
 	--run-id "${run_id}" \
 	--profile "${PROFILE}" \
 	--target "${DPORTSV3_TRACKER_TARGET}" \
+	--build-run-id "${build_run_id}" \
 	--ts-utc "${ts}" \
 	--bundle-id "${bundle_id}" \
 	--origin "${origin_base}" \

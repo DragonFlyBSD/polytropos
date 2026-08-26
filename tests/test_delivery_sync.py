@@ -403,10 +403,14 @@ def _link_bundle_to_issue(conn, bundle_id, issue_key) -> None:
     conn.commit()
 
 
-@pytest.mark.parametrize("start_state", ["unresolved", "regressed", "muted"])
+@pytest.mark.parametrize("start_state", ["unresolved", "muted"])
 def test_merge_resolves_the_linked_issue(db_path, start_state):
     """A merged occurrence resolves its issue regardless of the issue's
-    prior open state — the problem shipped."""
+    prior open state — the problem shipped.
+
+    `regressed` used to be a third case here; it is derived from a `resolved`
+    row now (C3), and this writer already no-ops on `resolved`.
+    """
     conn = _open(db_path)
     _seed_bundle(conn, "b1", resolution="accepted")
     _seed_issue(conn, "iss1", state=start_state)

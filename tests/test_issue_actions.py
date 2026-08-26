@@ -101,22 +101,24 @@ def test_unmute_without_prior_resolution_is_unresolved(db):
         w.close()
 
 
-def test_unmute_recomputes_regressed_from_occurrences(db):
-    # resolved at T3, an occurrence at T4 (after) → came back → regressed
+def test_unmute_restores_the_resolution_it_was_muted_from(db):
+    # Muted while carrying a resolved_at → it was resolved-then-regressed, so
+    # unmute puts the resolution axis back and leaves the `regressed` badge to
+    # the projection. Unmute no longer answers "regressed?" itself (C3).
     _seed_issue(db, "k", state="muted", resolved_at="2026-07-25T03:00:00Z")
     _seed_occurrence(db, "b_after", "k", "2026-07-25T04:00:00Z")
     w = _write(db)
     try:
-        assert IA.unmute_issue(w, "k", now="t", actor="op") == "regressed"
+        assert IA.unmute_issue(w, "k", now="t", actor="op") == "resolved"
     finally:
         w.close()
 
 
-def test_unmute_resolved_but_no_later_occurrence_is_unresolved(db):
-    # resolved, and the only occurrence predates the resolution → not a
-    # regression, just re-open as unresolved.
-    _seed_issue(db, "k", state="muted", resolved_at="2026-07-25T03:00:00Z")
-    _seed_occurrence(db, "b_before", "k", "2026-07-25T01:00:00Z")
+def test_unmute_without_a_resolution_is_unresolved(db):
+    # Never resolved (reopen clears resolved_at), so there is nothing to
+    # restore — it goes back to the open state it was muted from.
+    _seed_issue(db, "k", state="muted", resolved_at=None)
+    _seed_occurrence(db, "b1", "k", "2026-07-25T01:00:00Z")
     w = _write(db)
     try:
         assert IA.unmute_issue(w, "k", now="t", actor="op") == "unresolved"

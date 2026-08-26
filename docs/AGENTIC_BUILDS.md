@@ -130,6 +130,35 @@ dsynth profile sources environment from):
 | `DPORTSV3_TRACKER_TARGET` | Target (e.g. `@2026Q2`); defaults from `$PROFILE` |
 | `ARTIFACT_STORE_URL` | Where to upload bundles |
 
+## When a fix comes back
+
+An issue's state is what the operator and the confirm build decided:
+`unresolved` → `resolving` (a fix accepted, build pending) → `resolved`, plus
+`muted`. **`regressed` is not one of them** — it is derived when you look at
+the issue, from what later builds actually did.
+
+Resolving an issue records a *Green Head*: the newest `build_runs` ordinal for
+that target at the moment it resolved. A later build re-emitting the same
+fingerprint is past that boundary, so the issue reads `regressed` and returns
+to the worklist, loud. A build at or before it is the failure the fix was for
+and changes nothing. Deriving it means the badge cannot drift from the build
+record — there is no stored flag to go stale, and clearing `resolved` (reopen)
+retires the badge with it.
+
+Two consequences worth knowing:
+
+- A `regressed` issue's row still reads `resolved`. Query `state='resolved'`
+  in `state.db` and you will get it; the Issues page's *Resolved* chip will
+  not, because the page filters on what you actually see.
+- An issue in `resolving` never regresses. A farm build still failing while
+  the confirm build is in flight is the unfixed port being observed, not a fix
+  that came back — the confirm verdict settles it (green resolves, red
+  reopens).
+
+Where the tracker never saw the build an occurrence came from — or the issue
+was resolved before this existed — the comparison falls back to timestamps
+(`ts_utc` vs `resolved_at`), which is what it always did.
+
 ## Trust tiers
 
 `config/agentic-policy.json` decides whether a triaged failure

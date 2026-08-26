@@ -51,13 +51,29 @@ def blob_path(root: Path, sha: str) -> Path:
     return root / "objects" / "sha256" / sha[0:2] / sha[2:4] / sha
 
 
+def _coerce_build_run_id(raw: Any) -> int | None:
+    """The tracker build-run ordinal from a hook payload, or None.
+
+    The hooks are stdlib shell and send whatever the tracker printed, so an
+    empty string arrives whenever tracking is disabled, and an absent key
+    arrives as None from an older client. Anything that isn't an integer
+    becomes None rather than an error: an occurrence with no ordinal is still
+    a real occurrence, and the C3 derivation degrades to timestamps for it.
+    """
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_ts(raw: str | None) -> str | None:
     """Canonicalize a hook timestamp to ISO-8601 UTC.
 
     The dsynth hooks stamp the compact ``YYYYmmdd-HHMMSSZ`` form
     (``hook_common.now_utc``), but the rest of the system speaks ISO —
     the issue ``*_at`` timestamps, ``render.relative_age``, and the
-    unmute regression check (``ts_utc > resolved_at``) all assume it.
+    regression derivation's timestamp fallback (``ts_utc > resolved_at``,
+    used when no build ordinal is available) all assume it.
     Storing the compact form raw left ``ts_utc`` lexicographically
     incomparable with those ISO values. Normalize here, at the single
     writer, so every timestamp column is one comparable format. Values
@@ -104,6 +120,12 @@ class ArtifactStore:
         ts_utc = _normalize_ts(payload.get("ts_utc"))
         result = payload.get("result")
         target = payload.get("target")
+        # The tracker `build_runs` ordinal this occurrence came from, sent by
+        # the hook alongside its own run id. This is the link that lets C3
+        # place an occurrence against a fix's Green-Head watermark instead of
+        # comparing wall clocks across hosts. Absent whenever tracking is off,
+        # which the derivation handles by falling back to timestamps.
+        build_run_id = _coerce_build_run_id(payload.get("build_run_id"))
         # Fingerprint at ingest: prefer a caller-supplied signature, else
         # derive it here from the distilled errors text. Computing it in
         # the store keeps a single normalization rule (dportsv3.fingerprint,
@@ -128,13 +150,14 @@ class ArtifactStore:
         with self._lock:
             if run_id:
                 self.conn.execute(
-                    """INSERT INTO runs (run_id, profile, target, path, ts_start, ts_end, last_seen_at)
-                       VALUES (?, ?, ?, NULL, ?, NULL, ?)
+                    """INSERT INTO runs (run_id, profile, target, path, ts_start, ts_end, last_seen_at, build_run_id)
+                       VALUES (?, ?, ?, NULL, ?, NULL, ?, ?)
                        ON CONFLICT(run_id) DO UPDATE SET
                          profile=excluded.profile,
                          target=COALESCE(excluded.target, runs.target),
+                         build_run_id=COALESCE(excluded.build_run_id, runs.build_run_id),
                          last_seen_at=excluded.last_seen_at""",
-                    (run_id, profile, target, ts_utc, now),
+                    (run_id, profile, target, ts_utc, now, build_run_id),
                 )
 
             # A brand-new bundle_id is a new occurrence; a re-upsert (status
@@ -172,28 +195,40 @@ class ArtifactStore:
                 self._upsert_issue_for_occurrence(
                     issue_key=ikey, target=target, origin=origin,
                     fingerprint=error_signature, bundle_id=bundle_id,
-                    seen_ts=seen_ts, now=now,
+                    seen_ts=seen_ts, now=now, build_run_id=build_run_id,
                 )
             self.conn.commit()
 
     def _upsert_issue_for_occurrence(self, *, issue_key: str, target: str | None,
                                      origin: str, fingerprint: str | None,
-                                     bundle_id: str, seen_ts: str, now: str) -> None:
+                                     bundle_id: str, seen_ts: str, now: str,
+                                     build_run_id: int | None = None) -> None:
         """Find-or-create the issue for a **new** occurrence and roll it up.
 
         First occurrence for a key creates the issue (``unresolved``,
         ``times_seen=1``). A later occurrence bumps ``times_seen`` and, if
         it is the newest by timestamp, advances ``last_seen_at`` +
-        ``latest_bundle_id``. State transitions on arrival:
+        ``latest_bundle_id``.
 
-        - ``resolved`` → ``regressed`` (the fix came back) + ``issue_regressed``;
-        - ``muted`` stays ``muted`` (silent — no surfacing, no auto-triage);
-        - ``unresolved``/``regressed`` are unchanged.
+        Rollups only — an arriving occurrence NEVER moves the issue's state
+        (C3). It used to rewrite ``resolved``/``resolving`` to ``regressed``,
+        which was wrong in both directions: it fired without checking the
+        occurrence against the fix's known-good boundary, and it clobbered a
+        `resolving` issue mid-confirm-build, where a still-failing farm build
+        is the unfixed port being observed rather than a fix that came back.
+        ``regressed`` is now derived on read
+        (:func:`issue_state.derived_regression`) and the confirm verdict
+        (A2/A3) owns the `resolving` exit.
+
+        The ``issue_regressed`` event survives as a notification, fired on
+        the same predicate the projection uses so the feed and the badge
+        cannot disagree.
 
         Caller holds ``self._lock`` and owns the surrounding commit.
         """
         row = self.conn.execute(
-            "SELECT state, last_seen_at FROM issues WHERE issue_key = ?",
+            "SELECT state, last_seen_at, resolved_at, green_head_run_id "
+            "FROM issues WHERE issue_key = ?",
             (issue_key,),
         ).fetchone()
         if row is None:
@@ -213,24 +248,30 @@ class ArtifactStore:
 
         prev_last = row["last_seen_at"]
         is_newest = prev_last is None or seen_ts >= prev_last
-        # A fresh occurrence on a resolved OR resolving issue means the fix
-        # didn't hold (or hasn't landed and the port is still failing) — reopen
-        # loud as regressed and drop the pending deliverable.
-        regressed = row["state"] in ("resolved", "resolving")
-        new_state = "regressed" if regressed else row["state"]
         self.conn.execute(
             """UPDATE issues SET
                  times_seen = times_seen + 1,
                  last_seen_at = CASE WHEN ? THEN ? ELSE last_seen_at END,
                  latest_bundle_id = CASE WHEN ? THEN ? ELSE latest_bundle_id END,
-                 state = ?,
-                 regressed_at = CASE WHEN ? THEN ? ELSE regressed_at END,
-                 delivery_bundle_id = CASE WHEN ? THEN NULL ELSE delivery_bundle_id END,
                  fingerprint = COALESCE(fingerprint, ?),
                  updated_at = ?
                WHERE issue_key = ?""",
-            (is_newest, seen_ts, is_newest, bundle_id, new_state,
-             regressed, now, regressed, fingerprint, now, issue_key),
+            (is_newest, seen_ts, is_newest, bundle_id, fingerprint, now,
+             issue_key),
+        )
+        # Same predicate the projection derives the badge from — imported
+        # here rather than restated, because three independent answers to
+        # "did this regress?" is what C3 exists to remove.
+        from dportsv3.tracker.issue_state import (  # noqa: PLC0415
+            ISSUE_RESOLVED, occurrence_past_boundary,
+        )
+        regressed = (
+            row["state"] == ISSUE_RESOLVED
+            and occurrence_past_boundary(
+                {"green_head_run_id": row["green_head_run_id"],
+                 "resolved_at": row["resolved_at"]},
+                {"build_run_id": build_run_id, "ts_utc": seen_ts},
+            )
         )
         if regressed:
             emit_event(self.conn, "issue_regressed", {

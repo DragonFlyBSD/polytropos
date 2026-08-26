@@ -11,11 +11,15 @@ worklist band is derived by running the occurrence projection on its
 
 Two axes, combined here:
 
-- **Lifecycle** — `issue.state` ∈ {unresolved, regressed, resolving,
-  resolved, muted}. Drives *surfacing*: open issues in the worklist,
-  `resolving` (fix accepted, awaiting delivery) in its own band, resolved
-  in the collapsed archive, muted in a collapsed muted section. `regressed`
-  (a fix that came back) is projected loud.
+- **Resolution** — `issue.state` ∈ {unresolved, resolving, resolved,
+  muted}: what the operator and the confirm build decided. Drives
+  *surfacing*: open issues in the worklist, `resolving` (fix accepted,
+  awaiting delivery) in its own band, resolved in the collapsed archive,
+  muted in a collapsed muted section.
+- **Build observation** — what later builds actually did. `regressed` (a
+  fix that came back) lives here and is DERIVED, never stored: see
+  `derived_regression`. `effective_state` folds the two axes back into the
+  single value the badge, the action gate and the worklist read.
 - **Actionable occurrence** — the latest occurrence by timestamp. Its
   `fix_status` (via `fix_state.worklist_bucket`) drives *which* action
   band an open issue lands in (ready / verify / decide / owned).
@@ -35,7 +39,6 @@ from dportsv3.tracker import fix_state
 # --- Issue-state vocabulary (one definition) -------------------------------
 
 ISSUE_UNRESOLVED = "unresolved"
-ISSUE_REGRESSED = "regressed"
 ISSUE_RESOLVED = "resolved"
 # Resolved · pending delivery — a fix has been accepted for the issue and is
 # being (or awaiting being) delivered, but hasn't landed yet. Reached from an
@@ -44,8 +47,122 @@ ISSUE_RESOLVED = "resolved"
 ISSUE_RESOLVING = "resolving"
 ISSUE_MUTED = "muted"
 
+# The resolution axis, in full. This is what `issues.state` may hold — the
+# column is CHECKed against exactly this set.
+ISSUE_STORED_STATES: frozenset[str] = frozenset({
+    ISSUE_UNRESOLVED, ISSUE_RESOLVING, ISSUE_RESOLVED, ISSUE_MUTED,
+})
+
+# Build-observation axis. NOT a stored state: `regressed` is what
+# `effective_state` returns for a resolved issue whose fingerprint came back
+# past its known-good boundary. Everything downstream (badge, action gate,
+# worklist) keys off it exactly as it did when it was stored.
+ISSUE_REGRESSED = "regressed"
+
 # The two "needs attention" states — an open problem the operator may act on.
+# Effective states: `regressed` reaches here derived, never read from a row.
 ISSUE_OPEN_STATES: frozenset[str] = frozenset({ISSUE_UNRESOLVED, ISSUE_REGRESSED})
+
+
+# --- Regression: derived from the build-observation axis (C3) ---------------
+
+
+def occurrence_past_boundary(
+    issue: dict[str, Any], occurrence: dict[str, Any],
+) -> bool:
+    """Whether ``occurrence`` happened after this issue's fix was proven.
+
+    Two comparisons, in order of trust:
+
+    1. **Build ordinal.** ``build_runs.id`` is monotonic per target, so
+       ``occurrence.build_run_id > issue.green_head_run_id`` places the
+       occurrence strictly after the confirm build's known-good watermark
+       (A2). No clocks involved, so no skew.
+    2. **Timestamp** — ``occurrence.ts_utc > issue.resolved_at`` — when
+       either ordinal is missing. A manually resolved issue records no
+       watermark, and an occurrence from a build the tracker never saw
+       carries no ordinal. Degraded rather than absent; it inherits the
+       cross-host skew poly-9vr owns.
+
+    An issue with neither a watermark nor a ``resolved_at`` has no boundary
+    at all, so nothing can be past it.
+    """
+    head = issue.get("green_head_run_id")
+    ordinal = occurrence.get("build_run_id")
+    if head is not None and ordinal is not None:
+        return int(ordinal) > int(head)
+    resolved_at = issue.get("resolved_at")
+    ts = occurrence.get("ts_utc")
+    return bool(resolved_at and ts and ts > resolved_at)
+
+
+def derived_regression(
+    issue: dict[str, Any], occurrences: list[dict[str, Any]],
+) -> str | None:
+    """When this issue's fix came back, or None if it hasn't.
+
+    The single definition of ``regressed``, replacing the three that used to
+    disagree: the artifact-store writer's "any occurrence on a resolved
+    issue", the unmute path's timestamp compare, and the stored column each
+    read back independently.
+
+    Regression is resolved-and-red-again: only the resolution axis's
+    ``resolved`` can regress. ``resolving`` deliberately cannot — a farm
+    build failing while the confirm build is still in flight is the
+    unfixed port still being observed, not a fix that came back, and the
+    confirm verdict (A2/A3) is what settles it.
+
+    Every occurrence of an issue carries that issue's fingerprint by
+    construction (``issue_key`` hashes it), so "re-emits the fingerprint"
+    needs no separate check — an occurrence past the boundary IS one.
+    Returns the *earliest* crossing: when it came back, not when it was
+    last seen.
+    """
+    if issue.get("state") != ISSUE_RESOLVED:
+        return None
+    crossings = [
+        o.get("ts_utc") for o in occurrences
+        if occurrence_past_boundary(issue, o)
+    ]
+    crossings = [ts for ts in crossings if ts]
+    return min(crossings) if crossings else None
+
+
+def effective_state(
+    issue: dict[str, Any],
+    occurrences: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """The single state the operator sees: the stored resolution, overridden
+    by the derived ``regressed`` read.
+
+    Folding the two axes here is what keeps the rest of this module — badge,
+    action gate, worklist bucketing — unchanged from when ``regressed`` was
+    a stored value. ``occurrences`` defaults to the ones attached to the
+    issue dict, so template globals can still be called with the row alone.
+    """
+    stored = issue.get("state")
+    if stored != ISSUE_RESOLVED:
+        return stored
+    if occurrences is None:
+        occurrences = issue.get("occurrences") or []
+    return ISSUE_REGRESSED if derived_regression(issue, occurrences) else stored
+
+
+def stored_states_for(effective: str) -> tuple[str, ...]:
+    """The stored states that can present as ``effective`` — the SQL
+    prefilter for a view that then filters exactly on
+    :func:`effective_state`.
+
+    ``regressed`` is derived from a ``resolved`` row, so both effective
+    values narrow to the same stored one and the exact split happens in
+    Python. Returns empty for a name that is neither, so an unknown filter
+    matches nothing rather than everything.
+    """
+    if effective == ISSUE_REGRESSED:
+        return (ISSUE_RESOLVED,)
+    if effective in ISSUE_STORED_STATES:
+        return (effective,)
+    return ()
 
 
 # --- Issue-action policy (authoritative gate; consumed by WS7 endpoints) ----
@@ -81,8 +198,12 @@ def issue_actions(issue: dict[str, Any]) -> dict[str, bool]:
     A straight mirror of the gate (unlike `bundle_actions`, the issue
     surface isn't intentionally narrowed) — mute↔unmute and resolve↔reopen
     are contextual opposites.
+
+    Gated on the EFFECTIVE state, so a regressed issue keeps the open-issue
+    controls (mute, resolve) it had when `regressed` was stored, even though
+    its row now reads `resolved`.
     """
-    s = issue.get("state")
+    s = effective_state(issue)
     return {
         "can_mute": issue_action_allowed("mute", s),
         "can_unmute": issue_action_allowed("unmute", s),
@@ -106,6 +227,7 @@ class IssueStatus:
 
 _ISSUE_STATUS: dict[str, IssueStatus] = {
     ISSUE_UNRESOLVED: IssueStatus("unresolved", "open", "total"),
+    # Derived, never stored — reached only via `effective_state`.
     ISSUE_REGRESSED: IssueStatus("regressed", "regressed", "failed"),   # loud
     ISSUE_RESOLVED: IssueStatus("resolved", "resolved", "built"),
     ISSUE_RESOLVING: IssueStatus("resolving", "awaiting delivery", "total"),
@@ -114,9 +236,14 @@ _ISSUE_STATUS: dict[str, IssueStatus] = {
 
 
 def issue_status(issue: dict[str, Any]) -> IssueStatus:
-    """Project `issue.state` into the lifecycle badge (key/label/pill)."""
+    """Project the issue's effective state into the badge (key/label/pill).
+
+    Reads the occurrences attached to the issue row to decide `regressed`,
+    so every caller must hand over a row that carries them — the query layer
+    attaches them on all four issue reads.
+    """
     return _ISSUE_STATUS.get(
-        issue.get("state"), IssueStatus("unknown", "—", "total")
+        effective_state(issue), IssueStatus("unknown", "—", "total")
     )
 
 
@@ -172,8 +299,11 @@ def issue_bucket(
       issue) → ``decide`` — the attempt is spent but the problem persists,
       so it needs a fresh one;
     - open with no occurrences at all → ``decide`` (open, needs a look).
+
+    Reads the effective state, so a derived-regressed issue buckets as the
+    open problem it is rather than landing in the resolved archive.
     """
-    state = issue.get("state")
+    state = effective_state(issue, occurrences)
     if state == ISSUE_MUTED:
         return "muted"
     if state == ISSUE_RESOLVED:
@@ -234,7 +364,7 @@ def issue_group(
             rollup.append(entry)
         entry["n"] += 1
 
-    state = issue.get("state")
+    state = effective_state(issue, ordered)
     times_seen = issue.get("times_seen") or len(ordered)
     latest = ordered[0] if ordered else None
     return {
@@ -248,6 +378,7 @@ def issue_group(
         "first_seen_at": issue.get("first_seen_at"),
         "last_seen_at": issue.get("last_seen_at"),
         "regressed": state == ISSUE_REGRESSED,
+        "regressed_at": derived_regression(issue, ordered),
         "muted": state == ISSUE_MUTED,
         "resolved": state == ISSUE_RESOLVED,
         "resolving": state == ISSUE_RESOLVING,

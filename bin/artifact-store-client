@@ -46,6 +46,10 @@ def cmd_bundle_upsert(args):
         "flavor": args.flavor,
         "result": args.result,
         "target": args.target,
+        # The tracker build_runs ordinal this failure came from. Empty when
+        # tracking is disabled; the store treats that as "no ordinal" and the
+        # regression derivation falls back to timestamps.
+        "build_run_id": args.build_run_id,
     }
     # Ship the distilled errors text so the store can fingerprint the
     # failure at ingest (issue identity). Best-effort: a missing/unreadable
@@ -129,6 +133,7 @@ def main():
     p_bundle.add_argument("--flavor", default="")
     p_bundle.add_argument("--result", default="")
     p_bundle.add_argument("--target", default="")
+    p_bundle.add_argument("--build-run-id", default="")
     p_bundle.add_argument("--errors-file", default="",
                           help="distilled errors.txt to fingerprint at ingest")
     p_bundle.set_defaults(func=cmd_bundle_upsert)
