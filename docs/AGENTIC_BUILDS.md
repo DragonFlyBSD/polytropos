@@ -114,6 +114,24 @@ Required by the runner:
 | `DP_HARNESS_TRIAGE_API_KEY` / `_BASE` | Provider key + optional custom endpoint | — |
 | `DP_HARNESS_PATCH_API_KEY` / `_BASE` | Same for patch | — |
 
+Confirm-build tuning (all optional, defaults shown):
+
+| Var | Meaning | Default |
+|---|---|---|
+| `DP_CONFIRM_GREEN_THRESHOLD` | Consecutive green builds before an issue resolves | 2 |
+| `DP_CONFIRM_MAX_FAILURES` | Attempts that produce no verdict before the issue goes to a human | 3 |
+| `DP_CONFIRM_BACKOFF_SECONDS` | Wait after the first such failure, doubling each time | 60 |
+| `DP_CONFIRM_BACKOFF_MAX_SECONDS` | Ceiling on that wait | 3600 |
+
+A confirm build that cannot run — dev-env gone, nothing to replay, the queue
+unwritable, the verdict write losing its lock race — is retried rather than
+abandoned, but not immediately: the waits grow, so a passing outage is not
+mistaken for a permanent one. After `DP_CONFIRM_MAX_FAILURES` such attempts
+the issue is reopened and goes back to the worklist, with
+`analysis/manual_handoff.md` explaining why the build never ran. Any build
+that does produce a verdict, green or red, clears both the tally and the
+wait.
+
 Required by the tracker:
 
 | Var | Meaning |

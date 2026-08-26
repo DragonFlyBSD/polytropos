@@ -1059,25 +1059,6 @@ def _claim_issue_build(queue_root: Path, issue_key: str,
         return False
 
 
-def _release_issue_build(queue_root: Path, issue_key: str,
-                         generation: int) -> None:
-    """Undo a claim whose enqueue then failed, so the level-triggered feed can
-    re-derive the work on the next pass instead of parking the issue."""
-    if _state_db_conn is None:
-        return
-    try:
-        with _state_db_lock:
-            _state_db_conn.execute(
-                "UPDATE issues SET building_generation = NULL "
-                "WHERE issue_key = ? AND building_generation = ?",
-                (issue_key, generation),
-            )
-            _state_db_conn.commit()
-    except sqlite3.Error as exc:
-        log(queue_root, "WARN",
-            f"could not release confirm claim for {issue_key}: {exc}")
-
-
 def sweep_stranded_inflight(queue_root: Path) -> list[str]:
     """Move ``inflight/`` leftovers to ``failed/`` (B3).
 
@@ -1204,10 +1185,7 @@ def _confirm_green_threshold() -> int:
     Same env-knob shape as the neighbouring retry caps
     (``DP_HARNESS_MAX_PATCH_ATTEMPTS`` / ``DP_HARNESS_ATTEMPT_WINDOW_HOURS``).
     Set to 1 to resolve on the first green."""
-    try:
-        return max(1, int(os.environ.get("DP_CONFIRM_GREEN_THRESHOLD", "2")))
-    except ValueError:
-        return 2
+    return _env_int("DP_CONFIRM_GREEN_THRESHOLD", 2)
 
 
 def _bump_confirm_green_count(conn: sqlite3.Connection, issue_key: str) -> int:
@@ -1234,13 +1212,61 @@ def _reset_confirm_green_count(conn: sqlite3.Connection, issue_key: str) -> None
     )
 
 
+def _env_int(name: str, default: int) -> int:
+    """A positive integer knob from the environment.
+
+    The confirm loop's knobs all have this shape. Unparseable falls back to
+    the default — an operator typo must not take the runner down — and the
+    clamp keeps a zero or negative from disabling the very bound the knob
+    exists to set, which would read as configured while being off."""
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
 def _confirm_max_failures() -> int:
     """How many consecutive confirm builds may fail to RUN before the issue is
     handed to a human (yt7). Same env-knob shape as the other retry caps."""
-    try:
-        return max(1, int(os.environ.get("DP_CONFIRM_MAX_FAILURES", "3")))
-    except ValueError:
-        return 3
+    return _env_int("DP_CONFIRM_MAX_FAILURES", 3)
+
+
+def _confirm_backoff_seconds(failures: int) -> int:
+    """How long to hold an issue back after ``failures`` consecutive confirm
+    attempts that produced no verdict.
+
+    Exponential in the tally the bound already keeps, so C4 needs no second
+    counter: 1st failure waits the base, 2nd twice that, and so on, capped so
+    a raised ``DP_CONFIRM_MAX_FAILURES`` cannot push the last retry past the
+    point an operator would still be waiting for it.
+
+    The bound alone was not enough. `no dev-env available` and a failed branch
+    checkout raise in seconds, so three attempts at loop speed burned the
+    whole budget before a transient outage could clear — a handoff written for
+    something that would have fixed itself. A slow failure has the opposite
+    cost: `confirm verdict could not be recorded` fires only after the build
+    ran, so each retry is a whole dsynth run.
+    """
+    if failures < 1:
+        return 0
+    base = _env_int("DP_CONFIRM_BACKOFF_SECONDS", 60)
+    cap = _env_int("DP_CONFIRM_BACKOFF_MAX_SECONDS", 3600)
+    # Shift rather than pow so a large tally cannot build a huge intermediate.
+    return min(cap, base << min(failures - 1, 30))
+
+
+def _next_eligible_at(failures: int) -> str | None:
+    """The timestamp :func:`_confirm_backoff_seconds` translates to, or None
+    when no delay applies.
+
+    Written in the same ISO-8601 UTC form the feed compares against, because
+    that comparison is lexicographic — see ``_normalize_ts`` in the store for
+    what mixing timestamp formats in one column cost last time."""
+    delay = _confirm_backoff_seconds(failures)
+    if delay <= 0:
+        return None
+    return (datetime.now(timezone.utc)
+            + timedelta(seconds=delay)).isoformat()
 
 
 def _record_confirm_failure(queue_root: Path, issue_key: str, *,
@@ -1249,9 +1275,17 @@ def _record_confirm_failure(queue_root: Path, issue_key: str, *,
     unreachable) — no verdict was produced.
 
     Clears the in-flight marker so the level-triggered feed can retry WITHOUT
-    a runner restart, and counts the consecutive failure. Once
-    ``DP_CONFIRM_MAX_FAILURES`` is reached the issue is reopened to
-    ``unresolved`` and the caller writes a manual handoff.
+    a runner restart, counts the consecutive failure, and holds the issue back
+    for a growing interval (C4) so the retries are spread rather than spent on
+    consecutive loop passes. Once ``DP_CONFIRM_MAX_FAILURES`` is reached the
+    issue is reopened to ``unresolved``, which puts it back on the worklist
+    with the reason attached.
+
+    Both ways an attempt can produce no verdict come here: the job ran and the
+    machinery failed, and the enqueue itself failed. The second used to
+    release the claim silently and retry forever, uncounted. Only the first
+    also writes ``analysis/manual_handoff.md`` — its caller has the bundle to
+    write it into; a failed enqueue has no job directory yet.
 
     The marker used to be left set instead, which parked the issue in
     `resolving` until a human restarted the runner — and for a permanently
@@ -1276,6 +1310,10 @@ def _record_confirm_failure(queue_root: Path, issue_key: str, *,
             ).fetchone()
             failures = int(row[0]) if row is not None else 0
             exhausted = failures >= cap
+            _state_db_conn.execute(
+                "UPDATE issues SET next_eligible_at = ? WHERE issue_key = ?",
+                (_next_eligible_at(failures), issue_key),
+            )
             if exhausted:
                 from dportsv3.tracker.routes.issue_actions import (  # noqa: PLC0415
                     reopen_issue_build_failed,
@@ -1286,9 +1324,12 @@ def _record_confirm_failure(queue_root: Path, issue_key: str, *,
                     detail=(f"confirm build could not run {failures}x "
                             f"(cap {cap}): {reason}"),
                 )
+                # Budget spent and the issue reopened: drop the pacing with
+                # the tally. Leaving it would silently delay the FIRST build
+                # of whatever fix an operator accepts next.
                 _state_db_conn.execute(
-                    "UPDATE issues SET confirm_failure_count = 0 "
-                    "WHERE issue_key = ?", (issue_key,),
+                    "UPDATE issues SET confirm_failure_count = 0, "
+                    "next_eligible_at = NULL WHERE issue_key = ?", (issue_key,),
                 )
             _state_db_conn.commit()
     except Exception as exc:
@@ -1359,8 +1400,10 @@ def _record_confirm_verdict(queue_root: Path, issue_key: str, generation: int,
                 "    THEN building_generation ELSE NULL END, "
                 # A produced verdict means the machinery works: clear the
                 # could-not-run tally (yt7) so unrelated transient failures
-                # never accumulate into a false give-up.
-                "confirm_failure_count = 0 "
+                # never accumulate into a false give-up, and the pacing built
+                # from it (C4) — an A4 re-request must not inherit a delay
+                # earned by an earlier outage.
+                "confirm_failure_count = 0, next_eligible_at = NULL "
                 "WHERE issue_key = ? AND last_confirmed_build_generation < ?",
                 (generation, generation, issue_key, generation),
             )
@@ -1469,7 +1512,13 @@ def process_build_requests(queue_root: Path) -> None:
     The runner stays the sole queue-fs writer; the tracker wrote only the
     C1 counter. 'env busy' needs no special handling here — the job simply
     waits in the queue behind the gate, and the in-flight marker keeps this
-    loop from re-enqueuing it.
+    loop from re-enqueuing it. (In fact the gate stops the loop before this
+    runs at all, so a busy env can never cost an issue any retry budget.)
+
+    An attempt that produces no verdict — whether the enqueue failed here or
+    the build failed later — is counted and paced by
+    :func:`_record_confirm_failure` (C4), so the feed backs off instead of
+    re-deriving the same doomed work every pass.
     """
     if _state_db_conn is None:
         return
@@ -1500,9 +1549,18 @@ def process_build_requests(queue_root: Path) -> None:
                 origin=origin, target=target, generation=generation,
             )
         except Exception as exc:
+            # An enqueue that fails is an attempt that produced no verdict,
+            # exactly like a build that could not run — so it counts, paces
+            # and eventually escalates through the same budget. It used to
+            # release the claim silently, which left the feed re-deriving the
+            # same work every pass forever: a WARN every few seconds, no
+            # counter, and nothing that ever reached a human.
             log(queue_root, "WARN",
                 f"confirm build for {issue_key} enqueue failed: {exc}")
-            _release_issue_build(queue_root, issue_key, generation)
+            _record_confirm_failure(
+                queue_root, issue_key,
+                reason=f"enqueue failed: {type(exc).__name__}: {exc}",
+            )
             continue
         activity_log(
             queue_root, "confirm_build_enqueued",

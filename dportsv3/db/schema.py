@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS issues (
     -- unbuildable fix stops retrying and goes to a human instead of parking
     -- the issue in `resolving` forever. Reset on any produced verdict.
     confirm_failure_count           INTEGER NOT NULL DEFAULT 0,
+    -- C4: not before this time may the reconcile feed re-derive a confirm
+    -- build for this issue. The bound above says how many attempts; this says
+    -- how far apart, growing exponentially with the tally so a transient
+    -- failure is not mistaken for a permanent one at loop speed. A column
+    -- rather than in-memory state so the pacing survives a runner restart —
+    -- the startup sweep clears building_generation and nothing else.
+    -- Cleared with the tally on any produced verdict.
+    next_eligible_at                TEXT,
     updated_at       TEXT NOT NULL
 );
 
@@ -471,6 +479,7 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN confirm_failure_count "
     "INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE issues ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
 )
 

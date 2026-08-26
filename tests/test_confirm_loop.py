@@ -33,6 +33,8 @@ from dportsv3.tracker.agentic_queries import issues_needing_build
 from dportsv3.tracker.routes import issue_actions
 
 NOW = "2026-08-18T00:00:00Z"
+# Far enough ahead that any backoff this loop can set has elapsed.
+LATER = "2099-01-01T00:00:00+00:00"
 TARGET = "@main"
 
 
@@ -196,8 +198,14 @@ def test_failed_claim_never_enqueues(conn, queue, monkeypatch):
     assert confirm_jobs(queue) == []
 
 
-def test_enqueue_failure_releases_the_claim(conn, queue, monkeypatch):
-    """So the level-triggered feed re-derives instead of parking the issue."""
+def test_enqueue_failure_releases_the_claim_and_counts(conn, queue, monkeypatch):
+    """The feed re-derives rather than parking the issue — but not instantly.
+
+    An enqueue that fails is an attempt that produced no verdict, so it counts
+    against the same budget a failed build does (C4). It used to release the
+    claim silently, leaving the feed to re-derive the same doomed work every
+    pass forever, uncounted.
+    """
     add_issue(conn, state="resolving", requested=1)
 
     def boom(*a, **k):
@@ -205,8 +213,29 @@ def test_enqueue_failure_releases_the_claim(conn, queue, monkeypatch):
 
     monkeypatch.setattr(runner, "enqueue_confirm_build_job", boom)
     runner.process_build_requests(queue)
-    assert row(conn)["building_generation"] is None
-    assert [i["issue_key"] for i in issues_needing_build(conn)] == ["k1"]
+    r = row(conn)
+    assert r["building_generation"] is None       # claim released
+    assert r["confirm_failure_count"] == 1        # and counted
+    assert issues_needing_build(conn) == []       # held back for now
+    assert [i["issue_key"] for i in issues_needing_build(conn, now=LATER)] \
+        == ["k1"]                                 # eligible once it elapses
+
+
+def test_a_persistently_unwritable_queue_reaches_a_human(conn, queue, monkeypatch):
+    """The uncounted retry loop had no end: a WARN every few seconds and
+    nothing that ever escalated."""
+    add_issue(conn, state="resolving", requested=1)
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner, "enqueue_confirm_build_job", boom)
+    for _ in range(runner._confirm_max_failures()):
+        conn.execute("UPDATE issues SET next_eligible_at = NULL")  # delay elapses
+        runner.process_build_requests(queue)
+    r = row(conn)
+    assert r["state"] == "unresolved"             # handed over
+    assert r["next_eligible_at"] is None          # pacing dropped with the tally
 
 
 def test_restart_does_not_duplicate_a_queued_job(conn, queue):
@@ -419,7 +448,11 @@ def test_failed_build_retries_without_a_runner_restart(conn):
     r = row(conn)
     assert r["building_generation"] is None      # marker released
     assert r["confirm_failure_count"] == 1
-    assert [i["issue_key"] for i in issues_needing_build(conn)] == ["k1"]
+    # Retried without a restart, but after the backoff rather than on the very
+    # next pass (C4).
+    assert issues_needing_build(conn) == []
+    assert [i["issue_key"] for i in issues_needing_build(conn, now=LATER)] \
+        == ["k1"]
 
 
 def test_unbuildable_fix_gives_up_instead_of_parking_forever(conn):
@@ -442,3 +475,121 @@ def test_a_produced_verdict_resets_the_failure_tally(conn):
     runner._record_confirm_verdict(
         Path("/tmp"), "k1", 2, ok=False, requested_by="test", target=TARGET)
     assert row(conn)["confirm_failure_count"] == 0
+
+
+# --- C4: pacing the retries ------------------------------------------------
+
+
+def test_backoff_grows_with_the_tally(monkeypatch):
+    """The bound says how many attempts; this says how far apart. Without it
+    a fast failure ('no dev-env', a failed branch checkout) burned the whole
+    budget on consecutive loop passes — seconds — and handed a transient
+    outage to a human."""
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "60")
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_MAX_SECONDS", "3600")
+    assert [runner._confirm_backoff_seconds(n) for n in (1, 2, 3, 4)] == \
+        [60, 120, 240, 480]
+
+
+def test_backoff_is_capped(monkeypatch):
+    """A raised DP_CONFIRM_MAX_FAILURES must not push the last retry past the
+    point an operator would still be waiting for it."""
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "60")
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_MAX_SECONDS", "300")
+    assert runner._confirm_backoff_seconds(20) == 300
+
+
+def test_no_failures_means_no_delay():
+    assert runner._confirm_backoff_seconds(0) == 0
+    assert runner._next_eligible_at(0) is None
+
+
+def test_the_knobs_survive_a_typo(monkeypatch):
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "soon")
+    assert runner._confirm_backoff_seconds(1) == 60
+
+
+def test_the_delay_is_persisted_not_held_in_memory(conn):
+    """A runner restart must not wipe the pacing — the startup sweep clears
+    building_generation and nothing else."""
+    add_issue(conn, state="resolving", requested=1, building=1)
+    runner._record_confirm_failure(Path("/tmp"), "k1", reason="env gone")
+    assert row(conn)["next_eligible_at"] is not None
+    runner._reset_building_markers(Path("/tmp"))
+    assert row(conn)["next_eligible_at"] is not None
+    assert issues_needing_build(conn) == []
+
+
+def test_the_feed_boundary_is_inclusive(conn):
+    """`next_eligible_at <= now`: an issue eligible exactly now is eligible."""
+    add_issue(conn, state="resolving", requested=1)
+    conn.execute("UPDATE issues SET next_eligible_at = ?", (NOW,))
+    assert [i["issue_key"] for i in issues_needing_build(conn, now=NOW)] == ["k1"]
+
+
+def test_a_produced_verdict_clears_the_delay(conn):
+    """An A4 re-request must not inherit a delay earned by an earlier outage —
+    those re-requests are successes being repeated on purpose, not failures."""
+    add_issue(conn, state="resolving", requested=2, confirmed=1, building=2,
+              failures=2)
+    conn.execute("UPDATE issues SET next_eligible_at = ?", (LATER,))
+    runner._record_confirm_verdict(
+        Path("/tmp"), "k1", 2, ok=True, requested_by="test", target=TARGET)
+    assert row(conn)["next_eligible_at"] is None
+
+
+def test_giving_up_clears_the_delay(conn):
+    """Leaving it would silently delay the FIRST build of whatever fix an
+    operator accepts next."""
+    add_issue(conn, state="resolving", requested=1, building=1,
+              failures=runner._confirm_max_failures() - 1)
+    assert runner._record_confirm_failure(
+        Path("/tmp"), "k1", reason="empty changes.diff") is True
+    r = row(conn)
+    assert (r["state"], r["confirm_failure_count"]) == ("unresolved", 0)
+    assert r["next_eligible_at"] is None
+
+
+def test_pacing_does_not_hold_back_a_healthy_issue(conn):
+    """No failures, no delay: the feed stays level-triggered for work that can
+    succeed."""
+    add_issue(conn, state="resolving", requested=1)
+    assert row(conn)["next_eligible_at"] is None
+    assert [i["issue_key"] for i in issues_needing_build(conn)] == ["k1"]
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_a_knob_cannot_be_set_to_disable_itself(monkeypatch, value):
+    """The clamp is the point of these knobs having a shared reader: zero
+    failures allowed means give up on the first hiccup, and a zero backoff is
+    the hot loop C4 removes. Both read as 'off' while looking configured."""
+    monkeypatch.setenv("DP_CONFIRM_MAX_FAILURES", value)
+    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", value)
+    monkeypatch.setenv("DP_CONFIRM_GREEN_THRESHOLD", value)
+    assert runner._confirm_max_failures() == 1
+    assert runner._confirm_green_threshold() == 1
+    assert runner._confirm_backoff_seconds(1) >= 1
+
+
+def test_the_delay_column_is_added_to_an_existing_state_db(tmp_path):
+    """state.db is migrated, not wiped, so a column the feed's SELECT names
+    has to arrive on databases that predate it — otherwise the reconcile loop
+    stops with `no such column` on every existing install."""
+    from dportsv3.db.schema import SCHEMA
+
+    column = "    next_eligible_at                TEXT,\n"
+    legacy = SCHEMA.replace(column, "")
+    assert legacy != SCHEMA, "the column moved; update this test"
+
+    db = tmp_path / "old.db"
+    old = sqlite3.connect(str(db))
+    old.executescript(legacy)
+    old.commit()
+    old.close()
+
+    c = sqlite3.connect(str(db))
+    c.row_factory = sqlite3.Row
+    init_db(c)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(issues)")}
+    assert "next_eligible_at" in cols
+    assert issues_needing_build(c) == []          # the feed's SELECT runs

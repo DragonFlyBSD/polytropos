@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import Any
 
 from dportsv3.tracker.agentic_queries._util import _row_dict, _maybe
@@ -117,15 +118,22 @@ def green_head_watermark(
 
 
 def issues_needing_build(
-    conn: sqlite3.Connection, *, limit: int = 200,
+    conn: sqlite3.Connection, *, limit: int = 200, now: str | None = None,
 ) -> list[dict[str, Any]]:
     """The C2 reconcile feed: issues whose desired confirm-build generation is
-    ahead of what has been confirmed, and which are not already in flight.
+    ahead of what has been confirmed, which are not already in flight, and
+    whose backoff has elapsed.
 
     Level-triggered — the runner re-derives this set every pass rather than
     draining a command queue, so a lost enqueue or a runner restart self-heals
     (the issue still shows requested > confirmed next loop). Only `resolving`
     issues qualify; a muted / unresolved / already-resolved issue is skipped.
+
+    ``next_eligible_at`` is what stops that self-healing becoming a hot loop
+    (C4). Re-deriving every pass is right for work that can succeed; for work
+    that just failed it means the retry budget is spent in seconds. A
+    held-back issue is simply absent from the feed until its delay elapses —
+    no second queue, no timer, just a predicate.
     """
     rows = conn.execute(
         "SELECT * FROM issues "
@@ -133,8 +141,9 @@ def issues_needing_build(
         "AND requested_build_generation > last_confirmed_build_generation "
         "AND (building_generation IS NULL "
         "     OR building_generation < requested_build_generation) "
+        "AND (next_eligible_at IS NULL OR next_eligible_at <= ?) "
         "ORDER BY updated_at ASC, issue_key ASC LIMIT ?",
-        (max(1, int(limit)),),
+        (now or datetime.now(timezone.utc).isoformat(), max(1, int(limit))),
     ).fetchall()
     return [_row_dict(r) for r in rows]
 
