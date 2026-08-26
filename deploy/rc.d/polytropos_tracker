@@ -39,6 +39,14 @@ load_rc_config $name
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
 : ${polytropos_cmd:="/usr/local/bin/dportsv3"}
+
+# rc.subr runs with a PATH that does not include the local prefix, and on
+# DragonFly that is where python3 lives. The checkout wrapper looks up
+# `python3` and dies with "required interpreter not found"; the runtime
+# looks up `dports-dev-env` the same way.
+: ${polytropos_path:="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+PATH="${polytropos_path}"
+export PATH
 : ${polytropos_user:="polytropos"}
 : ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_home:="/var/db/polytropos"}
@@ -49,14 +57,25 @@ load_rc_config $name
 : ${polytropos_tracker_bind:="0.0.0.0"}
 : ${polytropos_tracker_port:="8080"}
 
+# $pidfile is the SUPERVISOR's, and has to be. rc.subr matches the pid it
+# finds there against $procname, which defaults to $command — that is
+# /usr/sbin/daemon, not the Python process daemon spawns. Point it at the
+# child and `service status` calls a running service stopped, and `stop`
+# cannot find it either.
+#
+# Stopping the supervisor is also the correct thing to do: daemon(8)
+# forwards SIGTERM to its child, which exits and takes the supervisor
+# with it.
+#
+# newsyslog uses this same pidfile, for a different reason — only the
+# supervisor reopens the output file on SIGUSR1. Sending SIGUSR1 to the
+# child, which daemon(8)'s own rotation advice reads like, kills it:
+# measured on DragonFly, service and supervisor both went away.
 pidfile="/var/run/${name}.pid"
-# The supervisor's own pid, which is a different process from the one in
-# $pidfile. newsyslog signals THIS one to reopen the log after a rotation.
-# Signalling the child instead — which is what daemon(8)'s own advice
-# reads like — sends SIGUSR1 to a Python process, whose default
-# disposition for it is to die. Verified on DragonFly: the service and
-# its supervisor both went away.
-supervisor_pidfile="/var/run/${name}.sup.pid"
+
+# The worker's own pid, for an operator who wants to look at it. Nothing
+# in rc or newsyslog reads this.
+child_pidfile="/var/run/${name}.child.pid"
 logfile="${polytropos_log_dir}/tracker.log"
 
 # HOME is not set by `daemon -u`: verified on DragonFly that a
@@ -69,7 +88,7 @@ DPORTSV3_STATE_DB=${polytropos_state_db} \
 DPORTSV3_ARTIFACT_ROOT=${polytropos_artifact_root}"
 
 command="/usr/sbin/daemon"
-command_args="-c -f -o ${logfile} -p ${pidfile} -P ${supervisor_pidfile} -t ${name} -u ${polytropos_user} \
+command_args="-c -f -o ${logfile} -p ${child_pidfile} -P ${pidfile} -t ${name} -u ${polytropos_user} \
     ${polytropos_cmd} tracker serve \
     --bind ${polytropos_tracker_bind} \
     --port ${polytropos_tracker_port}"

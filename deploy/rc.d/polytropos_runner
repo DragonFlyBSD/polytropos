@@ -44,6 +44,14 @@ load_rc_config $name
 [ -r "${polytropos_conf}" ] && . "${polytropos_conf}"
 
 : ${polytropos_cmd:="/usr/local/bin/dportsv3"}
+
+# rc.subr runs with a PATH that does not include the local prefix, and on
+# DragonFly that is where python3 lives. The checkout wrapper looks up
+# `python3` and dies with "required interpreter not found"; the runtime
+# looks up `dports-dev-env` the same way.
+: ${polytropos_path:="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+PATH="${polytropos_path}"
+export PATH
 : ${polytropos_dev_env_cmd:="/usr/local/bin/dports-dev-env"}
 : ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_log_dir:="/var/log/polytropos"}
@@ -54,14 +62,25 @@ load_rc_config $name
 : ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
 : ${polytropos_runner_dev_env:=""}
 
+# $pidfile is the SUPERVISOR's, and has to be. rc.subr matches the pid it
+# finds there against $procname, which defaults to $command — that is
+# /usr/sbin/daemon, not the Python process daemon spawns. Point it at the
+# child and `service status` calls a running service stopped, and `stop`
+# cannot find it either.
+#
+# Stopping the supervisor is also the correct thing to do: daemon(8)
+# forwards SIGTERM to its child, which exits and takes the supervisor
+# with it.
+#
+# newsyslog uses this same pidfile, for a different reason — only the
+# supervisor reopens the output file on SIGUSR1. Sending SIGUSR1 to the
+# child, which daemon(8)'s own rotation advice reads like, kills it:
+# measured on DragonFly, service and supervisor both went away.
 pidfile="/var/run/${name}.pid"
-# The supervisor's own pid, which is a different process from the one in
-# $pidfile. newsyslog signals THIS one to reopen the log after a rotation.
-# Signalling the child instead — which is what daemon(8)'s own advice
-# reads like — sends SIGUSR1 to a Python process, whose default
-# disposition for it is to die. Verified on DragonFly: the service and
-# its supervisor both went away.
-supervisor_pidfile="/var/run/${name}.sup.pid"
+
+# The worker's own pid, for an operator who wants to look at it. Nothing
+# in rc or newsyslog reads this.
+child_pidfile="/var/run/${name}.child.pid"
 logfile="${polytropos_log_dir}/runner.log"
 
 # NOTE: ${name}_env is rc.subr's own knob for the child environment, which
@@ -69,7 +88,6 @@ logfile="${polytropos_log_dir}/runner.log"
 # polytropos_runner_env. Setting the latter here would silently replace
 # this.
 polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
-DPORTS_DEV_ENV_CMD=${polytropos_dev_env_cmd} \
 DPORTSV3_STATE_DB=${polytropos_state_db} \
 DPORTSV3_TRACKER_URL=${polytropos_tracker_url} \
 ARTIFACT_STORE_URL=${polytropos_artifact_store_url}"
@@ -90,7 +108,7 @@ _dev_env_flag=""
 # supervisor would simply restart it. The ports above use -P for exactly
 # this reason.
 command="/usr/sbin/daemon"
-command_args="-c -f -o ${logfile} -p ${pidfile} -P ${supervisor_pidfile} -t ${name} \
+command_args="-c -f -o ${logfile} -p ${child_pidfile} -P ${pidfile} -t ${name} \
     ${polytropos_cmd} agent-queue-runner \
     --queue-root ${polytropos_queue_root} ${_dev_env_flag}"
 
@@ -137,6 +155,15 @@ polytropos_runner_prestart()
 	else
 		warn "no ${polytropos_harness_env}; the runner will start without LLM credentials and every job will fail"
 	fi
+
+	# Exported here rather than through ${name}_env, which rc.subr
+	# word-splits: from a checkout this value is two words
+	# ("<wrapper> dev-env") and `env` takes the second as the command to
+	# run, failing with "env: dev-env: No such file or directory".
+	# start_precmd is eval'd in this shell, so the export reaches the
+	# child with the spaces intact.
+	DPORTS_DEV_ENV_CMD="${polytropos_dev_env_cmd}"
+	export DPORTS_DEV_ENV_CMD
 
 	# Root writing into a tree owned by ${polytropos_user}: without this
 	# the tracker and artifact-store cannot write the files this process

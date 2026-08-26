@@ -186,7 +186,7 @@ def test_pidfile_is_set(tmp_path, service) -> None:
     (poly-abr.4), so it has to be there before that work starts."""
     got = run_service(tmp_path, service)
     assert got["PIDFILE"] == f"/var/run/{service}.pid"
-    assert f"-p /var/run/{service}.pid" in got["ARGS"]
+    assert f"-P /var/run/{service}.pid" in got["ARGS"]
 
 
 # --- configuration precedence -------------------------------------------
@@ -317,10 +317,10 @@ def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
 def test_stale_venv_refuses_to_start(tmp_path, service) -> None:
     """A stale stamp must stop the service, not every job it runs.
 
-    Verified on x6: with DPORTSV3_NO_BOOTSTRAP=1 the wrapper exits 1 and
-    prints 'dev-env bootstrap required'. The runner reaches a dev-env
-    from 21 functions, so without this guard the service starts fine and
-    then fails everything, with the reason in per-job output.
+    With DPORTSV3_NO_BOOTSTRAP=1 the wrapper exits 1 and prints 'dev-env
+    bootstrap required'. The runner reaches a dev-env from 21 functions,
+    so without this guard the service starts fine and then fails
+    everything, with the reason buried in per-job output.
     """
     rc, err = run_precmd(tmp_path, service, wrapper_rc=1)
     assert rc != 0, "started with a stale venv"
@@ -347,7 +347,25 @@ def test_runner_tells_the_agent_which_dev_env_command_to_use() -> None:
     """Otherwise worker.py falls back to PATH, which may hold a different
     copy than the one the operator configured here."""
     text = (RC_D / "polytropos_runner").read_text()
-    assert "DPORTS_DEV_ENV_CMD=${polytropos_dev_env_cmd}" in text
+    assert 'DPORTS_DEV_ENV_CMD="${polytropos_dev_env_cmd}"' in text
+    assert "export DPORTS_DEV_ENV_CMD" in text
+
+
+def test_a_multi_word_dev_env_command_survives(tmp_path) -> None:
+    """rc.subr word-splits ${name}_env, so passing it there breaks the
+    checkout form, which is two words: "<wrapper> dev-env" — `env` then
+    takes the second as the program to run and fails with
+    `env: dev-env: No such file or directory`. It has to be exported from
+    start_precmd, where the quoting holds.
+    """
+    text = (RC_D / "polytropos_runner").read_text()
+    env_block = text[text.index("polytropos_runner_env="):]
+    env_block = env_block[:env_block.index('"\n', 1) if '"\n' in env_block[:400] else 400]
+    assert "DPORTS_DEV_ENV_CMD" not in env_block, \
+        "passed through the word-split env list"
+
+    rc, err = run_precmd(tmp_path, "polytropos_runner")
+    assert rc == 0, err
 
 
 @pytest.mark.parametrize("service,argv", [
@@ -393,8 +411,8 @@ def test_missing_command_is_caught_before_the_probe(tmp_path) -> None:
 
 
 def test_runner_creates_the_queue_subdirs(tmp_path) -> None:
-    """The runner exits 1 naming a missing queue subdirectory, and x6 has
-    no queue root at all today."""
+    """The runner exits 1 naming a missing queue subdirectory, and a fresh
+    host has no queue root at all."""
     rc, err = run_precmd(tmp_path, "polytropos_runner")
     assert rc == 0, err
     for sub in ("pending", "inflight", "done", "failed"):
@@ -538,20 +556,29 @@ def test_a_checkout_is_just_another_value(tmp_path) -> None:
 
 @pytest.mark.parametrize("service", SERVICES)
 def test_both_pidfiles_are_written(tmp_path, service) -> None:
-    """-p for rc to stop the child, -P for newsyslog to signal the
-    supervisor. They are different processes and both are needed."""
+    """Two processes, two files: the supervisor's is the one rc and
+    newsyslog use, the worker's is there for a human."""
     args = run_service(tmp_path, service)["ARGS"]
-    assert f"-p /var/run/{service}.pid" in args, args
-    assert f"-P /var/run/{service}.sup.pid" in args, args
+    assert f"-P /var/run/{service}.pid" in args, args
+    assert f"-p /var/run/{service}.child.pid" in args, args
 
 
 @pytest.mark.parametrize("service", SERVICES)
-def test_rc_still_stops_the_child(tmp_path, service) -> None:
-    """rc.subr signals $pidfile. It must stay the child: with no -r that
-    stops the service cleanly, and the supervisor exits after it."""
+def test_rc_watches_the_supervisor(tmp_path, service) -> None:
+    """rc.subr matches the pid in $pidfile against $procname, which
+    defaults to $command — /usr/sbin/daemon, not the Python process it
+    spawns. With the child's pid there, `service status` reports a service
+    that is demonstrably serving HTTP as stopped, and `stop` cannot find
+    it either.
+
+    Stopping the supervisor is correct anyway — daemon(8) forwards
+    SIGTERM to the child.
+    """
     got = run_service(tmp_path, service)
     assert got["PIDFILE"] == f"/var/run/{service}.pid"
-    assert ".sup.pid" not in got["PIDFILE"]
+    assert got["COMMAND"] == "/usr/sbin/daemon"
+    # -P writes the supervisor's pid to exactly that file
+    assert f"-P {got['PIDFILE']}" in got["ARGS"], got["ARGS"]
 
 
 def test_rotation_signals_the_supervisor_not_the_service() -> None:
@@ -567,7 +594,8 @@ def test_rotation_signals_the_supervisor_not_the_service() -> None:
     assert len(entries) == len(SERVICES), entries
     for fields in entries:
         pidfile, signal = fields[-2], fields[-1]
-        assert pidfile.endswith(".sup.pid"), f"signals the child: {pidfile}"
+        assert not pidfile.endswith(".child.pid"), \
+            f"signals the worker, which SIGUSR1 kills: {pidfile}"
         assert signal == "SIGUSR1", fields
 
 
@@ -586,3 +614,36 @@ def test_rotation_entries_create_the_file() -> None:
     for line in conf.splitlines():
         if line.startswith("/var/log/polytropos/"):
             assert "C" in line.split()[6], line
+
+
+# --- PATH under rc.subr (poly-abr.5) ------------------------------------
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_local_prefix_is_on_the_path(tmp_path, service) -> None:
+    """rc.subr's PATH excludes /usr/local/bin, which on DragonFly is where
+    python3 lives, so the checkout wrapper cannot find its interpreter:
+    'dportsv3: required interpreter not found: python3'. The runtime looks
+    up dports-dev-env the same way.
+    """
+    script = (RC_D / service).read_text()
+    assert 'export PATH' in script, service
+    path_line = [l for l in script.splitlines()
+                 if l.startswith(': ${polytropos_path')]
+    assert path_line, "no polytropos_path default"
+    assert "/usr/local/bin" in path_line[0], path_line
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_path_is_set_before_the_command_probe(tmp_path, service) -> None:
+    """The probe runs in start_precmd and invokes the same wrapper, so a
+    PATH exported after it would leave the probe failing."""
+    lines = (RC_D / service).read_text().splitlines()
+    path_at = next(i for i, l in enumerate(lines) if l.startswith("export PATH"))
+    probe_at = next(i for i, l in enumerate(lines) if "NO_BOOTSTRAP" in l)
+    assert path_at < probe_at, "PATH exported after the probe uses it"
+
+
+def test_path_is_overridable(tmp_path) -> None:
+    got = run_service(tmp_path, "polytropos_tracker",
+                      rc_conf_vars={"polytropos_path": "/opt/bin:/usr/bin"})
+    del got  # the assertion is that the script still parses and runs

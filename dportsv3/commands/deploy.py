@@ -49,10 +49,19 @@ OPERATOR_FILES = (
 
 QUEUE_SUBDIRS = ("pending", "inflight", "done", "failed")
 
-#: The two entry points the rc.d scripts default to. A packaged install puts
-#: both in the prefix bindir; installing from a checkout does not, which is
-#: worth saying out loud rather than leaving to a failed service start.
+#: The two entry points the rc.d scripts default to.
 EXPECTED_COMMANDS = ("dportsv3", "dports-dev-env")
+
+#: Where the software itself goes, relative to the prefix. A venv rather than
+#: the prefix's own site-packages: this is two distributions plus their
+#: dependencies, and mixing them into a pkg-managed tree invites conflicts.
+VENV_RELATIVE = Path("lib") / "polytropos"
+
+#: Installed in this order and no other. dports-dev-env is a sibling source
+#: tree rather than a PyPI package, so it has to be present before the
+#: generator asks for it — otherwise pip reaches for an index and fails.
+DISTRIBUTIONS = (("dev-env", "the dev-env manager"),
+                 (".[tracker]", "the generator, with the tracker extra"))
 
 #: HOME for the service account. `daemon -u` lowers the uid but leaves HOME
 #: as it found it, so the two unprivileged services would otherwise run with
@@ -100,13 +109,39 @@ def plan(
     user: str,
     group: str,
     logs_root: Path,
+    source: Path | None = None,
     user_exists=None,
     group_exists=None,
 ) -> list[Action]:
-    """Decide every step. Reads the filesystem; changes nothing."""
+    """Decide every step. Reads the filesystem; changes nothing.
+
+    ``source`` is the checkout to install the software *from*. Without it
+    the software steps are skipped and only the host wiring is done —
+    which is the right behaviour for a packaged install, where the
+    software is already there and a port owns it.
+    """
     user_exists = _user_exists if user_exists is None else user_exists
     group_exists = _group_exists if group_exists is None else group_exists
     actions: list[Action] = []
+
+    venv = prefix / VENV_RELATIVE
+    if source is None:
+        actions.append(Action(
+            "venv", f"{venv}", venv,
+            skipped="no source tree; assuming the software is installed"))
+    else:
+        actions.append(Action(
+            "venv", f"{venv} (--system-site-packages)", venv,
+            skipped="already exists" if (venv / "bin").is_dir() else None))
+        for target, what in DISTRIBUTIONS:
+            spec = (str(source / "dev-env") if target == "dev-env"
+                    else f"{source}[tracker]")
+            # Never skipped: re-running IS the upgrade path.
+            actions.append(Action("pip", f"install {what} from {source}", spec))
+        for command in EXPECTED_COMMANDS:
+            actions.append(Action(
+                "link", f"{prefix / 'bin' / command} -> {venv / 'bin' / command}",
+                command))
 
     if group_exists(group):
         actions.append(Action("group", f"group {group}", group,
@@ -154,10 +189,27 @@ def plan(
         d = evidence / "queue" / sub
         actions.append(Action("mkdir", f"{d}", d,
                               skipped="already exists" if d.is_dir() else None))
+    # Never skipped on the grounds that the tree is absent: the mkdir steps
+    # above create it, as root, moments later. Deciding from what exists at
+    # PLAN time meant a fresh logs root was always left root-owned, and the
+    # services then fail on their first write.
+    # chown is idempotent, so running it unconditionally costs nothing.
     actions.append(Action(
-        "chown", f"{logs_root} -> {user}:{group}, recursively", logs_root,
-        skipped=None if logs_root.exists() else "logs root does not exist yet"))
+        "chown", f"{logs_root} -> {user}:{group}, recursively", logs_root))
     return actions
+
+
+def _python_for_venv() -> str:
+    """The interpreter to build the venv with.
+
+    Not sys.executable: this command runs inside the checkout's own venv,
+    and building a venv from a venv inherits it. Take the system one.
+    """
+    for name in ("python3.11", "python3"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise RuntimeError("no python3 on PATH to build the venv with")
 
 
 def _run(argv: list[str]) -> None:
@@ -169,7 +221,7 @@ def _run(argv: list[str]) -> None:
 
 
 def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
-          logs_root: Path, log=print) -> None:
+          logs_root: Path, source: Path | None = None, log=print) -> None:
     """Carry out a plan. Every step announces itself before it runs."""
     for action in actions:
         if action.skipped:
@@ -177,7 +229,23 @@ def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
             continue
         log(f"  do    {action.detail}")
 
-        if action.kind == "group":
+        if action.kind == "venv":
+            # --system-site-packages so the pkg-installed py311-fastapi,
+            # py311-pydantic and friends are visible. Without it pip builds
+            # them from source and needs a Rust toolchain the base system
+            # does not have.
+            _run([_python_for_venv(), "-m", "venv",
+                  "--system-site-packages", str(prefix / VENV_RELATIVE)])
+        elif action.kind == "pip":
+            _run([str(prefix / VENV_RELATIVE / "bin" / "python"), "-m", "pip",
+                  "install", "--upgrade", action.target])
+        elif action.kind == "link":
+            link = prefix / "bin" / action.target
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(prefix / VENV_RELATIVE / "bin" / action.target)
+        elif action.kind == "group":
             _run(["pw", "groupadd", group])
         elif action.kind == "user":
             _run(["pw", "useradd", user, "-g", group,
@@ -232,11 +300,21 @@ def cmd_deploy(args: Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    # The tree to install the software from. Absent when running from a
+    # packaged install, which has nothing to install itself from and no
+    # need to: there, a port owns the software and this only wires the host.
+    source = None
+    if not getattr(args, "no_software", False):
+        try:
+            source = paths.tool_root(getattr(args, "tool_root", None))
+        except paths.MissingInput:
+            source = None
+
     prefix = Path(args.prefix)
     logs_root = Path(args.logs_root)
     try:
         actions = plan(deploy=deploy, prefix=prefix, user=args.user,
-                       group=args.group, logs_root=logs_root)
+                       group=args.group, logs_root=logs_root, source=source)
     except paths.MissingInput as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -257,7 +335,7 @@ def cmd_deploy(args: Namespace) -> int:
 
     try:
         apply(actions, deploy=deploy, prefix=prefix, user=args.user,
-              group=args.group, logs_root=logs_root)
+              group=args.group, logs_root=logs_root, source=source)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -265,18 +343,10 @@ def cmd_deploy(args: Namespace) -> int:
     absent = missing_commands(prefix)
     if absent:
         print(f"""
-note: {', '.join(absent)} not found in {prefix / 'bin'}.
-
-The rc.d scripts default to the packaged console scripts, which only
-exist once polytropos is installed as a package. Installing from a
-checkout does not put them there. Point the scripts at the checkout
-instead, in {prefix}/etc/polytropos.conf:
-
-    : ${{polytropos_cmd:="{deploy.parent}/bin/dportsv3"}}
-    : ${{polytropos_dev_env_cmd:="{deploy.parent}/bin/dportsv3 dev-env"}}
-
-Each service refuses to start until its command runs, so leaving this
-unset fails at `service ... start` rather than silently.""")
+warning: {', '.join(absent)} still missing from {prefix / 'bin'}. The
+services refuse to start until polytropos_cmd and polytropos_dev_env_cmd
+in {prefix}/etc/polytropos.conf name commands that run.""",
+              file=sys.stderr)
 
     print(f"""
 done. To bring the stack up, add to /etc/rc.conf:

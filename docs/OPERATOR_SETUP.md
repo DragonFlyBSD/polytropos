@@ -150,15 +150,10 @@ That creates the `polytropos` account, installs three rc.d scripts, a
 shared config, two credential stubs and a newsyslog entry, creates the
 queue directories, and hands `$LOGS_ROOT` to the service account.
 
-Installing from a checkout does **not** put the console scripts in
-`/usr/local/bin`, so tell the scripts where the commands are — the
-installer prints these exact lines when it detects that:
-
-```sh
-# /usr/local/etc/polytropos.conf
-: ${polytropos_cmd:="/home/you/polytropos/bin/dportsv3"}
-: ${polytropos_dev_env_cmd:="/home/you/polytropos/bin/dportsv3 dev-env"}
-```
+It installs the software too: a venv at `/usr/local/lib/polytropos` with
+both distributions in it, linked into `/usr/local/bin`. The services run
+from there rather than from your checkout. Re-run it after a pull to
+upgrade, then restart the services.
 
 Put real credentials in `/usr/local/etc/polytropos/harness.env`, then:
 
@@ -277,10 +272,20 @@ behind: in-flight rows are marked dead, stranded job files move to
 `failed/`, stale per-job worktrees are removed. A job that was mid-flight
 is lost, not corrupted — re-enqueue it from the bundle.
 
-**Upgrading.** Pull, then restart the services. From a checkout, run
-`bin/dportsv3 --version` once first: the wrapper rebuilds the venv when
-`pyproject.toml` changed, and the services deliberately refuse to do that
-themselves at boot. If you skip it they will not start, and will say so.
+**Upgrading.** Pull, then restart the services. From a checkout, bootstrap
+the venvs first — and note that there are **three separate install stamps**,
+one per entry point, so a single command does not cover them:
+
+```sh
+bin/dportsv3 tracker serve --help   # the [tracker] extra
+bin/dportsv3 artifact-store --help  # the base profile
+bin/dportsv3 dev-env --help         # the dev-env venv, a separate distribution
+```
+
+The install profile is part of the stamp, so bootstrapping with
+`--version` records `base:` and the tracker still refuses to start. The
+services deliberately will not build a venv at boot; if you skip this they
+will not start, and will say which command to run.
 
 ### When a service will not run
 

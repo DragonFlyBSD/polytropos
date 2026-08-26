@@ -31,6 +31,11 @@
 # so this must be dports-dev-env (or a checkout wrapper plus that word).
 : ${polytropos_dev_env_cmd:="/usr/local/bin/dports-dev-env"}
 
+# PATH for the services. rc.subr's own PATH leaves out the local prefix,
+# which is where python3 and dports-dev-env live on DragonFly — without
+# this the checkout wrapper cannot find an interpreter at all.
+: ${polytropos_path:="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+
 # The unprivileged account that owns the evidence tree and runs the two
 # HTTP services. The queue runner ignores this and runs as root, because
 # dev-env requires it.

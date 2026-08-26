@@ -12,16 +12,17 @@
 #   flags C    create the file if it is missing
 #         Z    gzip the rotated copy
 #
-# THE PIDFILE COLUMN POINTS AT THE SUPERVISOR, not the service.
-# daemon(8) writes two pidfiles: -p holds the child (the Python process)
-# and -P holds the supervisor. Only the supervisor reopens the output
-# file on SIGUSR1. Sending SIGUSR1 to the child instead — which is what
+# THE PIDFILE COLUMN POINTS AT THE SUPERVISOR, not the worker.
+# daemon(8) writes two: <name>.child.pid holds the Python process and
+# <name>.pid holds the supervisor. Only the supervisor reopens the output
+# file on SIGUSR1. (<name>.pid is the supervisor's because rc.subr needs
+# it to be — see the rc.d scripts.) Sending SIGUSR1 to the child instead — which is what
 # daemon(8)'s own rotation advice reads like, since it mentions only -p —
 # kills it: SIGUSR1's default disposition terminates the process.
 # Measured on DragonFly 6.5: signalling the child killed both the service
 # and its supervisor; signalling the supervisor reopened the log with
 # both still running.
 
-/var/log/polytropos/artifact-store.log	root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_artifact_store.sup.pid  SIGUSR1
-/var/log/polytropos/tracker.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_tracker.sup.pid  SIGUSR1
-/var/log/polytropos/runner.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_runner.sup.pid  SIGUSR1
+/var/log/polytropos/artifact-store.log	root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_artifact_store.pid  SIGUSR1
+/var/log/polytropos/tracker.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_tracker.pid  SIGUSR1
+/var/log/polytropos/runner.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_runner.pid  SIGUSR1

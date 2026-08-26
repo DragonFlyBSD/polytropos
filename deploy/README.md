@@ -121,6 +121,24 @@ stays the child, so stopping remains a clean child exit.
     bin/dportsv3 deploy install --dry-run     # show every step, change nothing
     sudo bin/dportsv3 deploy install
 
+This installs the software as well as wiring the host: it builds a venv
+at `<prefix>/lib/polytropos`, installs both distributions into it, and
+links `dportsv3` and `dports-dev-env` into `<prefix>/bin` — which is
+where the rc.d defaults look. The services then run from that install,
+not from the checkout, and deleting the checkout does not stop them.
+
+**Re-running is the upgrade path.** Pull, run `deploy install` again,
+restart the services. The venv is reused and both distributions are
+reinstalled; rc.d scripts are replaced; your config is left alone.
+
+The venv is built with `--system-site-packages` so the pkg-installed
+`py311-fastapi`, `py311-pydantic` and friends are visible. Without that
+pip builds them from source and wants a Rust toolchain the base system
+does not have.
+
+`--no-software` skips all of that and only wires the host, for the case
+where a port owns the software.
+
 Run it from the checkout: `bin/dportsv3` exports `$DPORTS_DEV_TOOL_ROOT`,
 which is how the command finds `deploy/` without any package guessing a
 repository path. Pass `--tool-root` if you invoke the console script
@@ -142,6 +160,17 @@ Two rules, and the difference is the point:
 
 Re-running is safe: every step reports itself as `do` or `skip` first,
 and skipped steps do nothing.
+
+Installing from a checkout needs the venvs bootstrapped once, per entry
+point — the install profile is part of each stamp, so one command does
+not cover the others:
+
+    bin/dportsv3 tracker serve --help   # the [tracker] extra
+    bin/dportsv3 artifact-store --help  # the base profile
+    bin/dportsv3 dev-env --help         # the dev-env venv
+
+`deploy install` prints these when it sees the console scripts are not in
+the prefix.
 
 ## Enable
 

@@ -736,6 +736,11 @@ def _register_deploy_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Evidence tree to hand to the service account "
              "(default: %(default)s)")
     install.add_argument(
+        "--no-software", action="store_true",
+        help="Only wire the host: skip building the venv and installing "
+             "the two distributions into it. For a packaged install, "
+             "where a port owns the software.")
+    install.add_argument(
         "--dry-run", action="store_true",
         help="Print every step and change nothing")
 
