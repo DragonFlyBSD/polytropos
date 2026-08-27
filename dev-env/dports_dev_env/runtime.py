@@ -13,6 +13,12 @@ from .mounts import mount_null, mount_procfs
 MAX_STATFS_MOUNT_TARGET_LEN = 79
 
 
+#: Where the dportsv3 venv shows up inside the chroot. Under /work because
+#: /work is already a writable mount, so the mountpoint can be made on the
+#: spot — anywhere under the read-only base would have to be baked in at
+#: provision time, and existing envs would never get it.
+TOOL_VENV_TARGET = "work/polytropos"
+
 WRITABLE_DIRS = [
     ("work", "work", 0o755),
     ("root", "root", 0o700),
@@ -105,4 +111,22 @@ def prepare_root_runtime(config: Config, root_dir: Path, *, refresh_resolv_conf:
         repos_target.parent.mkdir(parents=True, exist_ok=True)
         if mount_null_checked(config.repos_dir, repos_target, read_only=True):
             mounted_targets.append(repos_target)
+    # The dsynth hooks call `dportsv3 tracker ...`; without this the tool
+    # exists only on the host and every in-chroot failure is recorded
+    # nowhere. Read-only: the env is a place to build, not to upgrade the
+    # tooling. `pyvenv.cfg` is the check that this is a venv at all rather
+    # than, say, a system prefix someone pointed the variable at.
+    venv_target = tool_venv_target(root_dir)
+    if (config.tool_venv / "pyvenv.cfg").is_file():
+        venv_target.mkdir(parents=True, exist_ok=True)
+        if mount_null_checked(config.tool_venv, venv_target, read_only=True):
+            mounted_targets.append(venv_target)
+    else:
+        warn(f"no venv at {config.tool_venv}; dsynth hooks in this env "
+             "will have no tracker CLI to call")
     return mounted_targets
+
+
+def tool_venv_target(root_dir: Path) -> Path:
+    """Host-side path of the tool venv's bind mount for ``root_dir``."""
+    return root_dir / TOOL_VENV_TARGET

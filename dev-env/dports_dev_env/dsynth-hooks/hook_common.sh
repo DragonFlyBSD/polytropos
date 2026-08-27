@@ -63,7 +63,28 @@ fi
 : "${DIR_DISTFILES:=}"
 
 : "${ARTIFACT_STORE_URL:=http://127.0.0.1:8788}"
-: "${ARTIFACT_STORE_CLIENT:=/build/synth/polytropos/bin/artifact-store-client}"
+: "${ARTIFACT_STORE_CLIENT:=/usr/local/bin/artifact-store-client}"
+
+# Optional interpreter for the two tools above.
+#
+# Both are venv console scripts, so their shebangs are absolute paths into
+# the venv *on the host*. A dev-env bind-mounts that venv somewhere else
+# inside the chroot, where the shebang resolves to nothing and every call
+# dies with ENOENT. Naming the interpreter sidesteps it: the kernel never
+# reads a shebang when python is the thing being executed. Empty on a farm
+# host, where the scripts run from the prefix they were installed into.
+: "${POLYTROPOS_PYTHON:=}"
+
+# Run a script from the polytropos venv, with or without the indirection.
+polytropos_run() {
+	polytropos_script=$1
+	shift
+	if [ -n "${POLYTROPOS_PYTHON:-}" ]; then
+		"$POLYTROPOS_PYTHON" "$polytropos_script" "$@"
+	else
+		"$polytropos_script" "$@"
+	fi
+}
 
 hook_config_dir() {
 	# Hooks live in ConfigBase (/etc/dsynth or /usr/local/etc/dsynth).
@@ -146,7 +167,11 @@ ensure_queue_dirs() {
 }
 
 artifact_store() {
-	"${ARTIFACT_STORE_CLIENT}" --url "${ARTIFACT_STORE_URL}" "$@"
+	polytropos_run "${ARTIFACT_STORE_CLIENT}" --url "${ARTIFACT_STORE_URL}" "$@"
+}
+
+dportsv3_cli() {
+	polytropos_run "${DPORTSV3_BIN}" "$@"
 }
 
 require_artifact_store() {
@@ -367,26 +392,26 @@ tracker_should_skip() {
 	return 1
 }
 
-tracker_load_config() {
+# Everything a hook needs that does NOT depend on the tracker being
+# usable: the operator's config file, PROFILE, the derived target, the
+# state-file path. Never exits.
+#
+# The split matters. A hook with artifact-store work to do still needs
+# DPORTSV3_TRACKER_TARGET to name the bundle's target, but must survive a
+# tracker that was never configured — the conf file promises exactly that
+# ("hooks only do artifact-store work"). Calling tracker_load_config for
+# the target alone broke the promise: its DPORTSV3_BIN check soft-fails
+# with exit 0, so an unconfigured tracker silently dropped the failure
+# evidence instead of preserving it.
+tracker_config_defaults() {
 	# Idempotent: safe to call multiple times. Sets defaults for any
-	# unset values. Soft-fails with a clear message when required values
-	# can't be derived.
+	# unset values.
 	if [ -f "$DPORTSV3_HOOKS_CONFIG" ]; then
 		# shellcheck disable=SC1090
 		. "$DPORTSV3_HOOKS_CONFIG"
 	fi
 
 	: "${PROFILE:=unknown}"
-
-	if [ -z "${DPORTSV3_BIN:-}" ]; then
-		tracker_fail_soft "DPORTSV3_BIN is not configured"
-	fi
-	if [ ! -x "$DPORTSV3_BIN" ]; then
-		tracker_fail_soft "DPORTSV3_BIN is not executable: $DPORTSV3_BIN"
-	fi
-	if [ -z "${DPORTSV3_TRACKER_URL:-}" ]; then
-		tracker_fail_soft "DPORTSV3_TRACKER_URL is not configured"
-	fi
 
 	# Default target = @${PROFILE} (per the "one profile per target" policy).
 	# If operator already set the value, keep it.
@@ -403,6 +428,32 @@ tracker_load_config() {
 	: "${DPORTSV3_TRACKER_STATE_DIR:=$(evidence_root)/.tracker-state}"
 	mkdir -p -- "$DPORTSV3_TRACKER_STATE_DIR" 2>/dev/null || true
 	TRACKER_STATE_FILE="$DPORTSV3_TRACKER_STATE_DIR/${PROFILE}.env"
+}
+
+tracker_load_config() {
+	# tracker_config_defaults plus the things that must be true before
+	# any `$DPORTSV3_BIN tracker ...` call. Soft-fails with a clear
+	# message when they aren't. Only call this from a path whose whole
+	# purpose is the tracker.
+	tracker_config_defaults
+
+	if [ -z "${DPORTSV3_BIN:-}" ]; then
+		tracker_fail_soft "DPORTSV3_BIN is not configured"
+	fi
+	if [ -n "${POLYTROPOS_PYTHON:-}" ]; then
+		# Executed as an argument, so it needs to be readable, not +x.
+		if [ ! -x "$POLYTROPOS_PYTHON" ]; then
+			tracker_fail_soft "POLYTROPOS_PYTHON is not executable: $POLYTROPOS_PYTHON"
+		fi
+		if [ ! -r "$DPORTSV3_BIN" ]; then
+			tracker_fail_soft "DPORTSV3_BIN is not readable: $DPORTSV3_BIN"
+		fi
+	elif [ ! -x "$DPORTSV3_BIN" ]; then
+		tracker_fail_soft "DPORTSV3_BIN is not executable: $DPORTSV3_BIN"
+	fi
+	if [ -z "${DPORTSV3_TRACKER_URL:-}" ]; then
+		tracker_fail_soft "DPORTSV3_TRACKER_URL is not configured"
+	fi
 }
 
 tracker_load_state() {
@@ -488,7 +539,7 @@ EOF
 
 	if [ -n "${PORTS_QUEUED:-}" ] && [ "$PORTS_QUEUED" -gt 0 ] 2>/dev/null; then
 		output=$(
-			"$DPORTSV3_BIN" tracker enqueue-ports \
+			dportsv3_cli tracker enqueue-ports \
 				--run "$RUN_ID" \
 				--file "$tmp_json" \
 				--total "$PORTS_QUEUED" \
@@ -499,7 +550,7 @@ EOF
 		}
 	else
 		output=$(
-			"$DPORTSV3_BIN" tracker enqueue-ports \
+			dportsv3_cli tracker enqueue-ports \
 				--run "$RUN_ID" \
 				--file "$tmp_json" \
 				--server "$DPORTSV3_TRACKER_URL" 2>&1
@@ -518,7 +569,7 @@ tracker_run_start() {
 	tracker_clear_state
 
 	output=$(
-		"$DPORTSV3_BIN" tracker start-build \
+		dportsv3_cli tracker start-build \
 			--target "$DPORTSV3_TRACKER_TARGET" \
 			--type "$DPORTSV3_TRACKER_BUILD_TYPE" \
 			--server "$DPORTSV3_TRACKER_URL" 2>&1
@@ -552,7 +603,7 @@ tracker_mark_building() {
 	tracker_enqueue_one "$ORIGIN" "$version"
 
 	output=$(
-		"$DPORTSV3_BIN" tracker mark-building \
+		dportsv3_cli tracker mark-building \
 			--run "$RUN_ID" \
 			--origin "$ORIGIN" \
 			--server "$DPORTSV3_TRACKER_URL" 2>&1
@@ -581,7 +632,7 @@ tracker_record_result() {
 	if [ -n "${DPORTSV3_TRACKER_LOG_URL_BASE:-}" ]; then
 		log_url=${DPORTSV3_TRACKER_LOG_URL_BASE%/}/${ORIGIN}
 		output=$(
-			"$DPORTSV3_BIN" tracker record-result \
+			dportsv3_cli tracker record-result \
 				--run "$RUN_ID" \
 				--origin "$ORIGIN" \
 				--version "$version" \
@@ -591,7 +642,7 @@ tracker_record_result() {
 		) || tracker_fail_soft "record-result failed for $ORIGIN: $output"
 	else
 		output=$(
-			"$DPORTSV3_BIN" tracker record-result \
+			dportsv3_cli tracker record-result \
 				--run "$RUN_ID" \
 				--origin "$ORIGIN" \
 				--version "$version" \
@@ -610,7 +661,7 @@ tracker_run_end() {
 	tracker_load_state
 
 	output=$(
-		"$DPORTSV3_BIN" tracker finish-build \
+		dportsv3_cli tracker finish-build \
 			--run "$RUN_ID" \
 			--server "$DPORTSV3_TRACKER_URL" 2>&1
 	) || tracker_fail_soft "finish-build failed for run $RUN_ID: $output"

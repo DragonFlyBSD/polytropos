@@ -1,5 +1,10 @@
-#!/usr/bin/env python3
-"""artifact-store-client: tiny CLI for hooks to post artifacts."""
+"""artifact-store-client: tiny CLI for hooks to post artifacts.
+
+Stdlib only, on purpose. This runs from dsynth hooks — including hooks
+inside a dev-env chroot, where the only thing guaranteed to be reachable
+is whatever the env mounts. Adding a dependency here means adding one to
+every place a build can fail.
+"""
 
 from __future__ import annotations
 

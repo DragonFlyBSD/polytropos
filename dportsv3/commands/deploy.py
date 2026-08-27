@@ -49,8 +49,11 @@ OPERATOR_FILES = (
 
 QUEUE_SUBDIRS = ("pending", "inflight", "done", "failed")
 
-#: The two entry points the rc.d scripts default to.
-EXPECTED_COMMANDS = ("dportsv3", "dports-dev-env")
+#: Linked into ``<prefix>/bin`` and checked for after an install. The first
+#: two are what the rc.d scripts default to; ``artifact-store-client`` is
+#: what the dsynth hooks call on every failed build, and a packaged install
+#: that lacks it drops the evidence silently.
+EXPECTED_COMMANDS = ("dportsv3", "dports-dev-env", "artifact-store-client")
 
 #: Where the software itself goes, relative to the prefix. A venv rather than
 #: the prefix's own site-packages: this is two distributions plus their

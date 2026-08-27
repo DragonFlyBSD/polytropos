@@ -260,7 +260,17 @@ def test_partial_install_names_only_what_is_missing(tmp_path) -> None:
     so one can be installed without the other."""
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "dportsv3").write_text("#!/bin/sh\n")
-    assert dep.missing_commands(tmp_path) == ["dports-dev-env"]
+    assert dep.missing_commands(tmp_path) == [
+        c for c in dep.EXPECTED_COMMANDS if c != "dportsv3"
+    ]
+
+
+def test_the_store_client_is_one_of_the_installed_commands() -> None:
+    """The dsynth hooks shell out to it on every failed build. It was in
+    no distribution's scripts and no install step copied it, so a packaged
+    host had nothing for ARTIFACT_STORE_CLIENT to point at and the hook
+    died at require_artifact_store — dropping the evidence, quietly."""
+    assert "artifact-store-client" in dep.EXPECTED_COMMANDS
 
 
 # --- installing the software itself -------------------------------------
@@ -278,7 +288,8 @@ def test_software_is_installed_from_a_source_tree(tmp_path) -> None:
                     source=tmp_path / "src",
                     user_exists=lambda n: True, group_exists=lambda n: True)
     kinds = [a.kind for a in software(acts)]
-    assert kinds == ["venv", "pip", "pip", "link", "link"], kinds
+    expected = ["venv", "pip", "pip"] + ["link"] * len(dep.EXPECTED_COMMANDS)
+    assert kinds == expected, kinds
 
 
 def test_dev_env_is_installed_before_the_generator(tmp_path) -> None:

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .dsynth import env_dsynth_etc_dir
 from .mounts import mounts_under
+from .runtime import TOOL_VENV_TARGET
 from .state import EnvironmentState
 
 # Files we ship as executable hook scripts (chmod 0755 on install).
@@ -40,6 +41,53 @@ HOOK_SCRIPTS: tuple[str, ...] = (
 CONF_EXAMPLE = "dportsv3-hooks.conf.example"
 CONF_TARGET = "dportsv3-hooks.conf"
 
+#: In-chroot paths of the two tools the hooks call. Both live in the venv
+#: that ``prepare_root_runtime`` bind-mounts at ``TOOL_VENV_TARGET``.
+CHROOT_VENV = Path("/") / TOOL_VENV_TARGET
+CHROOT_PYTHON = CHROOT_VENV / "bin" / "python"
+CHROOT_DPORTSV3 = CHROOT_VENV / "bin" / "dportsv3"
+CHROOT_STORE_CLIENT = CHROOT_VENV / "bin" / "artifact-store-client"
+
+
+def env_hook_settings(state: EnvironmentState) -> dict[str, str]:
+    """The conf values that only this env can know.
+
+    Two of them are not defaults anyone could have guessed. The tool paths
+    are inside the chroot, not on the host, and they only resolve because
+    the env mounts the venv. And ``DPORTSV3_TRACKER_TARGET`` has to be
+    written out rather than left to the documented ``@${PROFILE}`` default:
+    an env's dsynth profile is named after the *env* (``2026Q3-editors_vim``
+    for a ``@2026Q3`` env), so the default derives a target no farm build
+    will ever produce, and every failure raised in here lands on an issue
+    that can never match the same failure from the farm.
+    """
+    return {
+        "DPORTSV3_TRACKER_TARGET": f"@{state.target.lstrip('@')}",
+        "POLYTROPOS_PYTHON": str(CHROOT_PYTHON),
+        "DPORTSV3_BIN": str(CHROOT_DPORTSV3),
+        "ARTIFACT_STORE_CLIENT": str(CHROOT_STORE_CLIENT),
+    }
+
+
+def render_conf(example: str, settings: dict[str, str]) -> str:
+    """Apply ``settings`` to the example conf, in place where possible.
+
+    Rewrites an existing assignment (commented or not) so the surrounding
+    explanation stays attached to the value it explains; appends the rest
+    in one labelled block. Returns the whole file.
+    """
+    lines = example.splitlines()
+    remaining = dict(settings)
+    for i, line in enumerate(lines):
+        stripped = line.lstrip("#").strip()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+    if remaining:
+        lines += ["", "# ---- written by `dev-env hooks-install` ----"]
+        lines += [f"{k}={v}" for k, v in remaining.items()]
+    return "\n".join(lines) + "\n"
+
 
 def repo_hook_source() -> Path:
     """Path to the dsynth hooks this package installs into a chroot.
@@ -57,12 +105,18 @@ def install_hooks(
     source_dir: Path | None = None,
     *,
     force: bool = False,
+    settings: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Copy hook scripts + (optionally) a default conf into ``target_dir``.
 
     Returns (written_files, skipped_notes). ``dportsv3-hooks.conf`` is
     written from the example only if it doesn't exist or ``force`` is
     set. Hook scripts are always replaced (they're code, not config).
+
+    ``settings`` are folded into the conf as it is written. They are the
+    values an operator cannot be expected to supply — see
+    :func:`env_hook_settings` — so leaving them to a hand-edit is what
+    made every in-env failure vanish.
     """
     src = source_dir or repo_hook_source()
     if not src.is_dir():
@@ -89,7 +143,10 @@ def install_hooks(
         if dst_conf.exists() and not force:
             skipped.append(f"{CONF_TARGET} (exists; --force to overwrite)")
         else:
-            shutil.copy2(src_conf, dst_conf)
+            conf = src_conf.read_text()
+            if settings:
+                conf = render_conf(conf, settings)
+            dst_conf.write_text(conf)
             written.append(CONF_TARGET)
 
     return written, skipped
@@ -180,9 +237,11 @@ def cmd_hooks_install(args: Namespace, state: EnvironmentState) -> int:
         print(str(exc))
         return 1
     source = Path(args.source) if getattr(args, "source", None) else None
+    settings = env_hook_settings(state)
     try:
         written, skipped = install_hooks(
-            target, source_dir=source, force=bool(args.force)
+            target, source_dir=source, force=bool(args.force),
+            settings=settings,
         )
     except FileNotFoundError as exc:
         print(str(exc))
@@ -194,10 +253,24 @@ def cmd_hooks_install(args: Namespace, state: EnvironmentState) -> int:
     for note in skipped:
         print(f"  skipped: {note}")
     print()
-    print("Next steps:")
-    print(f"  1. Edit {target}/{CONF_TARGET} — set ARTIFACT_STORE_URL,")
-    print("     DPORTSV3_TRACKER_URL, DPORTSV3_TRACKER_TARGET.")
+    if CONF_TARGET in written:
+        print(f"Wrote into {target}/{CONF_TARGET}:")
+        for key, value in settings.items():
+            print(f"  {key}={value}")
+        print()
+        print("Next steps:")
+        print("  1. Check DPORTSV3_TRACKER_URL and ARTIFACT_STORE_URL point at")
+        print("     the services on this host (the chroot shares its loopback).")
+    else:
+        print("Next steps:")
+        print(f"  1. {target}/{CONF_TARGET} was left alone. Re-run with --force")
+        print("     to rewrite it, or set these by hand:")
+        for key, value in settings.items():
+            print(f"       {key}={value}")
     print("  2. Hooks are live at /etc/dsynth inside the chroot.")
+    print(f"  3. The tools they call come from {CHROOT_VENV}, which is a")
+    print("     bind mount of the venv this command ran from. It exists only")
+    print("     while the env is mounted.")
     return 0
 
 

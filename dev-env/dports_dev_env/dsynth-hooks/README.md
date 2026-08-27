@@ -43,12 +43,17 @@ install -m 644 $HOOKS/dportsv3-hooks.conf.example \
 Then edit `/etc/dsynth/dportsv3-hooks.conf` for at least:
 
 - `DPORTSV3_TRACKER_URL` (or leave commented to disable tracker integration)
-- `DPORTSV3_BIN` (absolute path to your `dportsv3` wrapper, e.g.
-  `/build/synth/polytropos/bin/dportsv3`)
+- `DPORTSV3_BIN` (absolute path to the installed `dportsv3`, e.g.
+  `/usr/local/bin/dportsv3`)
 
 Defaults you usually don't need to override:
 
-- `DPORTSV3_TRACKER_TARGET` derives from `${PROFILE}` (one profile per target)
+- `DPORTSV3_TRACKER_TARGET` derives from `${PROFILE}` (one profile per
+  target) — but set it explicitly if the profile is not named after the
+  target, which is the case inside a dev-env
+- `POLYTROPOS_PYTHON` is empty, so both tools run via their own shebangs.
+  Set it when they are reachable at some path other than the one they
+  were installed at — a bind-mounted venv, as in a dev-env chroot
 - `DPORTSV3_TRACKER_BUILD_TYPE` defaults to `test` — set to `release` for builds you intend to publish
 - `ARTIFACT_STORE_URL` defaults to `http://127.0.0.1:8788`
 

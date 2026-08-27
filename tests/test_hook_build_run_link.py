@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -116,10 +117,10 @@ def live_store(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_address[1]}"
-    client = Path(__file__).resolve().parents[1] / "bin" / "artifact-store-client"
+    client = [sys.executable, "-m", "dportsv3.artifact_store_client"]
 
     def run(*args):
-        done = subprocess.run([str(client), "--url", url, *args],
+        done = subprocess.run([*client, "--url", url, *args],
                               capture_output=True, text=True)
         assert done.returncode == 0, done.stderr
         return done

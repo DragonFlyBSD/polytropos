@@ -25,7 +25,10 @@ if [ -n "$FLAVOR" ] && [ "$FLAVOR" != "$ORIGIN" ] && [ "$FLAVOR" != "$origin_bas
 fi
 bundle_id="${bundle_id}-${ts}"
 
-tracker_load_config
+# Config only, not the tracker's preconditions: everything below is
+# artifact-store work, and it has to happen whether or not a tracker was
+# ever configured. tracker_record_result at the end guards itself.
+tracker_config_defaults
 
 # Which farm build this failure belongs to. Sent with the bundle so the store
 # can place the occurrence against a fix's known-good boundary later (C3)

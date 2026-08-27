@@ -92,14 +92,34 @@ This copies the hook scripts + `dportsv3-hooks.conf.example` →
 bind-mounts to `/etc/dsynth` inside the chroot. Existing
 `dportsv3-hooks.conf` is preserved (pass `--force` to overwrite).
 
-Edit the conf and set:
+It fills in the values that only it can know, and prints them:
 
 ```sh
-ARTIFACT_STORE_URL=http://127.0.0.1:8788
-DPORTSV3_TRACKER_URL=http://127.0.0.1:8080
-DPORTSV3_TRACKER_TARGET=@2026Q2     # defaults from $PROFILE if unset
-DPORTSV3_BIN=/build/synth/polytropos/bin/dportsv3
+DPORTSV3_TRACKER_TARGET=@2026Q2                            # the env's target
+POLYTROPOS_PYTHON=/work/polytropos/bin/python
+DPORTSV3_BIN=/work/polytropos/bin/dportsv3
+ARTIFACT_STORE_CLIENT=/work/polytropos/bin/artifact-store-client
 ```
+
+Those three paths are inside the chroot. `/work/polytropos` is a
+read-only bind mount of the venv `dportsv3` itself is installed in, made
+when the env is mounted — without it the hooks have no tool to call and
+every failure inside the env is recorded nowhere.
+
+`POLYTROPOS_PYTHON` is why the mount is enough. Both tools are venv
+console scripts whose shebangs name the venv's path *on the host*, which
+resolves to nothing in here; naming the interpreter means the shebang is
+never read.
+
+`DPORTSV3_TRACKER_TARGET` has to be written out rather than left to its
+`@${PROFILE}` default, because an env's dsynth profile is named after the
+env (`2026Q3-editors_vim`), not the target. Issue identity hashes the
+target, so the default would file every failure raised in here against an
+issue no farm build can ever match.
+
+Check `ARTIFACT_STORE_URL` and `DPORTSV3_TRACKER_URL` point at the
+services on this host — a chroot shares the host's loopback, so the
+`127.0.0.1` defaults are usually right.
 
 Verify with:
 

@@ -1,18 +1,14 @@
 # dsynth hook configuration for DeltaPorts.
 #
-# Install pattern:
-#     install -d /etc/dsynth
-#     install -m 755 scripts/dsynth-hooks/hook_* /etc/dsynth/
-#     install -m 755 scripts/dsynth-hooks/hook_common.sh /etc/dsynth/
-#     install -m 644 scripts/dsynth-hooks/dportsv3-hooks.conf.example \
-#         /etc/dsynth/dportsv3-hooks.conf
+# For a dev-env, `dportsv3 dev-env hooks-install <env>` installs the
+# hooks and writes this file with the env's own values. On a farm host,
+# copy the hooks into ConfigBase (/etc/dsynth or /usr/local/etc/dsynth)
+# and this file next to them as dportsv3-hooks.conf, then edit.
 #
-# Then edit /etc/dsynth/dportsv3-hooks.conf for your environment.
-#
-# Anything sourced from this file becomes shell variables visible to all
-# hooks. Tracker integration is OPT-IN: if DPORTSV3_TRACKER_URL is
-# unset (or this file is absent entirely), the tracker_* helpers in
-# hook_common.sh short-circuit and hooks only do artifact-store work.
+# Anything set here becomes a shell variable visible to all hooks.
+# Tracker integration is OPT-IN: if DPORTSV3_TRACKER_URL is unset (or
+# this file is absent entirely), the tracker_* helpers in hook_common.sh
+# short-circuit and hooks only do artifact-store work.
 
 # -----------------------------------------------------------------------------
 # Artifact-store side
@@ -22,7 +18,15 @@
 # ARTIFACT_STORE_URL=http://127.0.0.1:8788
 
 # Override only if the artifact-store client lives elsewhere.
-# ARTIFACT_STORE_CLIENT=/build/synth/polytropos/bin/artifact-store-client
+# ARTIFACT_STORE_CLIENT=/usr/local/bin/artifact-store-client
+
+# Interpreter to run ARTIFACT_STORE_CLIENT and DPORTSV3_BIN with. Leave
+# unset on a farm host: both are installed at the prefix their shebangs
+# name, so they run directly. Set it when the venv is reachable at some
+# other path than the one it was built at — which is the situation inside
+# a dev-env chroot, where the venv is bind-mounted. `dev-env hooks-install`
+# fills this in.
+# POLYTROPOS_PYTHON=/work/polytropos/bin/python
 
 # -----------------------------------------------------------------------------
 # Tracker side (optional)
@@ -32,12 +36,19 @@
 # disables tracker calls entirely (artifact-store work continues).
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080
 
-# Absolute path to the dportsv3 wrapper (used to call tracker CLI commands).
-# Since the tool was split out of the ports repository this is a checkout of
-# its own, no longer a path inside the DeltaPorts tree.
-DPORTSV3_BIN=/build/synth/polytropos/bin/dportsv3
+# Absolute path to the dportsv3 entry point (used to call tracker CLI
+# commands). Since the tool was split out of the ports repository this is
+# an install of its own, no longer a path inside the DeltaPorts tree.
+DPORTSV3_BIN=/usr/local/bin/dportsv3
 
 # Build target. Defaults to @${PROFILE} if unset (one profile per target).
+#
+# Set it explicitly whenever the dsynth profile is not named after the
+# target. A dev-env names its profile after the env — 2026Q3-editors_vim
+# for a @2026Q3 env — so the default derives @2026Q3-editors_vim, and
+# since issue identity hashes the target, every failure raised in there
+# gets an issue the farm can never match. `dev-env hooks-install` fills
+# this in from the env's own target.
 # DPORTSV3_TRACKER_TARGET=@2026Q2
 
 # Build type for this dsynth profile (test | release). Defaults to "test".
