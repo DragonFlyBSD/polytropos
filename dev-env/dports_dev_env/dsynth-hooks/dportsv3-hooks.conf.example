@@ -14,8 +14,9 @@
 # Artifact-store side
 # -----------------------------------------------------------------------------
 
-# Override only if running artifact-store on a non-default URL/port.
-# ARTIFACT_STORE_URL=http://127.0.0.1:8788
+# Where the hooks post artifacts and state. Always loopback: on a
+# remote builder this is the local forwarder, not the tracker itself.
+# ARTIFACT_STORE_URL=http://127.0.0.1:8080
 
 # Override only if the artifact-store client lives elsewhere.
 # ARTIFACT_STORE_CLIENT=/usr/local/bin/artifact-store-client

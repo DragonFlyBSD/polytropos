@@ -63,6 +63,7 @@ from pathlib import Path
 # convention, but this one backs a module-level constant.
 from dportsv3 import paths
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
+from dportsv3.common.endpoints import tracker_url
 from dportsv3.engine import emit
 
 
@@ -76,8 +77,6 @@ class _VerifyBranchUnavailable(Exception):
 # Max fix iterations before giving up on a port
 DEFAULT_MAX_ITERATIONS = 3
 
-DEFAULT_ARTIFACT_STORE_URL = "http://127.0.0.1:8788"
-DEFAULT_TRACKER_URL = "http://127.0.0.1:8080"
 
 # Default location of agentic-policy.json. Resolution lives in
 # ``dportsv3.paths``: the operator's copy under $DPORTSV3_CONFIG_DIR wins,
@@ -445,27 +444,22 @@ def init_state_db(queue_root: Path) -> sqlite3.Connection | None:
     return conn
 
 
-def _artifact_store_url() -> str:
-    return os.environ.get("ARTIFACT_STORE_URL", DEFAULT_ARTIFACT_STORE_URL)
-
-
 def _tracker_url() -> str:
-    return os.environ.get("DPORTSV3_TRACKER_URL", DEFAULT_TRACKER_URL)
+    return tracker_url()
 
 
-def artifact_store_get(bundle_id: str, relpath: str) -> bytes | None:
-    url = f"{_artifact_store_url()}/v1/artifacts/get?bundle_id={urllib.parse.quote(bundle_id)}&relpath={urllib.parse.quote(relpath)}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return resp.read()
-    except Exception:
-        return None
+def artifact_get(bundle_id: str, relpath: str) -> bytes | None:
+    """One artifact's bytes from the tracker, or None.
 
-
-def tracker_artifact_get(bundle_id: str, relpath: str) -> bytes | None:
+    There used to be two of these — /v1/artifacts/get on the store's port
+    and /api/bundles/../artifacts/.. on the tracker's — tried in order.
+    They served the same bytes off the same disk; the fallback existed
+    only because there were two services.
+    """
     url = (
-        f"{_tracker_url()}/api/bundles/{urllib.parse.quote(bundle_id)}"
-        f"/artifacts/{urllib.parse.quote(relpath, safe='/')}"
+        f"{_tracker_url()}/v1/artifacts/get"
+        f"?bundle_id={urllib.parse.quote(bundle_id)}"
+        f"&relpath={urllib.parse.quote(relpath)}"
     )
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
@@ -475,7 +469,7 @@ def tracker_artifact_get(bundle_id: str, relpath: str) -> bytes | None:
 
 
 def artifact_store_put(bundle_id: str, relpath: str, data: bytes, kind: str | None = None) -> bool:
-    url = f"{_artifact_store_url()}/v1/artifacts/put"
+    url = f"{_tracker_url()}/v1/artifacts/put"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/octet-stream",
@@ -642,9 +636,7 @@ def _materialize_bundle(bundle_id: str, dest: Path) -> int:
     relpaths = bundle_artifact_list(bundle_id)
     written = 0
     for rel in relpaths:
-        data = artifact_store_get(bundle_id, rel)
-        if data is None:
-            data = tracker_artifact_get(bundle_id, rel)
+        data = artifact_get(bundle_id, rel)
         if data is None:
             continue
         out = dest / rel
@@ -750,9 +742,7 @@ def read_bundle_text(bundle_dir: Path | None, bundle_id: str | None, relpath: st
         if path.exists():
             return read_file_if_exists(path)
     if bundle_id:
-        data = artifact_store_get(bundle_id, relpath)
-        if data is None:
-            data = tracker_artifact_get(bundle_id, relpath)
+        data = artifact_get(bundle_id, relpath)
         if data is not None:
             return data.decode("utf-8", errors="replace")
     return None
@@ -2442,6 +2432,163 @@ def _job_dedup_key(meta: dict) -> tuple | None:
     return (jt, profile, origin, meta.get("flavor", ""))
 
 
+# --- jobs the filesystem queue never saw ------------------------------------
+#
+# A hook writes its .job file into the queue root it can see. Inside a
+# dev-env chroot that is /work/dsynth/logs/evidence/queue — a path the
+# host runner cannot resolve, so the file lands somewhere nothing reads
+# and the failure sits queued forever. The same is true of any builder
+# that is not this host.
+#
+# The HTTP half already crosses fine: the hook's job-transition POST
+# inserts the jobs row, and the runner materializes the bundle from the
+# store over HTTP. Only locating the work depended on a shared
+# filesystem. So derive that from the DB instead.
+#
+# Scope is deliberately narrow (poly-b2r). Only type=triage crosses a
+# boundary — hook_common.sh writes nothing else, and patch/verify/confirm
+# are created by the runner on the host, where files work. Carrying those
+# over the DB needs a spec payload the jobs table does not model, which is
+# poly-fij.1's problem, not this one.
+
+#: What a fresh hook-created triage job carries beyond its jobs row.
+#: hook_common.sh writes these two literals for every new job; only a
+#: rebuild attempt writes anything else, and that is the runner's own
+#: enqueue path, which never crosses a boundary.
+_FRESH_TRIAGE_DEFAULTS = {"snippet_round": "0", "has_snippets": "false"}
+
+_QUEUED_TRIAGE_SQL = """
+    SELECT j.job_id, j.type, j.origin, j.flavor, j.created_ts_utc,
+           j.target, j.bundle_id, b.run_id, r.profile
+    FROM jobs j
+    JOIN bundles b ON b.bundle_id = j.bundle_id
+    LEFT JOIN runs r ON r.run_id = b.run_id
+    WHERE j.state = 'queued' AND j.type = 'triage'
+    ORDER BY j.created_ts_utc, j.job_id
+"""
+
+
+def _queued_triage_rows() -> list[dict]:
+    """Queued triage jobs from the DB, oldest first."""
+    if _state_db_conn is None:
+        return []
+    try:
+        with _state_db_lock:
+            rows = _state_db_conn.execute(_QUEUED_TRIAGE_SQL).fetchall()
+    except Exception as exc:
+        print(f"Warning: queued-job lookup failed: {exc}", file=sys.stderr)
+        return []
+    return [dict(r) for r in rows]
+
+
+def _job_meta_from_row(row: dict) -> dict:
+    """The job dict the hook would have written for this row.
+
+    Deliberately omits ``path`` and ``bundle_dir``. ``jobs.path`` is the
+    queue path the *producer* saw, which is precisely the chroot path
+    this function exists to stop trusting, and an absent bundle_dir is
+    what makes the worker materialize the bundle over HTTP.
+    """
+    meta = {
+        "created_ts_utc": row.get("created_ts_utc") or "",
+        "profile": row.get("profile") or "",
+        "target": row.get("target") or "",
+        "origin": row.get("origin") or "",
+        "flavor": row.get("flavor") or "",
+        "bundle_id": row.get("bundle_id") or "",
+        "run_id": row.get("run_id") or "",
+        "type": row.get("type") or "triage",
+    }
+    meta.update(_FRESH_TRIAGE_DEFAULTS)
+    return meta
+
+
+def _job_file_exists_locally(queue_root: Path, job_id: str) -> bool:
+    """True when this runner's own queue already carries the job file.
+
+    ``jobs.job_id`` is the .job filename, so this is an exact check. On a
+    single host the hook writes both the file and the row, and the file
+    queue must keep handling those — claiming them here as well would
+    process each failure twice.
+    """
+    return any((queue_root / d / job_id).exists() for d in ("pending", "inflight"))
+
+
+def _write_job_file(dest_dir: Path, meta: dict, job_id: str) -> Path:
+    """Write the job file the rest of the runner reads.
+
+    Straight into ``inflight/``: the claim already happened in the DB, so
+    there is no pending state to represent. The file is the carrier for
+    ``process_job`` and a breadcrumb for an operator reading the queue by
+    hand — it is no longer what decides anything.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / job_id
+    tmp = dest_dir / f".tmp.{os.getpid()}.{job_id}"
+    tmp.write_text("".join(f"{k}={v}\n" for k, v in meta.items()))
+    tmp.rename(path)
+    return path
+
+
+def claim_stranded_db_jobs(queue_root: Path) -> tuple[Path, list[Path]] | None:
+    """Claim queued triage jobs whose .job file this runner cannot see.
+
+    The claim is ``lifecycle.apply(..., CLAIM)``, which runs under BEGIN
+    IMMEDIATE and raises IllegalTransition when the job has already left
+    ``queued``. That makes the transition itself the mutex: two runners
+    against one tracker cannot both win it, and the loser simply moves on
+    to the next candidate.
+
+    Returns ``(lead_path, sibling_paths)`` as ``claim_next_job_batch``
+    does, or ``None``.
+    """
+    from dportsv3.agent.lifecycle import JobEvent
+
+    rows = [r for r in _queued_triage_rows()
+            if not _job_file_exists_locally(queue_root, r["job_id"])]
+
+    # profile joins through runs, and _job_dedup_key needs it. A row
+    # without one means the run upsert never landed, so the job cannot be
+    # fully materialized — leave it queued and say so, rather than claim
+    # it and hand the worker a job that is missing a field the hook
+    # always writes.
+    incomplete = [r for r in rows if not r.get("profile")]
+    if incomplete:
+        log(queue_root, "WARN",
+            f"{len(incomplete)} queued job(s) have no runs.profile and were "
+            f"left alone: {','.join(r['job_id'] for r in incomplete[:5])}")
+        rows = [r for r in rows if r.get("profile")]
+
+    if not rows:
+        return None
+
+    inflight_dir = queue_root / "inflight"
+    for i, lead in enumerate(rows):
+        lead_meta = _job_meta_from_row(lead)
+        if not _apply_transition(lead["job_id"], JobEvent.CLAIM,
+                                 detail={"source": "db", "reason": "no local job file"}):
+            continue  # lost the race, or the row is not claimable — try the next
+        lead_path = _write_job_file(inflight_dir, lead_meta, lead["job_id"])
+
+        lead_key = _job_dedup_key(lead_meta)
+        sibling_paths: list[Path] = []
+        if lead_key is not None:
+            for other in rows[i + 1:]:
+                other_meta = _job_meta_from_row(other)
+                if _job_dedup_key(other_meta) != lead_key:
+                    continue
+                if not _apply_transition(other["job_id"], JobEvent.CLAIM,
+                                         detail={"source": "db"}):
+                    continue
+                sibling_paths.append(
+                    _write_job_file(inflight_dir, other_meta, other["job_id"]))
+        log(queue_root, "INFO",
+            f"claimed {lead['job_id']} from the DB "
+            f"({len(sibling_paths)} sibling(s)); no local job file")
+        return lead_path, sibling_paths
+    return None
+
+
 def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
     """Claim the oldest pending job and any sibling pending jobs.
 
@@ -2493,7 +2640,10 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
                 continue
             _apply_transition(s_dest.name, JobEvent.CLAIM)
         return lead_dest, moved_siblings
-    return None
+    # Nothing in pending/. A hook on the other side of a chroot or a
+    # host boundary wrote its file where this runner cannot see it, but
+    # its jobs row arrived over HTTP.
+    return claim_stranded_db_jobs(queue_root)
 
 
 def enqueue_patch_job(

@@ -1,32 +1,26 @@
-"""HTTP service that writes state.db, blobs, and full logs.
+"""The evidence store: state.db rows, content-addressed blobs, full logs.
 
-The single writer for state.db (the central evidence + agentic metadata
-store). Tracker reads it; runner writes to it via this HTTP layer.
-Schema lives in ``dportsv3.db.schema`` and is shared with tracker.
+A library, not a service. It used to run as its own HTTP daemon on
+:8788; the tracker now mounts its endpoints in-process and calls these
+methods directly, so there is one service and one port. See
+``dportsv3.tracker.routes.ingest_api`` for the /v1/ surface.
 
-Entry points:
-- ``scripts/artifact-store`` — standalone shim (no venv required)
-- ``python -m dportsv3.artifact_store`` (or the venv's bin/artifact-store
-  console script once pyproject.toml is updated)
+The tracker and the runner also write state.db; WAL serializes them.
+Schema lives in ``dportsv3.db.schema`` and is shared.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 from .db.schema import init_db as _init_state_db
 
-DEFAULT_BIND = "127.0.0.1"
-DEFAULT_PORT = 8788
 DEFAULT_LOGS_ROOT = "/build/synth/logs"
 
 
@@ -93,9 +87,11 @@ def _normalize_ts(raw: str | None) -> str | None:
 
 
 class ArtifactStore:
-    def __init__(self, logs_root: Path) -> None:
+    def __init__(self, logs_root: Path, evidence_root: Path | None = None) -> None:
         self.logs_root = logs_root
-        self.evidence_root = logs_root / "evidence"
+        self.evidence_root = (
+            Path(evidence_root) if evidence_root is not None else logs_root / "evidence"
+        )
         self.blob_root = self.evidence_root / "blobstore"
         self.full_logs_root = self.evidence_root / "full-logs"
         self.db_path = self.evidence_root / "state.db"
@@ -105,6 +101,17 @@ class ArtifactStore:
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         _init_state_db(self.conn)
+
+    @classmethod
+    def from_evidence_root(cls, evidence_root: Path | str) -> "ArtifactStore":
+        """Build a store around an evidence directory directly.
+
+        The tracker is configured with the evidence root
+        (``DPORTSV3_ARTIFACT_ROOT``), not the logs root the standalone
+        service took, and the two are not required to be one level apart.
+        """
+        evidence_root = Path(evidence_root)
+        return cls(evidence_root.parent, evidence_root=evidence_root)
 
     def _ensure_dirs(self) -> None:
         self.evidence_root.mkdir(parents=True, exist_ok=True)
@@ -469,189 +476,3 @@ class ArtifactStore:
             })
             self.conn.commit()
         return new_rev
-
-
-class Handler(BaseHTTPRequestHandler):
-    server: "ArtifactStoreServer"
-
-    def log_message(self, format: str, *args: Any) -> None:
-        log("HTTP", f"{self.address_string()} - {format % args}")
-
-    def _send_json(self, data: Any, status: int = 200) -> None:
-        body = json.dumps(data, indent=2).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_error_json(self, status: int, message: str) -> None:
-        self._send_json({"error": message}, status)
-
-    def _read_json_body(self) -> dict[str, Any] | None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length <= 0:
-            return None
-        raw = self.rfile.read(length)
-        if not raw:
-            return None
-        try:
-            return json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError:
-            return None
-
-    def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = parse_qs(parsed.query)
-        store = self.server.store
-
-        if path == "/health":
-            self._send_json({
-                "ok": True,
-                "db_path": str(store.db_path),
-                "blobstore_root": str(store.blob_root),
-                "full_logs_root": str(store.full_logs_root),
-            })
-            return
-
-        if path == "/v1/artifacts/get":
-            bundle_id = query.get("bundle_id", [None])[0]
-            relpath = query.get("relpath", [None])[0]
-            if not bundle_id or not relpath:
-                self._send_error_json(400, "bundle_id and relpath required")
-                return
-            result = store.get_artifact(bundle_id, relpath)
-            if not result:
-                self._send_error_json(404, "artifact not found")
-                return
-            backend, file_path = result
-            if not file_path.exists():
-                self._send_error_json(404, "artifact file missing")
-                return
-            data = file_path.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-
-        self._send_error_json(404, "Not found")
-
-    def do_POST(self) -> None:
-        store = self.server.store
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        if path == "/v1/bundles/upsert":
-            body = self._read_json_body()
-            if not body:
-                self._send_error_json(400, "invalid JSON body")
-                return
-            bundle_id = body.get("bundle_id")
-            if not bundle_id:
-                self._send_error_json(400, "bundle_id required")
-                return
-            store.upsert_run_bundle(body)
-            self._send_json({"ok": True})
-            return
-
-        if path == "/v1/artifacts/put":
-            bundle_id = self.headers.get("X-Bundle-Id")
-            relpath = self.headers.get("X-Relpath")
-            kind = self.headers.get("X-Kind")
-            if not bundle_id or not relpath:
-                self._send_error_json(400, "X-Bundle-Id and X-Relpath required")
-                return
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                length = 0
-            data = self.rfile.read(length) if length > 0 else b""
-            if data is None:
-                data = b""
-            result = store.put_blob(bundle_id, relpath, data, kind)
-            self._send_json({"ok": True, **result})
-            return
-
-        if path == "/v1/artifacts/put-fs":
-            body = self._read_json_body()
-            if not body:
-                self._send_error_json(400, "invalid JSON body")
-                return
-            bundle_id = body.get("bundle_id")
-            relpath = body.get("relpath")
-            fs_path = body.get("fs_path")
-            kind = body.get("kind")
-            if not bundle_id or not relpath or not fs_path:
-                self._send_error_json(400, "bundle_id, relpath, fs_path required")
-                return
-            result = store.put_fs_ref(bundle_id, relpath, fs_path, kind)
-            self._send_json({"ok": True, **result})
-            return
-
-        if path == "/v1/jobs/transition":
-            body = self._read_json_body()
-            if not body:
-                self._send_error_json(400, "invalid JSON body")
-                return
-            if not body.get("job_id") or not body.get("event"):
-                self._send_error_json(400, "job_id and event required")
-                return
-            result = store.apply_transition(body)
-            if not result.get("ok"):
-                self._send_error_json(400, result.get("error") or "transition rejected")
-                return
-            self._send_json(result)
-            return
-
-        if path == "/v1/user-context":
-            body = self._read_json_body()
-            if not body:
-                self._send_error_json(400, "invalid JSON body")
-                return
-            run_id = body.get("run_id")
-            origin = body.get("origin")
-            context_text = body.get("context_text")
-            if not run_id or not origin or context_text is None:
-                self._send_error_json(400, "run_id, origin, context_text required")
-                return
-            context_text = str(context_text).strip()
-            if not context_text:
-                self._send_error_json(400, "context_text cannot be empty")
-                return
-            if len(context_text) > 8000:
-                self._send_error_json(400, "context_text too long (max 8000 chars)")
-                return
-            new_rev = store.upsert_user_context(run_id, origin, context_text)
-            self._send_json({"ok": True, "context_rev": new_rev})
-            return
-
-        self._send_error_json(404, "Not found")
-
-
-class ArtifactStoreServer(HTTPServer):
-    def __init__(self, server_address: tuple[str, int], RequestHandlerClass: type, store: ArtifactStore) -> None:
-        super().__init__(server_address, RequestHandlerClass)
-        self.store = store
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Local artifact store (blobstore + metadata)")
-    parser.add_argument("--bind", default=DEFAULT_BIND)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--logs-root", default=DEFAULT_LOGS_ROOT)
-    args = parser.parse_args(argv)
-
-    store = ArtifactStore(Path(args.logs_root))
-    server = ArtifactStoreServer((args.bind, args.port), Handler, store)
-    log("INFO", f"artifact-store listening on http://{args.bind}:{args.port}")
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    main()

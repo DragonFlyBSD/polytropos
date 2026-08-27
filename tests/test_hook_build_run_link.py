@@ -99,24 +99,14 @@ def test_the_failure_hook_sends_it():
 
 
 @pytest.fixture
-def live_store(tmp_path):
-    """The real client binary talking to a real store over HTTP.
+def live_store(ingest_server):
+    """The real client binary talking to a real server over HTTP.
 
     The hook shells out to this client, so a payload key that the client
     never puts on the wire is invisible to every in-process test. Yields
     (run_client, store).
     """
-    import threading
-
-    from dportsv3.artifact_store import (
-        ArtifactStore, ArtifactStoreServer, Handler,
-    )
-
-    store = ArtifactStore(tmp_path)
-    server = ArtifactStoreServer(("127.0.0.1", 0), Handler, store)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    url = f"http://127.0.0.1:{server.server_address[1]}"
+    url, store = ingest_server
     client = [sys.executable, "-m", "dportsv3.artifact_store_client"]
 
     def run(*args):
@@ -125,12 +115,7 @@ def live_store(tmp_path):
         assert done.returncode == 0, done.stderr
         return done
 
-    try:
-        yield run, store
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return run, store
 
 
 def _upsert(run, **overrides):

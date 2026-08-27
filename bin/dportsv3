@@ -72,7 +72,6 @@ generator commands:
   dsl             DSL parse/check/plan commands
   migrate         Migration utilities (compose-first workflow)
   tracker            Build tracker server and queries
-  artifact-store     Run the artifact-store HTTP service
   agent-queue-runner Run the agent queue runner (triage + patch loop)
 
 Use 'dportsv3 COMMAND --help' for command-specific help.
@@ -208,7 +207,7 @@ STAMP_VALUE="$(compute_stamp)+$(compute_dev_env_stamp)"
 # The `tracker` profile installs everything `base` does plus the extra, so a
 # venv stamped tracker already satisfies a base request. Without this the two
 # profiles evict each other: bootstrapping `tracker serve` records "tracker:",
-# after which `artifact-store` sees a mismatch and — under
+# after which a base-profile command sees a mismatch and — under
 # DPORTSV3_NO_BOOTSTRAP=1, which is how the rc.d services run — refuses to
 # start against a venv that can run it perfectly well. Found bringing the
 # services up on x6. The relation is one-way: base does not satisfy tracker.

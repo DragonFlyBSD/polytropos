@@ -8,7 +8,7 @@ the per-phase commits referenced from `docs/agentic-consolidation-plan.md`.
 
 For every dsynth build a per-port hook fires when a port fails. The hook
 uploads the failure evidence as a "bundle" (logs, port files, metadata)
-to the artifact-store. A queue runner picks the bundle up, runs an LLM
+to the tracker's ingest API. A queue runner picks the bundle up, runs an LLM
 triage pass on it, classifies the failure, and — if the trust tier
 permits — runs a patch attempt loop against a writable copy of the
 DeltaPorts tree inside a chrooted dev-env. The patch loop ends at a
@@ -17,7 +17,7 @@ commits, branches, pushes, or PRs are produced; promoting a fix is a
 manual operator step.
 
 ```
-dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
+dsynth build ──fail──▶ hook ──▶ tracker /v1 (bundle)
                                        │
                                        ▼
                               agent-queue-runner
@@ -39,13 +39,14 @@ dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
 ## Architecture in one breath
 
 - **One DB**: `state.db` (WAL + `busy_timeout=5000`, `foreign_keys=ON`
-  on every connection). Two writers — artifact-store and tracker —
-  share it.
-- **One serve process** for the UI/read surface: FastAPI
+  on every connection). Two processes write it — tracker and runner —
+  serialized by WAL.
+- **One serve process**, for reads and writes both: FastAPI
   `dportsv3 tracker serve` at `:8080` by default. Builds, agentic
-  bundles/jobs/runner, and HTML views are all routed through it.
-- **One hook set**: `dev-env/dports_dev_env/dsynth-hooks/` writes the failure bundle
-  to artifact-store and the run-state to the tracker.
+  bundles/jobs/runner and HTML views are routed through it, and so is
+  the `/v1/` ingest surface the hooks and the runner post to.
+- **One hook set**: `dev-env/dports_dev_env/dsynth-hooks/` writes the
+  failure bundle and the run-state to that one endpoint.
 - **One per-port workspace primitive**: `dportsv3 dev-env` (chroot +
   writable copy-on-write overlay). The patch agent edits files in the
   overlay; the host tree is never modified.
@@ -54,11 +55,10 @@ dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
 
 | Service | Purpose | Default port |
 |---|---|---|
-| `dportsv3 artifact-store` | Receives bundles + `/v1/user-context` POSTs; writes to `state.db`; serves artifact streams under `/v1/artifacts/get` | 8788 |
-| `dportsv3 tracker serve` | Read API + HTML views (`/`, `/target/{target}`, `/builds/{id}`, `/agentic/*`); SSE event tail | 8080 |
+| `dportsv3 tracker serve` | HTML views (`/`, `/target/{target}`, `/builds/{id}`, `/agentic/*`), read API, SSE event tail, and the `/v1/` ingest API hooks and runners write to | 8080 |
 | `dportsv3 agent-queue-runner --queue-root $LOGS_ROOT/evidence/queue` | Pops bundles from the file queue, runs triage + patch jobs against the LLM provider | — |
 
-All three read the same `state.db`. Order of startup doesn't matter —
+Both read the same `state.db`. Order of startup doesn't matter —
 each one is idempotent on the schema.
 
 **Only one runner at a time.** The runner takes an exclusive `flock` on
@@ -106,9 +106,9 @@ Required by the runner:
 
 | Var | Meaning | Example |
 |---|---|---|
-| `DPORTSV3_STATE_DB` | Path to state.db (shared with artifact-store) | `/build/synth/logs/evidence/state.db` |
+| `DPORTSV3_STATE_DB` | Path to state.db (shared with the runner) | `/build/synth/logs/evidence/state.db` |
 | `DPORTSV3_TRACKER_URL` | Base URL for runner→tracker lookups (bundles, ports) | `http://127.0.0.1:8080` (default) |
-| `ARTIFACT_STORE_URL` | Base URL for runner→artifact-store artifact GETs | `http://127.0.0.1:8788` (default) |
+| `ARTIFACT_STORE_URL` | Base URL the dsynth hooks post to. Always loopback | `http://127.0.0.1:8080` (default) |
 | `DP_HARNESS_TRIAGE_MODEL` | LiteLLM model string for triage | `openai/gpt-5-nano` |
 | `DP_HARNESS_PATCH_MODEL` | LiteLLM model string for patch | `anthropic/claude-sonnet-4` |
 | `DP_HARNESS_TRIAGE_API_KEY` / `_BASE` | Provider key + optional custom endpoint | — |
@@ -206,7 +206,7 @@ reported confidence is below the floor for that tier.
 | `/diff` | Compare two targets' current port status |
 | `/agentic` | Bundles + jobs summary dashboard |
 | `/agentic/bundles[?target=]` | Failure-evidence bundles |
-| `/agentic/bundles/{id}` | One bundle's metadata + artifact list (links stream files from the artifact-store) |
+| `/agentic/bundles/{id}` | One bundle's metadata + artifact list (links stream files from the blobstore) |
 | `/agentic/jobs[?state=&target=]` | Queue state (pending / inflight / done / failed) |
 | `/agentic/runner` | Current runner heartbeat |
 | `/agentic/activity` | Stage-transition log |
@@ -233,7 +233,7 @@ per-target events live.
 | Runner sees no bundles | Hook output (`dsynth` logs); `state.db` `bundles` table |
 | Triage 401s | `DP_HARNESS_TRIAGE_API_KEY` and `_API_BASE` |
 | Patch loop stalls | Tracker `/agentic/jobs/{id}` → state=inflight + last_error |
-| Artifact 404 | `DPORTSV3_ARTIFACT_ROOT` on the tracker matches `--logs-root` on the artifact-store |
+| Artifact 404 | `DPORTSV3_ARTIFACT_ROOT` names the evidence dir the tracker reads *and writes* |
 | Hook can't reach tracker | `DPORTSV3_TRACKER_URL` from the dsynth env; some chroot setups need a bind-mount or 127.0.0.1 only |
 
 For deeper triage of the agent runtime itself, see `docs/TESTING_E2E.md`

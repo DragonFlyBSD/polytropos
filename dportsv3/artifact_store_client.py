@@ -13,7 +13,12 @@ import json
 import sys
 import urllib.request
 
-DEFAULT_URL = "http://127.0.0.1:8788"
+# Deliberately a literal, not an import of
+# dportsv3.common.endpoints.DEFAULT_TRACKER_URL: this file must stay
+# runnable under a bare system python3 with nothing else importable, and
+# a test pins that. A second test pins the two values equal so the copy
+# cannot drift.
+DEFAULT_URL = "http://127.0.0.1:8080"
 
 
 def request_json(method: str, url: str, body: dict | None = None, headers: dict | None = None):

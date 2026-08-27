@@ -76,18 +76,15 @@ then `dportsv3 dev-env status NAME` must report `ready`.
 ### Run
 
 ```
-# 1. Start artifact-store (writes bundles + state.db rows)
-dportsv3 artifact-store --logs-root /build/synth/logs &
-
-# 2. Start tracker (reads state.db, serves UI + read endpoints)
+# 1. Start tracker (UI, read endpoints, and the /v1/ ingest surface
+#    the hooks post bundles and blobs to)
 DPORTSV3_STATE_DB=/build/synth/logs/evidence/state.db \
 DPORTSV3_ARTIFACT_ROOT=/build/synth/logs/evidence \
   dportsv3 tracker serve --port 8080 &
 
-# 3. Start the queue runner
+# 2. Start the queue runner
 DPORTSV3_STATE_DB=/build/synth/logs/evidence/state.db \
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080 \
-ARTIFACT_STORE_URL=http://127.0.0.1:8788 \
 DP_HARNESS_TRIAGE_MODEL=... \
 DP_HARNESS_PATCH_MODEL=... \
 DP_HARNESS_TRIAGE_API_KEY=... \

@@ -52,7 +52,7 @@ Defaults you usually don't need to override:
   target) — but set it explicitly if the profile is not named after the
   target, which is the case inside a dev-env
 - `DPORTSV3_TRACKER_BUILD_TYPE` defaults to `test` — set to `release` for builds you intend to publish
-- `ARTIFACT_STORE_URL` defaults to `http://127.0.0.1:8788`
+- `ARTIFACT_STORE_URL` defaults to `http://127.0.0.1:8080`
 
 Make sure dsynth's `Hooks_Directory` points to `/etc/dsynth` (or
 wherever you installed). dsynth picks up hooks by name; only one

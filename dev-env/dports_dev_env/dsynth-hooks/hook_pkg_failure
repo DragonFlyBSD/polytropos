@@ -106,12 +106,19 @@ if [ -r "${errors_txt}" ]; then
 fi
 rm -rf "$tmpdir"
 
-# Keep the full log available but compressed (fs-backed)
-full_log_path="${DIR_LOGS}/evidence/full-logs/${bundle_id}.full.log.gz"
+# The full log travels as bytes, compressed. It used to be registered
+# with put-fs, which records a path instead of content: unresolvable from
+# another host, and unresolvable even on this one when the hook runs
+# inside a chroot and computes /work/dsynth/logs/... for a store outside
+# it. gzip -9 on build-log text is a large win, so the upload is small.
 if [ -r "$logfile" ]; then
-	mkdir -p "$(dirname "$full_log_path")"
-	gzip -c -9 "$logfile" > "$full_log_path" || true
-	artifact_store put-fs --bundle-id "${bundle_id}" --relpath "logs/full.log.gz" --fs-path "$full_log_path" --kind gzip >/dev/null
+	full_log_gz="$(mktemp -t dportsv3-fullog)" || full_log_gz=""
+	if [ -n "$full_log_gz" ]; then
+		if gzip -c -9 "$logfile" > "$full_log_gz"; then
+			artifact_store put-blob --bundle-id "${bundle_id}" --relpath "logs/full.log.gz" --file "$full_log_gz" --kind gzip >/dev/null
+		fi
+		rm -f "$full_log_gz"
+	fi
 fi
 
 # Enqueue job for processing.

@@ -23,6 +23,5 @@
 # and its supervisor; signalling the supervisor reopened the log with
 # both still running.
 
-/var/log/polytropos/artifact-store.log	root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_artifact_store.pid  SIGUSR1
 /var/log/polytropos/tracker.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_tracker.pid  SIGUSR1
 /var/log/polytropos/runner.log		root:wheel	640  7	 1000  *  CZ  /var/run/polytropos_runner.pid  SIGUSR1

@@ -64,15 +64,15 @@ def test_empty_bind_falls_back(fake_uvicorn, tmp_path) -> None:
     assert fake_uvicorn == [{"host": "0.0.0.0", "port": 8080}]
 
 
-# --- the asymmetry with artifact-store is intentional -------------------
+# --- one service, one bind ----------------------------------------------
 
-def test_artifact_store_stays_on_loopback() -> None:
-    """The two services differ on purpose: artifact-store takes bundles
-    from the local hooks and has no reason to leave the host, while the
-    tracker serves a UI a human opens from their desk. Pinned so nobody
-    'harmonises' the two."""
+def test_the_store_no_longer_has_a_bind_of_its_own() -> None:
+    """artifact-store was a second listener on loopback. It is a library
+    now, so the tracker's bind is the only one there is, and the ingest
+    surface is exposed on exactly the same interface as the UI."""
     from dportsv3 import artifact_store
-    assert artifact_store.DEFAULT_BIND == "127.0.0.1"
+    assert not hasattr(artifact_store, "DEFAULT_BIND")
+    assert not hasattr(artifact_store, "DEFAULT_PORT")
     assert tracker_cmd.DEFAULT_BIND == "0.0.0.0"
 
 

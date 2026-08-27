@@ -33,22 +33,9 @@ _HOOKS = _hooks_dir()
 
 
 @pytest.fixture
-def store_url(tmp_path):
-    """A real artifact-store on a real port, as the hook expects."""
-    from dportsv3.artifact_store import (
-        ArtifactStore, ArtifactStoreServer, Handler,
-    )
-
-    store = ArtifactStore(tmp_path / "store")
-    server = ArtifactStoreServer(("127.0.0.1", 0), Handler, store)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", store
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+def store_url(ingest_server):
+    """The hooks post to whatever serves /v1/; see conftest."""
+    return ingest_server
 
 
 @pytest.fixture
@@ -160,3 +147,41 @@ def test_a_broken_dportsv3_bin_does_not_cost_the_bundle(
 
     rows = store.conn.execute("SELECT origin FROM bundles").fetchall()
     assert len(rows) == 1, done.stderr
+
+
+def test_the_full_log_arrives_as_bytes_not_as_a_path(tmp_path, store_url, client):
+    """put-fs recorded a path the store had to open itself, which fails
+    the moment the hook and the store are not the same filesystem — and
+    in a chroot they never are. The compressed log is a blob now."""
+    import gzip
+
+    url, store = store_url
+    done = _run_failure_hook(tmp_path, url, client)
+    assert done.returncode == 0, done.stderr
+
+    row = store.conn.execute(
+        "SELECT backend, sha256, fs_path, kind, size FROM artifact_refs "
+        "WHERE relpath = 'logs/full.log.gz'"
+    ).fetchone()
+    assert row is not None, "the full log was not stored at all"
+    assert row["backend"] == "blob"
+    assert row["fs_path"] is None
+    assert row["kind"] == "gzip"
+    assert row["size"] > 0
+
+    from dportsv3.artifact_store import blob_path
+    stored = blob_path(store.blob_root, row["sha256"])
+    assert stored.is_file()
+    assert b"nosuchsym" in gzip.decompress(stored.read_bytes())
+
+
+def test_no_artifact_is_left_pointing_at_a_path(tmp_path, store_url, client):
+    """Nothing the hook writes may be fs-backed: the tracker serving the
+    UI is not guaranteed to share a filesystem with the builder."""
+    url, store = store_url
+    assert _run_failure_hook(tmp_path, url, client).returncode == 0
+    backends = {
+        r["backend"]
+        for r in store.conn.execute("SELECT DISTINCT backend FROM artifact_refs")
+    }
+    assert backends == {"blob"}

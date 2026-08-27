@@ -192,3 +192,14 @@ def test_install_does_not_rewrite_an_operator_edited_conf(tmp_path):
         target, settings={"DPORTSV3_TRACKER_TARGET": "@other"})
     assert (target / hooks.CONF_TARGET).read_text() == "MINE=1\n"
     assert any(hooks.CONF_TARGET in note for note in skipped), skipped
+
+
+def test_the_clients_default_url_matches_the_shared_one():
+    """The client cannot import dportsv3.common.endpoints — the test
+    above forbids it — so its default is a copy. Pin them equal: a
+    deployment that moves the tracker changes one constant, and a silent
+    disagreement here sends every hook to the wrong port."""
+    from dportsv3.artifact_store_client import DEFAULT_URL
+    from dportsv3.common.endpoints import DEFAULT_TRACKER_URL
+
+    assert DEFAULT_URL == DEFAULT_TRACKER_URL

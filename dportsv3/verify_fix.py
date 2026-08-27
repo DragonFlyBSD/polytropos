@@ -39,14 +39,14 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from dportsv3.common.endpoints import DEFAULT_TRACKER_URL, tracker_url
 
 
-DEFAULT_TRACKER_URL = "http://127.0.0.1:8080"
 DIFF_RELPATH = "analysis/changes.diff"
 
 
 def _tracker_url() -> str:
-    return os.environ.get("DPORTSV3_TRACKER_URL", DEFAULT_TRACKER_URL).rstrip("/")
+    return tracker_url()
 
 
 def _get_json(url: str, timeout: int = 10) -> dict:

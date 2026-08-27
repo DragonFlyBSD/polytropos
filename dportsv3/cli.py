@@ -33,7 +33,6 @@ def create_parser() -> argparse.ArgumentParser:
     _register_dsl_parser(subparsers)
     _register_migrate_parser(subparsers)
     _register_tracker_parser(subparsers)
-    _register_artifact_store_parser(subparsers)
     _register_agent_queue_runner_parser(subparsers)
     _register_deploy_parser(subparsers)
     from dportsv3.verify_fix import register_parser as _reg_verify_fix
@@ -679,21 +678,6 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     download_bundle_p.add_argument("--server", type=str)
 
 
-def _register_artifact_store_parser(subparsers: argparse._SubParsersAction) -> None:
-    """Register artifact-store command (serves bundles into state.db).
-
-    The subparser is a marker only; argv past this subcommand is
-    forwarded verbatim to ``dportsv3.artifact_store.main`` by ``main``
-    below (REMAINDER nargs doesn't reliably absorb ``--flag``-style
-    args).
-    """
-    subparsers.add_parser(
-        "artifact-store",
-        help="Run the artifact-store HTTP service (forwards --bind/--port/--logs-root)",
-        add_help=False,
-    )
-
-
 def _register_agent_queue_runner_parser(
     subparsers: argparse._SubParsersAction,
 ) -> None:
@@ -748,15 +732,6 @@ def _register_deploy_parser(subparsers: argparse._SubParsersAction) -> None:
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     raw = list(argv) if argv is not None else sys.argv[1:]
-
-    # artifact-store is a thin forwarder — let its own argparse handle
-    # --bind/--port/--logs-root rather than splitting flag parsing
-    # across two layers. ``argparse.REMAINDER`` is unreliable for this.
-    if raw and raw[0] == "artifact-store":
-        from dportsv3.artifact_store import main as artifact_store_main
-
-        artifact_store_main(raw[1:])
-        return 0
 
     # agent-queue-runner lives at dportsv3.agent.runner; call its
     # main() directly with the remaining argv (so its own argparse

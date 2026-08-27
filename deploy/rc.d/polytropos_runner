@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # PROVIDE: polytropos_runner
-# REQUIRE: LOGIN FILESYSTEMS polytropos_artifact_store polytropos_tracker
+# REQUIRE: LOGIN FILESYSTEMS polytropos_tracker
 # KEYWORD: shutdown
 
 #
@@ -58,7 +58,6 @@ export PATH
 : ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
 : ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}
-: ${polytropos_artifact_store_url:="http://127.0.0.1:8788"}
 : ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
 : ${polytropos_runner_dev_env:=""}
 
@@ -89,8 +88,7 @@ logfile="${polytropos_log_dir}/runner.log"
 # this.
 polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
 DPORTSV3_STATE_DB=${polytropos_state_db} \
-DPORTSV3_TRACKER_URL=${polytropos_tracker_url} \
-ARTIFACT_STORE_URL=${polytropos_artifact_store_url}"
+DPORTSV3_TRACKER_URL=${polytropos_tracker_url}"
 
 _dev_env_flag=""
 [ -n "${polytropos_runner_dev_env}" ] && \
@@ -166,8 +164,9 @@ polytropos_runner_prestart()
 	export DPORTS_DEV_ENV_CMD
 
 	# Root writing into a tree owned by ${polytropos_user}: without this
-	# the tracker and artifact-store cannot write the files this process
-	# creates. The failure looks like a read-only database, not a
+	# the tracker cannot write the files this process creates, and it
+	# writes the blobstore now too. The failure looks like a
+	# read-only database, not a
 	# permission error.
 	umask 002
 }

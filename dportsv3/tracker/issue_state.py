@@ -102,7 +102,7 @@ def derived_regression(
     """When this issue's fix came back, or None if it hasn't.
 
     The single definition of ``regressed``, replacing the three that used to
-    disagree: the artifact-store writer's "any occurrence on a resolved
+    disagree: the ingest writer's "any occurrence on a resolved
     issue", the unmute path's timestamp compare, and the stored column each
     read back independently.
 
