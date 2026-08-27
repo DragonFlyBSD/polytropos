@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dportsv3.artifact_store import blob_path
+
 from .text import (
     render_markdown,
     render_diff,
@@ -331,15 +333,9 @@ def resolve_artifact_path(
         sha = ref.get("sha256")
         if not sha or len(sha) < 4:
             return None
-        return (
-            artifact_root
-            / "blobstore"
-            / "objects"
-            / "sha256"
-            / sha[0:2]
-            / sha[2:4]
-            / sha
-        )
+        # blob_path owns the layout; the writer (put_blob) uses the same
+        # function, so the served path cannot drift from the stored one.
+        return blob_path(artifact_root / "blobstore", sha)
     if backend == "fs":
         fs_path = ref.get("fs_path")
         if not fs_path:

@@ -57,7 +57,9 @@ if (
     FastAPIType = _fastapi.FastAPI
     HTTPExceptionType = _fastapi.HTTPException
     QueryType = _fastapi.Query
+    BodyType = _fastapi.Body
     RequestType = _fastapi.Request
+    ResponseType = _responses.Response
     HTMLResponseType = _responses.HTMLResponse
     RedirectResponseType = _responses.RedirectResponse
     StaticFilesType = _staticfiles.StaticFiles
@@ -93,7 +95,9 @@ else:
     FastAPIType = _MissingFastAPI
     HTTPExceptionType = _MissingHTTPException
     QueryType = _missing_query
+    BodyType = _missing_query
     RequestType = _MissingRequest
+    ResponseType = _MissingHTMLResponse
     HTMLResponseType = _MissingHTMLResponse
     RedirectResponseType = _MissingHTMLResponse
     StaticFilesType = _MissingStaticFiles
@@ -106,6 +110,9 @@ else:
 FastAPI = cast(Any, FastAPIType)
 HTTPException = cast(Any, HTTPExceptionType)
 Query = cast(Any, QueryType)
+Body = cast(Any, BodyType)
+Request = cast(Any, RequestType)
+Response = cast(Any, ResponseType)
 HTMLResponse = cast(Any, HTMLResponseType)
 RedirectResponse = cast(Any, RedirectResponseType)
 StaticFiles = cast(Any, StaticFilesType)

@@ -24,6 +24,7 @@ from dportsv3.tracker.routes import (
     agentic_api,
     builds_api,
     bundle_actions,
+    ingest_api,
     issue_actions,
     pages,
 )
@@ -129,6 +130,7 @@ def create_app(db_path: str | Path) -> Any:
         raise_http_error=_raise_http_error,
         templates=templates,
     )
+    ingest_api.register(app, ctx)
     builds_api.register(app, ctx)
     agentic_api.register(app, ctx)
     bundle_actions.register(app, ctx)

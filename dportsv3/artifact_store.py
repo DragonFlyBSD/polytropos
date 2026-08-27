@@ -1,13 +1,13 @@
 """HTTP service that writes state.db, blobs, and full logs.
 
-The single writer for state.db (the central evidence + agentic metadata
-store). Tracker reads it; runner writes to it via this HTTP layer.
-Schema lives in ``dportsv3.db.schema`` and is shared with tracker.
+One of the three processes that write state.db, alongside the tracker
+and the runner; WAL serializes them. The tracker also reads and writes
+it directly. Schema lives in ``dportsv3.db.schema`` and is shared.
 
 Entry points:
-- ``scripts/artifact-store`` — standalone shim (no venv required)
-- ``python -m dportsv3.artifact_store`` (or the venv's bin/artifact-store
-  console script once pyproject.toml is updated)
+- ``bin/artifact-store`` — standalone shim (no venv required)
+- ``artifact-store`` — console script
+- ``python -m dportsv3.artifact_store``
 """
 
 from __future__ import annotations
@@ -93,9 +93,11 @@ def _normalize_ts(raw: str | None) -> str | None:
 
 
 class ArtifactStore:
-    def __init__(self, logs_root: Path) -> None:
+    def __init__(self, logs_root: Path, evidence_root: Path | None = None) -> None:
         self.logs_root = logs_root
-        self.evidence_root = logs_root / "evidence"
+        self.evidence_root = (
+            Path(evidence_root) if evidence_root is not None else logs_root / "evidence"
+        )
         self.blob_root = self.evidence_root / "blobstore"
         self.full_logs_root = self.evidence_root / "full-logs"
         self.db_path = self.evidence_root / "state.db"
@@ -105,6 +107,17 @@ class ArtifactStore:
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         _init_state_db(self.conn)
+
+    @classmethod
+    def from_evidence_root(cls, evidence_root: Path | str) -> "ArtifactStore":
+        """Build a store around an evidence directory directly.
+
+        The tracker is configured with the evidence root
+        (``DPORTSV3_ARTIFACT_ROOT``), not the logs root the standalone
+        service took, and the two are not required to be one level apart.
+        """
+        evidence_root = Path(evidence_root)
+        return cls(evidence_root.parent, evidence_root=evidence_root)
 
     def _ensure_dirs(self) -> None:
         self.evidence_root.mkdir(parents=True, exist_ok=True)
