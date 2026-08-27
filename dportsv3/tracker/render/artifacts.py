@@ -3,6 +3,7 @@ artifact_root Path and artifact_refs rows."""
 
 from __future__ import annotations
 
+import gzip
 import json
 import re
 from pathlib import Path
@@ -107,6 +108,24 @@ def artifact_media_type(
 
 
 
+#: Cap on decompressed bytes held for display. gzip expands ~10-20x on
+#: build-log text, so a few hundred KB on disk can be many MB in the
+#: page. Truncating beats rendering a 50 MB <pre>; the raw endpoint still
+#: serves the whole thing.
+MAX_DECOMPRESSED_BYTES = 4 * 1024 * 1024
+
+
+def _read_gzip_text(path: Path) -> str:
+    """Decompressed text for display, bounded."""
+    with gzip.open(path, "rb") as fh:
+        raw = fh.read(MAX_DECOMPRESSED_BYTES + 1)
+    truncated = len(raw) > MAX_DECOMPRESSED_BYTES
+    text = raw[:MAX_DECOMPRESSED_BYTES].decode("utf-8", errors="replace")
+    if truncated:
+        text += "\n[...truncated for display; open the raw artifact for the rest...]\n"
+    return text
+
+
 def artifact_view_data(
     artifact_root: Path,
     bundle_id: str,
@@ -119,10 +138,26 @@ def artifact_view_data(
     media_type, inline = artifact_media_type(
         relpath, ref.get("kind"), fs_path=path,
     )
-    suffix = Path(relpath).suffix.lower()
+
+    # A gzipped artifact is bytes on the wire but usually text underneath —
+    # a build log, a diff, some json. artifact_media_type has to keep
+    # saying application/gzip because the raw endpoint streams the real
+    # compressed bytes; the viewer is where it gets unpacked. Decide by
+    # the name inside the .gz, so logs/full.log.gz renders as the log it
+    # is instead of offering a download.
+    render_relpath = relpath
+    decompressed = False
+    if not inline and (ref.get("kind") == "gzip" or relpath.endswith(".gz")):
+        inner = relpath[:-3] if relpath.endswith(".gz") else relpath
+        if artifact_media_type(inner, None)[1]:
+            inline = True
+            decompressed = True
+            render_relpath = inner
+
+    suffix = Path(render_relpath).suffix.lower()
     is_json = suffix == ".json"
     is_markdown = suffix == ".md"
-    is_diff = _is_diff_path(relpath)
+    is_diff = _is_diff_path(render_relpath)
     content: str | None = None
     render_kind = "download"
     error: str | None = None
@@ -140,7 +175,10 @@ def artifact_view_data(
         else:
             render_kind = "text"
         try:
-            raw = path.read_text(errors="replace")
+            if decompressed:
+                raw = _read_gzip_text(path)
+            else:
+                raw = path.read_text(errors="replace")
             if is_markdown:
                 content = render_markdown(raw)
             elif is_diff:
@@ -155,12 +193,12 @@ def artifact_view_data(
                 except ValueError as exc:
                     content = raw
                     error = f"invalid JSON: {exc}"
-            elif _is_log_relpath(relpath):
+            elif _is_log_relpath(render_relpath):
                 content = highlight_log(raw)
                 content_html = True
             else:
                 content = raw
-        except OSError as exc:
+        except (OSError, gzip.BadGzipFile, EOFError) as exc:
             error = str(exc)
             content = ""
     return {
@@ -169,6 +207,7 @@ def artifact_view_data(
         "ref": ref,
         "media_type": media_type,
         "inline": inline,
+        "decompressed": decompressed,
         "render_kind": render_kind,
         "content": content,
         "content_html": content_html,

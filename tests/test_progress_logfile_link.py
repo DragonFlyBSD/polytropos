@@ -121,15 +121,40 @@ def test_the_rest_of_the_entry_shape_is_unchanged(client: TestClient) -> None:
 
 # --- the link actually resolves --------------------------------------------
 
-def test_the_link_the_ui_builds_serves_the_log(client: TestClient) -> None:
+def test_the_link_the_ui_builds_shows_the_log_in_the_browser(
+    client: TestClient,
+) -> None:
     """The whole point: follow exactly what progress.js constructs and
-    get the bytes, rather than the 404 every row used to give."""
+    read the log, rather than the 404 every row used to give — or the
+    .gz download that pointing at the raw endpoint produced."""
     bundle_id = _entries(client)["graphics/jpeg-turbo"]["bundle_id"]
-    url = f"/api/bundles/{bundle_id}/artifacts/logs/full.log.gz"
+    url = f"/agentic/bundles/{bundle_id}/artifacts/logs/full.log.gz"
 
     resp = client.get(url)
     assert resp.status_code == 200, resp.text
+    assert "unknown argument" in resp.text
+    assert "raw download" not in resp.text
+
+
+def test_the_raw_endpoint_still_serves_the_real_gzip(client: TestClient) -> None:
+    """The viewer decompresses for display only. The bytes on the wire
+    are still gzip, and anything scripting against them depends on it."""
+    bundle_id = _entries(client)["graphics/jpeg-turbo"]["bundle_id"]
+    resp = client.get(f"/api/bundles/{bundle_id}/artifacts/logs/full.log.gz")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/gzip"
     assert gzip.decompress(resp.content) == LOG_BODY
+
+
+def test_a_corrupt_gzip_reports_instead_of_crashing(
+    client: TestClient, evidence_root: Path,
+) -> None:
+    """A truncated upload must not 500 the page."""
+    store = ArtifactStore.from_evidence_root(evidence_root)
+    store.put_blob("bnd-jpeg", "logs/broken.log.gz", b"\x1f\x8btruncated", "gzip")
+    store.conn.close()
+    resp = client.get("/agentic/bundles/bnd-jpeg/artifacts/logs/broken.log.gz")
+    assert resp.status_code == 200, resp.text
 
 
 def test_the_old_relative_link_is_gone_from_the_ui() -> None:
@@ -139,7 +164,7 @@ def test_the_old_relative_link_is_gone_from_the_ui() -> None:
           / "static" / "progress.js").read_text()
     assert "'___'" not in js
     assert "'../'" not in js
-    assert "/api/bundles/" in js
+    assert "/agentic/bundles/" in js
 
 
 def test_the_link_is_root_relative() -> None:
@@ -149,7 +174,7 @@ def test_the_link_is_root_relative() -> None:
           / "static" / "progress.js").read_text()
     start = js.index("function logfile(")
     body = js[start:js.index("}", start)]
-    assert "'/api/bundles/'" in body
+    assert "'/agentic/bundles/'" in body
 
 
 def test_only_failed_rows_get_a_link_in_the_renderer() -> None:

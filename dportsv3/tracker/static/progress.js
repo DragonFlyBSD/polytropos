@@ -308,14 +308,19 @@ var RESULT_GLYPHS = {
     skipped: '⇢'
 };
 
-// The build log lives on the failure's evidence bundle, as a blob the
-// tracker serves. dsynth-progress linked '../origin___port.log' — a file
-// beside its own static report — which under this UI's <base> resolved to
-// /api/progress/build/<x>.log and 404'd for every row.
+// The build log lives on the failure's evidence bundle. dsynth-progress
+// linked '../origin___port.log' — a file beside its own static report —
+// which under this UI's <base> resolved to /api/progress/build/<x>.log
+// and 404'd for every row.
+//
+// This points at the artifact VIEWER, not /api/bundles/.../artifacts/...:
+// the stored log is gzip, so the raw endpoint correctly serves it as
+// application/gzip and the browser downloads a .gz. The viewer
+// decompresses it and renders it as a highlighted log.
 //
 // Root-relative on purpose: <base> rewrites relative URLs, not these.
 function logfile(bundleId) {
-    return '/api/bundles/' + encodeURIComponent(bundleId) + '/artifacts/logs/full.log.gz';
+    return '/agentic/bundles/' + encodeURIComponent(bundleId) + '/artifacts/logs/full.log.gz';
 }
 
 function infoHTML(d) {

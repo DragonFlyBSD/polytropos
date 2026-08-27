@@ -27,7 +27,7 @@
       <div><strong>Kind:</strong> {{ artifact.ref.kind or '—' }}</div>
       <div><strong>Media type:</strong> {{ artifact.media_type }}</div>
       <div><strong>Size:</strong> {{ artifact.size if artifact.size is not none else '—' }}</div>
-      <div><a href="/api/bundles/{{ bundle.bundle_id }}/artifacts/{{ artifact.relpath }}">Open raw artifact</a></div>
+      <div><a href="/api/bundles/{{ bundle.bundle_id }}/artifacts/{{ artifact.relpath }}">Open raw artifact</a>{% if artifact.decompressed %} <span title="Shown decompressed; the raw link serves the original gzip">(shown decompressed)</span>{% endif %}</div>
     </div>
 
     {% if artifact.error %}

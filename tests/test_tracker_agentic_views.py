@@ -56,8 +56,14 @@ def seeded_state_db(tmp_path: Path) -> Path:
     )
     json_path = tmp_path / "patch_audit.json"
     json_path.write_text('{"status":"budget-exhausted","attempts":[1]}', encoding="utf-8")
+    import gzip as _gz  # noqa: PLC0415
     gzip_path = tmp_path / "full.log.gz"
-    gzip_path.write_bytes(b"\x1f\x8bcompressed")
+    # A real gzip of real log text: the viewer decompresses .log.gz for
+    # display, so a truncated stub would only ever exercise the error path.
+    gzip_path.write_bytes(_gz.compress(
+        b"===>  Building for foo-1.0\ncc: error: undeclared identifier\n"))
+    binary_path = tmp_path / "blob.bin"
+    binary_path.write_bytes(bytes(range(256)) * 4)
     # Phase 2: session dump fixture. Hand-build a tiny but
     # structurally-faithful JSONL transcript:
     #   - system prompt
@@ -141,6 +147,7 @@ def seeded_state_db(tmp_path: Path) -> Path:
             ("b-q2-foo", "logs/full.log.gz", str(gzip_path), "gzip", gzip_path.stat().st_size, now),
             ("b-q2-foo", "analysis/tool_trace.jsonl", str(trace_path), "text", trace_path.stat().st_size, now),
             ("b-q2-foo", "logs/missing.txt", str(tmp_path / "missing.txt"), "text", 0, now),
+            ("b-q2-foo", "port/files/blob.bin", str(binary_path), None, binary_path.stat().st_size, now),
             ("b-q2-foo", "analysis/sessions/" + session_path.name,
              str(session_path), "gzip",
              session_path.stat().st_size, now),
@@ -698,17 +705,29 @@ def test_artifact_fragment_renders_detail_pane_only(client: TestClient) -> None:
 
 
 def test_artifact_fragment_download_fallback_holds_frame(client: TestClient) -> None:
-    """A gzip artifact can't render inline — the fragment returns a
-    consistent download card (never a bare empty stub), so the frame is
-    the same shape as any other artifact."""
+    """A genuinely binary artifact can't render inline — the fragment
+    returns a consistent download card (never a bare empty stub), so the
+    frame is the same shape as any other artifact."""
+    resp = client.get(
+        "/agentic/bundles/b-q2-foo/artifact-fragment",
+        params={"artifact": "port/files/blob.bin"},
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    assert "a-fallback" in body
+    assert "Download blob.bin" in body
+
+
+def test_artifact_fragment_renders_a_gzipped_log_inline(client: TestClient) -> None:
+    """The stored build log is gzip. Handing back a download card meant
+    every full log left the browser as a .gz nobody opened."""
     resp = client.get(
         "/agentic/bundles/b-q2-foo/artifact-fragment",
         params={"artifact": "logs/full.log.gz"},
     )
     assert resp.status_code == 200
-    body = resp.text
-    assert "a-fallback" in body
-    assert "Download full.log.gz" in body
+    assert "undeclared identifier" in resp.text
+    assert "a-fallback" not in resp.text
 
 
 def test_artifact_fragment_unknown_404(client: TestClient) -> None:
@@ -1305,11 +1324,16 @@ def test_view_agentic_artifact_json_pretty_printed(client: TestClient) -> None:
     assert '"status"' in resp.text
 
 
-def test_view_agentic_artifact_gzip_download_notice(client: TestClient) -> None:
+def test_view_agentic_artifact_renders_a_gzipped_log(client: TestClient) -> None:
+    """The build log is stored gzipped, so the viewer decompresses it
+    rather than offering the .gz as a download."""
     resp = client.get("/agentic/bundles/b-q2-foo/artifacts/logs/full.log.gz")
     assert resp.status_code == 200
+    assert "undeclared identifier" in resp.text
+    assert "raw download" not in resp.text
+    # The raw endpoint still serves the real compressed bytes.
     assert "application/gzip" in resp.text
-    assert "raw download" in resp.text
+    assert "shown decompressed" in resp.text
 
 
 def test_view_agentic_artifact_missing_file_404(client: TestClient) -> None:
