@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from typing import Any
 
 from dportsv3.artifact_store import ArtifactStore
@@ -113,6 +114,15 @@ def register(app: Any, ctx: RouteContext) -> None:
         fs_path = body.get("fs_path")
         if not bundle_id or not relpath or not fs_path:
             return _error(400, "bundle_id, relpath, fs_path required")
+        # A pointer is only worth recording if the process that will serve
+        # it can open it. Without this the store happily writes a row with
+        # size NULL that 404s forever, and a caller on another host — or
+        # inside a chroot — cannot tell it failed. Nothing calls this now;
+        # the hook sends the compressed log as bytes.
+        if not Path(fs_path).is_file():
+            return _error(
+                400, f"fs_path is not readable by the store: {fs_path}"
+            )
         result = _store().put_fs_ref(bundle_id, relpath, fs_path, body.get("kind"))
         return {"ok": True, **result}
 

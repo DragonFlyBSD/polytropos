@@ -171,6 +171,18 @@ def test_put_fs_requires_all_three_fields(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
+def test_put_fs_rejects_a_path_the_store_cannot_open(client: TestClient) -> None:
+    """A caller on another host, or inside a chroot, names a path that
+    means nothing here. That used to be recorded as a row with size NULL
+    that 404s forever."""
+    resp = client.post("/v1/artifacts/put-fs", json={
+        "bundle_id": "b1", "relpath": "logs/full.log.gz",
+        "fs_path": "/work/dsynth/logs/evidence/full-logs/b1.full.log.gz",
+    })
+    assert resp.status_code == 400
+    assert "not readable by the store" in resp.json()["error"]
+
+
 # --------------------------------------------------------------------------
 # bundles / user-context
 # --------------------------------------------------------------------------
