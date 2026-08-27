@@ -39,8 +39,8 @@ dsynth build ──fail──▶ hook ──▶ artifact-store (bundle)
 ## Architecture in one breath
 
 - **One DB**: `state.db` (WAL + `busy_timeout=5000`, `foreign_keys=ON`
-  on every connection). Two writers — artifact-store and tracker —
-  share it.
+  on every connection). Three writers — artifact-store, tracker and
+  runner — share it, serialized by WAL.
 - **One serve process** for the UI/read surface: FastAPI
   `dportsv3 tracker serve` at `:8080` by default. Builds, agentic
   bundles/jobs/runner, and HTML views are all routed through it.

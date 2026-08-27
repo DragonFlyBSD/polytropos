@@ -1,13 +1,12 @@
 """SQLite-backed build tracker database helpers.
 
-As of Phase 4 step 4 the tracker is a read+write consumer of ``state.db``
-(the same file artifact-store writes). The schema is defined once in
-``dportsv3.db.schema``; this module imports it and provides the
-tracker-specific query helpers on top.
+The tracker is a read+write consumer of ``state.db``. The schema is
+defined once in ``dportsv3.db.schema``; this module imports it and
+provides the tracker-specific query helpers on top.
 
-Two writers (artifact-store + this module) share state.db under SQLite
-WAL — one writer at a time at the SQLite layer, readers proceed in
-parallel. Each connection opens with the same PRAGMA set (WAL,
+Three processes write state.db — artifact-store, this module and the
+runner — under SQLite WAL: one writer at a time at the SQLite layer,
+readers proceed in parallel. Each connection opens with the same PRAGMA set (WAL,
 busy_timeout=5000, foreign_keys=ON) via ``open_db`` / ``init_db``.
 """
 
