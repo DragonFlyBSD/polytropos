@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +25,6 @@ class DevEnvConfig:
     deltaports_branch: str
     dports_branch: str
     host_distdir: Path
-    #: The venv holding dportsv3, bind-mounted into every env so the dsynth
-    #: hooks can reach the tracker CLI from inside the chroot. Defaults to
-    #: whichever venv is running us, which is the right answer both for a
-    #: deployed install and for a checkout.
-    tool_venv: Path
     bootstrap_pkgs: list[str]
     tool_pkgs_required: list[str]
     tool_cmds_required: list[str]
@@ -62,7 +56,6 @@ def load_config() -> DevEnvConfig:
         deltaports_branch=os.environ.get("DPORTS_DEV_DELTAPORTS_BRANCH", "master"),
         dports_branch=os.environ.get("DPORTS_DEV_DPORTS_BRANCH", "staged"),
         host_distdir=Path(os.environ.get("DPORTS_DEV_HOST_DISTDIR", "/usr/distfiles")),
-        tool_venv=Path(os.environ.get("DPORTS_DEV_TOOL_VENV", sys.prefix)),
         bootstrap_pkgs=split_words(os.environ.get("DPORTS_DEV_BOOTSTRAP_PKGS", "indexinfo")),
         tool_pkgs_required=without_words(
             split_words(os.environ.get("DPORTS_DEV_TOOL_PKGS_REQUIRED", "bash curl git patch jq")),

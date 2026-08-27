@@ -1,40 +1,30 @@
-"""Making the hooks' tools reachable from inside a dev-env chroot.
+"""Where the dsynth hooks find the tool inside a dev-env chroot.
 
-A dsynth failure inside an env used to reach nothing. The hooks shell out
-to `dportsv3` and `artifact-store-client`, both of which live in a venv on
-the host; the chroot mounted no path that led to either, and the conf
-`hooks-install` wrote still named `/build/synth/polytropos/...`, which
-exists on no machine. Two separate holes had to close for that to work,
-and a third for the record to land where anyone would look for it.
+The answer was always the same place everything else in the env looks:
+``layout.TOOL_DIR`` (/work/polytropos), a checkout of this repository that
+env creation puts there, exported into the chroot as ``POLYTROPOS_ROOT``,
+with the repo's own shell wrapper at ``TOOL_BIN``. ``health.py`` and
+``worker.py`` have always invoked it that way.
 
-  * the venv has to be *there* — `prepare_root_runtime` bind-mounts it
-  * the scripts have to *run* — their shebangs point at the venv's path
-    on the host, so the interpreter is named explicitly instead
-  * the failure has to be filed against the env's target, not the one
-    the profile name implies
+The hooks did not. Their shipped conf named ``/build/synth/polytropos/
+bin/dportsv3``, a path on no machine, so every tracker call in an env
+soft-failed. The fix is that ``hooks-install`` writes the paths the env
+actually has.
+
+The first attempt at this bind-mounted the host's tool venv onto
+TOOL_DIR, which shadowed the checkout and broke `dportsv3 --version`
+inside the env with rc=127 — a venv console script's shebang names the
+host's interpreter path. Hence the mount guard below.
 """
-
 from __future__ import annotations
 
-import subprocess
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from dports_dev_env import hooks
-
-_HOOKS = hooks.repo_hook_source()
-
-
-def _sh(tmp_path, body: str) -> subprocess.CompletedProcess:
-    """Source hook_common.sh and run `body` against it."""
-    script = f'. "{_HOOKS / "hook_common.sh"}"\n{body}\n'
-    return subprocess.run(
-        ["sh", "-c", script], capture_output=True, text=True,
-        env={"PATH": "/usr/bin:/bin", "DIR_LOGS": str(tmp_path / "logs"),
-             "DPORTSV3_HOOKS_CONFIG": str(tmp_path / "absent.conf")},
-    )
-
 
 def _state(tmp_path, target="2026Q3", name="2026Q3-editors_vim"):
     from dports_dev_env.state import EnvironmentState
@@ -43,79 +33,88 @@ def _state(tmp_path, target="2026Q3", name="2026Q3-editors_vim"):
         origin="editors/vim", status="ready",
         created_at="2026-08-27T00:00:00Z", updated_at="2026-08-27T00:00:00Z",
         root_dir=tmp_path / "root", writable_dir=tmp_path / "writable",
-        provisioned_base_id="base", repos=None, source=None, runtime=None,
+        provisioned_base_id="base", repos=None, source=None,
+        runtime=SimpleNamespace(oracle_profile="dportsv3-py311"),
     )
 
 
-# --- where the tools are ----------------------------------------------------
+# --- where the tools are -----------------------------------------------------
 
-def test_the_tool_paths_are_inside_the_chroot(tmp_path):
-    """Not host paths. The env mounts the venv at one known place and
-    every value has to agree with it."""
+def test_the_tool_paths_are_the_checkout_the_env_already_carries(tmp_path):
+    """Not a host path, and not somewhere hooks-install invented. The env
+    has carried a checkout at TOOL_DIR since it was created."""
+    from dports_dev_env.layout import TOOL_BIN, TOOL_DIR
+
     settings = hooks.env_hook_settings(_state(tmp_path))
-    from dports_dev_env.runtime import TOOL_VENV_TARGET
-
-    for key in ("POLYTROPOS_PYTHON", "DPORTSV3_BIN", "ARTIFACT_STORE_CLIENT"):
-        assert settings[key].startswith(f"/{TOOL_VENV_TARGET}/"), settings[key]
+    assert settings["DPORTSV3_BIN"] == TOOL_BIN
+    assert settings["ARTIFACT_STORE_CLIENT"].startswith(TOOL_DIR + "/")
 
 
-def test_the_interpreter_is_named_explicitly(tmp_path):
-    """Both tools are venv console scripts, so their shebangs are absolute
-    paths into the venv as it sits on the *host*. Inside the chroot that
-    path does not exist and exec fails with ENOENT before python is ever
-    reached — which reads, from dsynth, as a hook that did nothing."""
+def test_the_hooks_agree_with_every_other_in_env_caller(tmp_path):
+    """health.py probes "$POLYTROPOS_ROOT/bin/dportsv3 --version" and
+    worker.py runs the same path for `dsl check`. A hook that reaches the
+    tool by some other route is a second contract to keep in step."""
+    from dports_dev_env.helpers import build_env_dict
+    from dports_dev_env.layout import TOOL_BIN
+
     settings = hooks.env_hook_settings(_state(tmp_path))
-    assert settings["POLYTROPOS_PYTHON"].endswith("/bin/python")
+    polytropos_root = build_env_dict(_state(tmp_path))["POLYTROPOS_ROOT"]
+    assert settings["DPORTSV3_BIN"] == f"{polytropos_root}/bin/dportsv3" == TOOL_BIN
 
 
-def test_the_mount_puts_the_venv_where_the_conf_says(monkeypatch, tmp_path):
+def test_the_checkout_ships_the_store_client_as_an_executable(tmp_path):
+    """The hooks call ARTIFACT_STORE_CLIENT by path, and in an env that
+    path is the checkout's bin/. Moving the implementation into the
+    package once deleted this file, which left the hooks pointing at
+    nothing in every env synced to that commit."""
+    settings = hooks.env_hook_settings(_state(tmp_path))
+    name = Path(settings["ARTIFACT_STORE_CLIENT"]).name
+    shipped = Path(__file__).resolve().parents[1] / "bin" / name
+    assert shipped.is_file(), f"{shipped} is what the hooks invoke"
+    assert os.access(shipped, os.X_OK), f"{shipped} must be executable"
+
+
+def test_the_store_client_stays_stdlib_only():
+    """It runs from a chroot where the only guaranteed interpreter is a
+    system python3. A dependency here is a dependency in every place a
+    build can fail."""
+    import ast
+    import sys
+
+    src = (Path(__file__).resolve().parents[1]
+           / "dportsv3" / "artifact_store_client.py").read_text()
+    tree = ast.parse(src)
+    mods = {n.module.split(".")[0] for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom) and n.module}
+    mods |= {a.name.split(".")[0] for n in ast.walk(tree)
+             if isinstance(n, ast.Import) for a in n.names}
+    outside = sorted(m for m in mods
+                     if m not in sys.stdlib_module_names and m != "__future__")
+    assert not outside, f"non-stdlib imports: {outside}"
+
+
+def test_nothing_is_mounted_onto_the_tool_checkout(monkeypatch, tmp_path):
+    """Regression guard. Bind-mounting anything at TOOL_DIR hides the
+    checkout, and the failure is indirect: `dportsv3 --version` returns
+    rc=127 from inside the env because the thing now at that path is a
+    venv console script whose shebang names the host's interpreter."""
     from dports_dev_env import runtime
     from dports_dev_env.config import load_config
+    from dports_dev_env.layout import TOOL_RELATIVE
 
     monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
-    venv = tmp_path / "venv"
-    (venv / "bin").mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = /usr/local/bin\n")
-    monkeypatch.setenv("DPORTS_DEV_TOOL_VENV", str(venv))
-
-    # The 79-char statfs limit has its own test; a tmp_path on macOS is
-    # already past it before any of this gets a say.
     monkeypatch.setattr(runtime, "check_mount_target_length", lambda t: None)
-    mounted: list[tuple[Path, Path, bool]] = []
+    mounted: list[Path] = []
     monkeypatch.setattr(runtime, "mount_null",
-                        lambda s, t, read_only=False: mounted.append(
-                            (s, t, read_only)) or True)
+                        lambda s, t, read_only=False: mounted.append(t) or True)
     monkeypatch.setattr(runtime, "mount_procfs", lambda t: True)
 
     root = tmp_path / "root"
     root.mkdir()
     runtime.prepare_root_runtime(load_config(), root)
 
-    target = root / hooks.CHROOT_VENV.relative_to("/")
-    assert (venv, target, True) in mounted, mounted
-
-
-def test_a_missing_venv_is_a_warning_not_a_crash(monkeypatch, tmp_path):
-    """Envs get used for things other than agentic builds. Not finding a
-    venv to mount should cost the hooks their tracker, not the operator
-    their shell."""
-    from dports_dev_env import runtime
-    from dports_dev_env.config import load_config
-
-    monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
-    monkeypatch.setenv("DPORTS_DEV_TOOL_VENV", str(tmp_path / "absent"))
-    monkeypatch.setattr(runtime, "check_mount_target_length", lambda t: None)
-    monkeypatch.setattr(runtime, "mount_null", lambda *a, **k: True)
-    monkeypatch.setattr(runtime, "mount_procfs", lambda t: True)
-
-    warned: list[str] = []
-    monkeypatch.setattr(runtime, "warn", warned.append)
-
-    root = tmp_path / "root"
-    root.mkdir()
-    runtime.prepare_root_runtime(load_config(), root)
-
-    assert any("no venv" in w for w in warned), warned
+    offenders = [t for t in mounted if TOOL_RELATIVE in str(t)]
+    assert not offenders, f"mounted onto the tool checkout: {offenders}"
 
 
 # --- which target the failure lands on --------------------------------------
@@ -158,8 +157,8 @@ def test_a_setting_replaces_the_line_it_belongs_to():
 
 
 def test_a_setting_the_example_never_mentions_is_appended():
-    out = hooks.render_conf(EXAMPLE, {"POLYTROPOS_PYTHON": "/work/x/bin/python"})
-    assert out.rstrip().endswith("POLYTROPOS_PYTHON=/work/x/bin/python")
+    out = hooks.render_conf(EXAMPLE, {"DPORTSV3_TRACKER_STATE_DIR": "/work/st"})
+    assert out.rstrip().endswith("DPORTSV3_TRACKER_STATE_DIR=/work/st")
     assert "written by" in out
 
 
@@ -193,79 +192,3 @@ def test_install_does_not_rewrite_an_operator_edited_conf(tmp_path):
         target, settings={"DPORTSV3_TRACKER_TARGET": "@other"})
     assert (target / hooks.CONF_TARGET).read_text() == "MINE=1\n"
     assert any(hooks.CONF_TARGET in note for note in skipped), skipped
-
-
-# --- the indirection, executing ---------------------------------------------
-
-def _fake_python(tmp_path) -> Path:
-    py = tmp_path / "python"
-    py.write_text('#!/bin/sh\necho "ran $*"\n')
-    py.chmod(0o755)
-    return py
-
-
-def test_the_interpreter_runs_the_script_as_an_argument(tmp_path):
-    tool = tmp_path / "dportsv3"
-    tool.write_text("#!/nonexistent/venv/bin/python\n")
-    tool.chmod(0o644)          # read-only mount: readable, not executable
-    done = _sh(tmp_path, f"POLYTROPOS_PYTHON={_fake_python(tmp_path)}\n"
-                         f"DPORTSV3_BIN={tool}\n"
-                         "dportsv3_cli tracker record-result")
-    assert done.stdout.strip() == f"ran {tool} tracker record-result", done
-
-
-def test_without_it_a_venv_script_is_only_its_shebang(tmp_path):
-    """The failure this exists to prevent. A console script names its
-    venv's interpreter by absolute host path; inside the chroot that path
-    is nothing, and exec fails before python is ever involved."""
-    tool = tmp_path / "dportsv3"
-    tool.write_text("#!/nonexistent/venv/bin/python\n")
-    tool.chmod(0o755)
-    done = _sh(tmp_path, f"DPORTSV3_BIN={tool}\n"
-                         "dportsv3_cli tracker record-result || echo ENOENT")
-    assert "ENOENT" in done.stdout, done
-
-
-def test_the_store_client_goes_through_it_too(tmp_path):
-    """Both tools come out of the same venv, so both need the same
-    treatment. Fixing only the tracker half leaves every artifact upload
-    dying at exec."""
-    tool = tmp_path / "artifact-store-client"
-    tool.write_text("#!/nonexistent/venv/bin/python\n")
-    tool.chmod(0o644)
-    done = _sh(tmp_path, f"POLYTROPOS_PYTHON={_fake_python(tmp_path)}\n"
-                         f"ARTIFACT_STORE_CLIENT={tool}\n"
-                         "ARTIFACT_STORE_URL=http://x\n"
-                         "artifact_store health")
-    assert done.stdout.strip() == f"ran {tool} --url http://x health", done
-
-
-def test_config_accepts_a_tool_it_may_run_but_not_chmod(tmp_path):
-    """`tracker_load_config` demanded +x on DPORTSV3_BIN. With an
-    interpreter named it never gets exec'd directly, and it arrives on a
-    read-only bind mount where nobody is going to be adding the bit."""
-    tool = tmp_path / "dportsv3"
-    tool.write_text("#!/nonexistent/venv/bin/python\n")
-    tool.chmod(0o644)
-    done = _sh(tmp_path, f"POLYTROPOS_PYTHON={_fake_python(tmp_path)}\n"
-                         f"DPORTSV3_BIN={tool}\n"
-                         "DPORTSV3_TRACKER_URL=http://127.0.0.1:8080\n"
-                         "tracker_load_config\n"
-                         "echo SURVIVED")
-    assert "SURVIVED" in done.stdout, done
-
-
-def test_an_interpreter_that_is_not_there_still_fails_soft(tmp_path):
-    """Soft, not silent-and-wrong: dsynth must keep building, and the
-    reason has to be somewhere an operator can find it."""
-    tool = tmp_path / "dportsv3"
-    tool.write_text("x")
-    done = _sh(tmp_path, f"POLYTROPOS_PYTHON={tmp_path / 'absent'}\n"
-                         f"DPORTSV3_BIN={tool}\n"
-                         "DPORTSV3_TRACKER_URL=http://127.0.0.1:8080\n"
-                         "tracker_load_config\n"
-                         "echo REACHED-THE-TRACKER")
-    assert done.returncode == 0, done.stderr
-    assert "REACHED-THE-TRACKER" not in done.stdout
-    log = (tmp_path / "logs" / "dportsv3-hooks.log").read_text()
-    assert "POLYTROPOS_PYTHON is not executable" in log, log

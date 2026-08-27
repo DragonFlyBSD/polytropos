@@ -65,27 +65,6 @@ fi
 : "${ARTIFACT_STORE_URL:=http://127.0.0.1:8788}"
 : "${ARTIFACT_STORE_CLIENT:=/usr/local/bin/artifact-store-client}"
 
-# Optional interpreter for the two tools above.
-#
-# Both are venv console scripts, so their shebangs are absolute paths into
-# the venv *on the host*. A dev-env bind-mounts that venv somewhere else
-# inside the chroot, where the shebang resolves to nothing and every call
-# dies with ENOENT. Naming the interpreter sidesteps it: the kernel never
-# reads a shebang when python is the thing being executed. Empty on a farm
-# host, where the scripts run from the prefix they were installed into.
-: "${POLYTROPOS_PYTHON:=}"
-
-# Run a script from the polytropos venv, with or without the indirection.
-polytropos_run() {
-	polytropos_script=$1
-	shift
-	if [ -n "${POLYTROPOS_PYTHON:-}" ]; then
-		"$POLYTROPOS_PYTHON" "$polytropos_script" "$@"
-	else
-		"$polytropos_script" "$@"
-	fi
-}
-
 hook_config_dir() {
 	# Hooks live in ConfigBase (/etc/dsynth or /usr/local/etc/dsynth).
 	dir=$(dirname "$0")
@@ -167,11 +146,11 @@ ensure_queue_dirs() {
 }
 
 artifact_store() {
-	polytropos_run "${ARTIFACT_STORE_CLIENT}" --url "${ARTIFACT_STORE_URL}" "$@"
+	"${ARTIFACT_STORE_CLIENT}" --url "${ARTIFACT_STORE_URL}" "$@"
 }
 
 dportsv3_cli() {
-	polytropos_run "${DPORTSV3_BIN}" "$@"
+	"${DPORTSV3_BIN}" "$@"
 }
 
 require_artifact_store() {
@@ -440,15 +419,7 @@ tracker_load_config() {
 	if [ -z "${DPORTSV3_BIN:-}" ]; then
 		tracker_fail_soft "DPORTSV3_BIN is not configured"
 	fi
-	if [ -n "${POLYTROPOS_PYTHON:-}" ]; then
-		# Executed as an argument, so it needs to be readable, not +x.
-		if [ ! -x "$POLYTROPOS_PYTHON" ]; then
-			tracker_fail_soft "POLYTROPOS_PYTHON is not executable: $POLYTROPOS_PYTHON"
-		fi
-		if [ ! -r "$DPORTSV3_BIN" ]; then
-			tracker_fail_soft "DPORTSV3_BIN is not readable: $DPORTSV3_BIN"
-		fi
-	elif [ ! -x "$DPORTSV3_BIN" ]; then
+	if [ ! -x "$DPORTSV3_BIN" ]; then
 		tracker_fail_soft "DPORTSV3_BIN is not executable: $DPORTSV3_BIN"
 	fi
 	if [ -z "${DPORTSV3_TRACKER_URL:-}" ]; then

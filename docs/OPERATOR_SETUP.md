@@ -96,20 +96,16 @@ It fills in the values that only it can know, and prints them:
 
 ```sh
 DPORTSV3_TRACKER_TARGET=@2026Q2                            # the env's target
-POLYTROPOS_PYTHON=/work/polytropos/bin/python
 DPORTSV3_BIN=/work/polytropos/bin/dportsv3
 ARTIFACT_STORE_CLIENT=/work/polytropos/bin/artifact-store-client
 ```
 
-Those three paths are inside the chroot. `/work/polytropos` is a
-read-only bind mount of the venv `dportsv3` itself is installed in, made
-when the env is mounted — without it the hooks have no tool to call and
-every failure inside the env is recorded nowhere.
-
-`POLYTROPOS_PYTHON` is why the mount is enough. Both tools are venv
-console scripts whose shebangs name the venv's path *on the host*, which
-resolves to nothing in here; naming the interpreter means the shebang is
-never read.
+Both paths are inside the chroot, and both are wrappers in the tool
+checkout the env already carries at `/work/polytropos` — exported to
+everything in the env as `$POLYTROPOS_ROOT`, and the same wrapper the
+health probe and `dsl check` invoke. The value the hooks conf ships with
+names a `/build/synth` path that exists on no machine, which is why every
+tracker call inside an env used to soft-fail.
 
 `DPORTSV3_TRACKER_TARGET` has to be written out rather than left to its
 `@${PROFILE}` default, because an env's dsynth profile is named after the

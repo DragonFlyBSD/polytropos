@@ -20,14 +20,6 @@
 # Override only if the artifact-store client lives elsewhere.
 # ARTIFACT_STORE_CLIENT=/usr/local/bin/artifact-store-client
 
-# Interpreter to run ARTIFACT_STORE_CLIENT and DPORTSV3_BIN with. Leave
-# unset on a farm host: both are installed at the prefix their shebangs
-# name, so they run directly. Set it when the venv is reachable at some
-# other path than the one it was built at — which is the situation inside
-# a dev-env chroot, where the venv is bind-mounted. `dev-env hooks-install`
-# fills this in.
-# POLYTROPOS_PYTHON=/work/polytropos/bin/python
-
 # -----------------------------------------------------------------------------
 # Tracker side (optional)
 # -----------------------------------------------------------------------------
@@ -39,6 +31,12 @@ DPORTSV3_TRACKER_URL=http://127.0.0.1:8080
 # Absolute path to the dportsv3 entry point (used to call tracker CLI
 # commands). Since the tool was split out of the ports repository this is
 # an install of its own, no longer a path inside the DeltaPorts tree.
+#
+# Inside a dev-env this is the checkout the env carries at
+# $POLYTROPOS_ROOT, i.e. /work/polytropos/bin/dportsv3 — the same wrapper
+# the health probe and `dsl check` invoke. `dev-env hooks-install` fills
+# it in; do not point it at a host path, which is not reachable from the
+# chroot.
 DPORTSV3_BIN=/usr/local/bin/dportsv3
 
 # Build target. Defaults to @${PROFILE} if unset (one profile per target).

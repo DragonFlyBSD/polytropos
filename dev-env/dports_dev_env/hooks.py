@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .dsynth import env_dsynth_etc_dir
 from .mounts import mounts_under
-from .runtime import TOOL_VENV_TARGET
+from .layout import TOOL_BIN, TOOL_DIR
 from .state import EnvironmentState
 
 # Files we ship as executable hook scripts (chmod 0755 on install).
@@ -41,20 +41,22 @@ HOOK_SCRIPTS: tuple[str, ...] = (
 CONF_EXAMPLE = "dportsv3-hooks.conf.example"
 CONF_TARGET = "dportsv3-hooks.conf"
 
-#: In-chroot paths of the two tools the hooks call. Both live in the venv
-#: that ``prepare_root_runtime`` bind-mounts at ``TOOL_VENV_TARGET``.
-CHROOT_VENV = Path("/") / TOOL_VENV_TARGET
-CHROOT_PYTHON = CHROOT_VENV / "bin" / "python"
-CHROOT_DPORTSV3 = CHROOT_VENV / "bin" / "dportsv3"
-CHROOT_STORE_CLIENT = CHROOT_VENV / "bin" / "artifact-store-client"
+#: In-chroot paths of the two tools the hooks call. Both are wrappers in
+#: the tool checkout the env already carries at ``TOOL_DIR`` — the same
+#: place ``POLYTROPOS_ROOT`` points at for every other in-env caller.
+CHROOT_TOOL_DIR = Path(TOOL_DIR)
+CHROOT_DPORTSV3 = Path(TOOL_BIN)
+CHROOT_STORE_CLIENT = CHROOT_TOOL_DIR / "bin" / "artifact-store-client"
 
 
 def env_hook_settings(state: EnvironmentState) -> dict[str, str]:
     """The conf values that only this env can know.
 
     Two of them are not defaults anyone could have guessed. The tool paths
-    are inside the chroot, not on the host, and they only resolve because
-    the env mounts the venv. And ``DPORTSV3_TRACKER_TARGET`` has to be
+    are inside the chroot, not on the host — the shipped default named a
+    ``/build/synth`` path that exists on no machine, while the env has
+    carried a working checkout at ``TOOL_DIR`` since it was created. And
+    ``DPORTSV3_TRACKER_TARGET`` has to be
     written out rather than left to the documented ``@${PROFILE}`` default:
     an env's dsynth profile is named after the *env* (``2026Q3-editors_vim``
     for a ``@2026Q3`` env), so the default derives a target no farm build
@@ -63,7 +65,6 @@ def env_hook_settings(state: EnvironmentState) -> dict[str, str]:
     """
     return {
         "DPORTSV3_TRACKER_TARGET": f"@{state.target.lstrip('@')}",
-        "POLYTROPOS_PYTHON": str(CHROOT_PYTHON),
         "DPORTSV3_BIN": str(CHROOT_DPORTSV3),
         "ARTIFACT_STORE_CLIENT": str(CHROOT_STORE_CLIENT),
     }
@@ -268,9 +269,8 @@ def cmd_hooks_install(args: Namespace, state: EnvironmentState) -> int:
         for key, value in settings.items():
             print(f"       {key}={value}")
     print("  2. Hooks are live at /etc/dsynth inside the chroot.")
-    print(f"  3. The tools they call come from {CHROOT_VENV}, which is a")
-    print("     bind mount of the venv this command ran from. It exists only")
-    print("     while the env is mounted.")
+    print(f"  3. The tools they call are the wrappers in {CHROOT_TOOL_DIR},")
+    print("     the tool checkout this env already carries.")
     return 0
 
 

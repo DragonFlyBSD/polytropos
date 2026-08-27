@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Checkout entry point for the artifact-store client.
+
+The dsynth hooks call this by path. In a dev-env the checkout is mounted
+at ``/work/polytropos`` and this is ``$POLYTROPOS_ROOT/bin/artifact-store-
+client``; a packaged install gets the same code as a console script from
+``[project.scripts]`` instead.
+
+Stdlib only, and it stays that way on purpose: this runs from a chroot
+where the only thing guaranteed present is a system ``python3``. That is
+also why it adds the checkout to ``sys.path`` rather than expecting the
+venv — like ``bin/dportsv3``, a wrapper shipped inside the checkout is
+entitled to know the repository layout, which is what keeps that
+knowledge out of the packages.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dportsv3.artifact_store_client import main  # noqa: E402
+
+if __name__ == "__main__":
+    main()
