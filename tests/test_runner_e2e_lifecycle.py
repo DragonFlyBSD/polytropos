@@ -110,9 +110,7 @@ def queue_env(tmp_path, monkeypatch):
     # Stub artifact-store HTTP calls (no server in tests).
     monkeypatch.setattr(runner, "artifact_store_put",
                         lambda *a, **kw: True, raising=False)
-    monkeypatch.setattr(runner, "artifact_store_get",
-                        lambda *a, **kw: None, raising=False)
-    monkeypatch.setattr(runner, "tracker_artifact_get",
+    monkeypatch.setattr(runner, "artifact_get",
                         lambda *a, **kw: None, raising=False)
     monkeypatch.setattr(runner, "bundle_artifact_list",
                         lambda *a, **kw: [], raising=False)

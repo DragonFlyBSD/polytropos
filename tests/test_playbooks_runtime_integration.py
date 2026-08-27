@@ -69,9 +69,7 @@ def test_build_triage_payload_attaches_wildcard_playbooks_only(
     bundle_dir = tmp_path / "bundle"
     bundle_dir.mkdir()
 
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))
@@ -99,9 +97,7 @@ def test_build_patch_payload_attaches_classification_matching_playbook(
 
     # Stub out artifact-store + tracker so build_patch_payload
     # operates from disk only. Same shape as test_patch_payload_parity.
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))
@@ -142,9 +138,7 @@ def test_build_patch_payload_attaches_only_wildcard_playbooks_when_classificatio
     bundle_dir.mkdir()
     _write_triage_md(bundle_dir, "no-such-classification")
 
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))
@@ -188,9 +182,7 @@ def test_build_patch_payload_emits_playbooks_selected_activity_row(
     bundle_dir.mkdir()
     _write_triage_md(bundle_dir, "plist-error")
 
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))
@@ -243,9 +235,7 @@ def test_build_patch_payload_telemetry_silent_when_queue_root_absent(
     bundle_dir.mkdir()
     _write_triage_md(bundle_dir, "plist-error")
 
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))
@@ -288,9 +278,7 @@ def test_build_patch_payload_attaches_detected_toolchain_playbook(
     )
     _write_triage_md(bundle_dir, "compile-error")
 
-    monkeypatch.setattr(runner_mod, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner_mod, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner_mod, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner_mod, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner_mod, "get_user_context",
                         lambda *a, **kw: (None, 0))

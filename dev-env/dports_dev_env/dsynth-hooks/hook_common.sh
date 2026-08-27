@@ -62,7 +62,7 @@ fi
 : "${DIR_OPTIONS:=}"
 : "${DIR_DISTFILES:=}"
 
-: "${ARTIFACT_STORE_URL:=http://127.0.0.1:8788}"
+: "${ARTIFACT_STORE_URL:=http://127.0.0.1:8080}"
 : "${ARTIFACT_STORE_CLIENT:=/usr/local/bin/artifact-store-client}"
 
 hook_config_dir() {

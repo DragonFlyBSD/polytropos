@@ -76,7 +76,6 @@ class _VerifyBranchUnavailable(Exception):
 # Max fix iterations before giving up on a port
 DEFAULT_MAX_ITERATIONS = 3
 
-DEFAULT_ARTIFACT_STORE_URL = "http://127.0.0.1:8788"
 DEFAULT_TRACKER_URL = "http://127.0.0.1:8080"
 
 # Default location of agentic-policy.json. Resolution lives in
@@ -445,27 +444,22 @@ def init_state_db(queue_root: Path) -> sqlite3.Connection | None:
     return conn
 
 
-def _artifact_store_url() -> str:
-    return os.environ.get("ARTIFACT_STORE_URL", DEFAULT_ARTIFACT_STORE_URL)
-
-
 def _tracker_url() -> str:
     return os.environ.get("DPORTSV3_TRACKER_URL", DEFAULT_TRACKER_URL)
 
 
-def artifact_store_get(bundle_id: str, relpath: str) -> bytes | None:
-    url = f"{_artifact_store_url()}/v1/artifacts/get?bundle_id={urllib.parse.quote(bundle_id)}&relpath={urllib.parse.quote(relpath)}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return resp.read()
-    except Exception:
-        return None
+def artifact_get(bundle_id: str, relpath: str) -> bytes | None:
+    """One artifact's bytes from the tracker, or None.
 
-
-def tracker_artifact_get(bundle_id: str, relpath: str) -> bytes | None:
+    There used to be two of these — /v1/artifacts/get on the store's port
+    and /api/bundles/../artifacts/.. on the tracker's — tried in order.
+    They served the same bytes off the same disk; the fallback existed
+    only because there were two services.
+    """
     url = (
-        f"{_tracker_url()}/api/bundles/{urllib.parse.quote(bundle_id)}"
-        f"/artifacts/{urllib.parse.quote(relpath, safe='/')}"
+        f"{_tracker_url()}/v1/artifacts/get"
+        f"?bundle_id={urllib.parse.quote(bundle_id)}"
+        f"&relpath={urllib.parse.quote(relpath)}"
     )
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
@@ -475,7 +469,7 @@ def tracker_artifact_get(bundle_id: str, relpath: str) -> bytes | None:
 
 
 def artifact_store_put(bundle_id: str, relpath: str, data: bytes, kind: str | None = None) -> bool:
-    url = f"{_artifact_store_url()}/v1/artifacts/put"
+    url = f"{_tracker_url()}/v1/artifacts/put"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/octet-stream",
@@ -642,9 +636,7 @@ def _materialize_bundle(bundle_id: str, dest: Path) -> int:
     relpaths = bundle_artifact_list(bundle_id)
     written = 0
     for rel in relpaths:
-        data = artifact_store_get(bundle_id, rel)
-        if data is None:
-            data = tracker_artifact_get(bundle_id, rel)
+        data = artifact_get(bundle_id, rel)
         if data is None:
             continue
         out = dest / rel
@@ -750,9 +742,7 @@ def read_bundle_text(bundle_dir: Path | None, bundle_id: str | None, relpath: st
         if path.exists():
             return read_file_if_exists(path)
     if bundle_id:
-        data = artifact_store_get(bundle_id, relpath)
-        if data is None:
-            data = tracker_artifact_get(bundle_id, relpath)
+        data = artifact_get(bundle_id, relpath)
         if data is not None:
             return data.decode("utf-8", errors="replace")
     return None

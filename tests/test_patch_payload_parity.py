@@ -41,9 +41,7 @@ def _minimal_bundle(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def _no_artifact_store(monkeypatch):
     """Same stubs as the triage parity test."""
-    monkeypatch.setattr(runner, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner, "port_bundle_history", lambda *a, **kw: [])
     monkeypatch.setattr(runner, "get_user_context", lambda *a, **kw: (None, 0))
     # build_*_payload now goes through dportsv3.agent.playbooks.load_playbooks;

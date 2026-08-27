@@ -76,7 +76,6 @@
 
 # How the runner reaches the other two. Keep in step with the ports above.
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}
-: ${polytropos_artifact_store_url:="http://127.0.0.1:8788"}
 
 # --- runner ------------------------------------------------------------
 

@@ -58,7 +58,6 @@ export PATH
 : ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
 : ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}
-: ${polytropos_artifact_store_url:="http://127.0.0.1:8788"}
 : ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
 : ${polytropos_runner_dev_env:=""}
 
@@ -89,8 +88,7 @@ logfile="${polytropos_log_dir}/runner.log"
 # this.
 polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
 DPORTSV3_STATE_DB=${polytropos_state_db} \
-DPORTSV3_TRACKER_URL=${polytropos_tracker_url} \
-ARTIFACT_STORE_URL=${polytropos_artifact_store_url}"
+DPORTSV3_TRACKER_URL=${polytropos_tracker_url}"
 
 _dev_env_flag=""
 [ -n "${polytropos_runner_dev_env}" ] && \

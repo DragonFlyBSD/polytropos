@@ -108,7 +108,7 @@ Required by the runner:
 |---|---|---|
 | `DPORTSV3_STATE_DB` | Path to state.db (shared with artifact-store) | `/build/synth/logs/evidence/state.db` |
 | `DPORTSV3_TRACKER_URL` | Base URL for runner→tracker lookups (bundles, ports) | `http://127.0.0.1:8080` (default) |
-| `ARTIFACT_STORE_URL` | Base URL for runner→artifact-store artifact GETs | `http://127.0.0.1:8788` (default) |
+| `ARTIFACT_STORE_URL` | Base URL the dsynth hooks post to. Always loopback | `http://127.0.0.1:8080` (default) |
 | `DP_HARNESS_TRIAGE_MODEL` | LiteLLM model string for triage | `openai/gpt-5-nano` |
 | `DP_HARNESS_PATCH_MODEL` | LiteLLM model string for patch | `anthropic/claude-sonnet-4` |
 | `DP_HARNESS_TRIAGE_API_KEY` / `_BASE` | Provider key + optional custom endpoint | — |

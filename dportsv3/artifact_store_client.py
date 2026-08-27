@@ -13,7 +13,7 @@ import json
 import sys
 import urllib.request
 
-DEFAULT_URL = "http://127.0.0.1:8788"
+DEFAULT_URL = "http://127.0.0.1:8080"
 
 
 def request_json(method: str, url: str, body: dict | None = None, headers: dict | None = None):

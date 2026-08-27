@@ -76,9 +76,7 @@ def queue_env(tmp_path, monkeypatch):
 
     # Stub artifact-store & tracker network calls.
     monkeypatch.setattr(runner, "artifact_store_put", lambda *a, **kw: True)
-    monkeypatch.setattr(runner, "artifact_store_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner, "tracker_artifact_get", lambda *a, **kw: None)
-    monkeypatch.setattr(runner, "bundle_artifact_list", lambda *a, **kw: [])
+    monkeypatch.setattr(runner, "artifact_get", lambda *a, **kw: None)
     monkeypatch.setattr(runner, "port_bundle_history", lambda *a, **kw: [])
 
     # Stub the worker's env path resolution (the patch flow's

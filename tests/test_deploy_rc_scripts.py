@@ -240,10 +240,12 @@ def test_dev_env_knob_avoids_the_rc_subr_collision() -> None:
     assert ': ${polytropos_runner_env=' not in text
 
 
-def test_runner_env_carries_the_service_urls(tmp_path) -> None:
+def test_runner_env_carries_one_service_url(tmp_path) -> None:
+    """One knob. The runner reaches blobs and state through the tracker;
+    ARTIFACT_STORE_URL is the hooks' loopback knob, not the runner's."""
     got = run_service(tmp_path, "polytropos_runner")
     assert "DPORTSV3_TRACKER_URL=http://127.0.0.1:8080" in got["ENV"]
-    assert "ARTIFACT_STORE_URL=http://127.0.0.1:8788" in got["ENV"]
+    assert "ARTIFACT_STORE_URL" not in got["ENV"]
 
 
 # --- credentials --------------------------------------------------------
