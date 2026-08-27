@@ -504,145 +504,22 @@ the same time would have ballooned the task list. Better to ship
 9, smoke-test, then revisit with the rough edges actually
 identified rather than imagined.
 
-### Step 17 — remote runners + auth — pending
+### Step 17 — remote runners + auth — MIGRATED TO BEADS
 
-Today every piece of the loop assumes colocation: the agent runner,
-the chroot, the artifact store, and the tracker all live on one
-DragonFly host, talk over loopback, and trust each other implicitly.
-Smoke testing has shown this is fine for a single-builder
-deployment, but the cost-effective shape going forward is *N
-builders, one tracker* — let a team aim several hosts at one
-central tracker so failures aggregate in one place and capacity
-scales horizontally.
+Tracked as **poly-fij** (epic, 6 children). Look it up with `bd show
+poly-fij`; do not work from a copy here.
 
-The good news from earlier discussion: nothing about the execution
-model has to change. The agent harness keeps running on whichever
-host the chroot lives on; tool calls stay local to that host; the
-LLM is already a remote HTTPS call so it doesn't care. The only
-new thing is that the artifact-store POST and the tracker job
-dispatch now traverse a network the operator does not necessarily
-control end-to-end.
+The bead reconciles this step against the code as it stands, which the
+text that used to live here did not: `GET /api/jobs` already exists so
+what is missing is an atomic *claim*, the `runners` table already exists
+but is liveness-shaped rather than enrollment-shaped, `jobs.owner_id`
+already exists, and `runner_id` is regenerated every process start so
+binding a token to it is a change to identity rather than an addition.
 
-> **Depends on Step 31 + Step 21.** A remote runner should aim at a
-> *single* service and auth surface, not two — fold the artifact-store
-> into the tracker (Step 31) first. And the runner must stop opening
-> `state.db` directly (it does today via local sqlite — lifecycle,
-> `verify_requests`/`user_context_requests` polls) and instead use the
-> tracker's HTTP write endpoints (`/v1/jobs/transition`,
-> `/v1/user-context`) plus **new read/claim endpoints that don't exist
-> yet** (the store has no GET for pending state rows). That conversion
-> is cheapest once Step 21 has centralized the write surface.
-> Sequence: **21 → 31 → 17.**
-
-#### Goal
-
-A remote builder can be brought up, pointed at a tracker URL, and
-start consuming triage/patch jobs without anything on the builder
-having implicit trust over the tracker — and without anything on
-the tracker being able to forge work attributable to a builder
-that didn't actually do it.
-
-#### Sub-steps
-
-**17a — config surface for remote tracker URL.**
-
-The dsynth hooks (`hook_pkg_failure`, `hook_pkg_success`) already
-read `DPORTS_ARTIFACT_STORE_URL` from environment. Audit every
-remaining hardcoded `localhost` / `127.0.0.1` / `:8080` reference
-across the runner + hook scripts and route them through one
-config knob (env var or `/etc/dportsv3/runner.conf`). The agent
-runner also needs a tracker URL config — currently it sweeps a
-local `pending/` directory; in the remote case it polls the
-tracker for queued jobs instead.
-
-**17b — runner identity + enrollment.**
-
-Every runner gets a stable identifier (`runner_id`, generated at
-first enroll, stored in `/etc/dportsv3/runner.json`). Enrollment
-flow: operator runs `dportsv3 runner enroll
-https://tracker.example/agentic` on the builder; the CLI prints a
-one-time enrollment code; operator pastes it into a tracker admin
-form (or runs `dportsv3 tracker approve <code>` on the tracker
-host); tracker issues a bearer token bound to the `runner_id`.
-The runner stores the token in `/etc/dportsv3/runner.token` mode
-0600.
-
-Schema addition on the tracker side: new `runners` table
-(`runner_id`, `display_name`, `enrolled_at`, `token_sha256`,
-`last_seen_at`, `revoked_at`).
-
-**17c — authenticated artifact-store POST.**
-
-Every POST to `/v1/bundles/*` from a runner carries
-`Authorization: Bearer <token>` plus an `X-Runner-Id` header. The
-tracker validates the token matches the runner_id and stamps the
-bundle row with the authenticated `runner_id`. Tokens that don't
-match → 401, logged. Tokens revoked via `revoked_at` → 401.
-
-Bundle schema gets a `runner_id` column so every bundle is
-traceable to the host that produced it; older bundles get NULL,
-which is fine.
-
-**17d — authenticated job pull.**
-
-Today the runner reads `.job` files from a local directory. In
-the remote model it polls `GET /api/jobs/next?runner_id=...` with
-the same bearer auth. The tracker picks the oldest queued job,
-marks it `claimed` with the runner_id, returns it. If the runner
-disappears mid-job, a sweeper (Step 10's stale-queued-jobs reaper,
-extended) un-claims the job after a timeout.
-
-Same auth on `PATCH /api/jobs/<id>` for state transitions and on
-`POST /v1/user-context` (which is a runner-driven re-enqueue path
-in the current design).
-
-**17e — operator auth, separately.**
-
-The manual-queue endpoints (`POST
-/api/manual-requests/.../context`, `.../discard`) are a *human*
-path, not a runner path. They need their own auth scheme — at
-minimum a single operator password / SSO behind a reverse proxy.
-Do not reuse runner tokens here; a compromised runner must not be
-able to discard manual work.
-
-**17f — per-runner tracker UI.**
-
-New columns on `/agentic` and `/agentic/jobs`:
-- which runner produced each bundle
-- which runner currently owns each claimed job
-- per-runner status card on the dashboard (online / offline /
-  last-seen, current job, token-revoked badge)
-
-New page `/agentic/runners` for enrollment, revocation, and
-display-name editing.
-
-#### LOC estimate
-
-- 17a config: ~50
-- 17b enrollment + schema: ~120
-- 17c auth POST: ~80
-- 17d auth job pull: ~150 (server endpoint + client poller)
-- 17e operator auth scheme: depends on choice — 50 for
-  htpasswd-via-proxy, 200 for in-app
-- 17f UI: ~150
-
-~600 LOC across runner + tracker, plus an enroll CLI subcommand.
-
-#### Order
-
-17a → 17b → 17c → 17d → 17f → 17e. Auth on the runner path lands
-first because that's the larger attack surface (file uploads,
-state mutation); operator auth can ride behind a reverse proxy as
-an interim measure. UI last because everything else has to be
-stable before the dashboard reflects it.
-
-#### Why not earlier
-
-Single-builder deployments work fine without any of this. The
-moment you add a second builder — or expose the tracker beyond a
-private network — every item here becomes load-bearing. Building
-it before there's a real second builder is speculation; building
-it the day you need one is too late.
+Still true and still worth reading here: the target shape is **N
+builders, one tracker**, and the *auth* half of it wants Step 31 (one
+service, one auth surface) first. The Step 21 dependency the doc asserted
+is gone — see that section.
 
 ### Step 18 — security hardening — pending
 
@@ -802,182 +679,34 @@ be lost — every item here becomes load-bearing. Doing this
 doing it *with* 17 risks ballooning a single deliverable into a
 six-month project.
 
-### Step 21 — DB layer consolidation pass — pending
+### Step 21 — DB layer consolidation pass — MIGRATED TO BEADS, RESCOPED
 
-Scan during smoke testing of Step 20: 120 raw ``conn.execute`` calls
-across six files. The reads are mostly localized in
-``dportsv3.tracker.agentic_queries`` already, but the *writes* are
-scattered, and three different connection-management patterns
-coexist. The pain is latent today — schema is stable, the existing
-patterns work — but it surfaces every time a new feature adds tables
-or columns (Step 17's runner_id, Step 18's audit-log triggers,
-Step 14's KEDB metadata all bolt onto the same DB).
+Tracked as **poly-39v**. Look it up with `bd show poly-39v`; do not work
+from a copy here.
 
-This step pays off the technical debt before those features land.
+Rescoped on migration, because the text that used to live here described
+a codebase that no longer exists. What changed:
 
-> **Sequencing:** do this *before* Step 31 (fold artifact-store into
-> the tracker) and Step 17 (remote runner). Both target the DB write
-> surface — once 21b centralizes writes into `dportsv3.db.writes`, the
-> service merge becomes pure HTTP routing onto that surface and the
-> remote runner has one clean target instead of scattered call sites.
-> Recommended order: **21 → 31 → 17.**
+* The scan is stale in the direction you'd expect — 120 `conn.execute`
+  sites across six files is now **232 across 22**.
+* **21b is dropped, not deferred.** At that scale "centralize every write
+  into typed helpers, no behaviour change" is not one unit of work, and
+  the drift it targets is better caught by tests than by relocation.
+* **There is no accidental fourth connection pattern.** The 15 inline
+  `write_conn = sqlite3.connect(..., isolation_level=None)` blocks in the
+  route handlers are pattern 3 spreading out of `lifecycle.apply` by
+  copy-paste. The remedy is a constructor, not documentation.
+* The PRAGMA inconsistency across those sites is **cosmetic**. Python's
+  `sqlite3.connect` already defaults to `timeout=5.0`, and the only FK
+  constraints in the schema are on the legacy build-tracker tables, which
+  go through `open_db`. Measured, not assumed.
+* 21d's WAL item is **done**.
 
-#### Goal
-
-After Step 21:
-
-- One canonical place to look for each table's mutations.
-- One documented choice per layer for connection management, with
-  outliers either migrated or marked with a written rationale.
-- The 36 read queries in ``agentic_queries.py`` become directly
-  unit-testable (they are today, but the writes weren't, so a full
-  layer-level test plan was unhelpful).
-
-No behavior change. The whole point is that the tests stay green
-through the refactor.
-
-#### Sub-steps
-
-**21a — settle connection management.**
-
-Three patterns coexist today:
-
-1. **Module-level singleton** (``dportsv3.agent.runner._state_db_conn``)
-   — the agent-queue-runner is long-running and opens one connection
-   for its lifetime.
-2. **Per-request context manager** (``dportsv3.tracker.server._conn()``)
-   — the FastAPI tracker opens / closes per HTTP request.
-3. **Dedicated autocommit connection** (created inside
-   ``lifecycle.apply``) — needed because the state-machine uses
-   ``BEGIN IMMEDIATE`` + explicit ``COMMIT`` that the default
-   deferred-transaction sqlite3 wrapper interferes with.
-
-Each is justifiable. The inconsistency itself is the problem — a
-new write doesn't know which pattern to use. Action:
-
-- Document each pattern at the top of its host module with one
-  short paragraph explaining *why* this one, not the others.
-- Audit for accidental fourth patterns (e.g. one-off
-  ``sqlite3.connect`` calls in helpers). Migrate them onto an
-  established pattern or document a new exception.
-- Add a brief section in ``docs/operator-runbook.md`` (or wherever
-  contributor-facing docs live) explaining when each pattern is
-  appropriate.
-
-LOC: small — mostly comments + small migrations. ~50.
-
-**21b — centralize writes.**
-
-Writes today live in five files: ``runner.py`` (job registration,
-runner_status, activity_log), ``lifecycle.py`` (state machine,
-job_events), ``artifact_store.py`` (bundles, artifact_refs),
-``tracker/db.py`` (legacy builds/diffs), and a few stragglers in
-``tracker/server.py``. Schema drift = grep + manual fix in five
-places. Action:
-
-- Create ``dportsv3.db.writes`` (or extend ``agentic_queries.py``
-  to cover writes — TBD on convention; one-module-per-concern vs
-  one-module-per-direction). For each table that has more than
-  one write call site, add a typed helper:
-  ``insert_bundle(...)``, ``insert_artifact_ref(...)``,
-  ``upsert_runner_status(...)``, ``record_activity(...)``, etc.
-- Migrate call sites onto the helpers.
-- **lifecycle.py stays put.** The state machine owns its own
-  transactional discipline and pulling its writes into a generic
-  helper would invert the abstraction. Document the carve-out.
-- **tracker/db.py legacy code stays put** for now — it's
-  isolated, slated to retire when the legacy builds UI does.
-
-LOC: ~200 net (refactor; no new SQL).
-
-**21c — query-layer unit tests.**
-
-With 21b in place, the read + write surface is finally small
-enough to test directly:
-
-- Per-helper unit test: insert → read-back round-trip with a tmp
-  state.db.
-- Schema-drift tests: assert each helper's INSERT lists every
-  column ``schema.py`` declares NOT NULL on for that table.
-
-LOC: ~150 of tests.
-
-**21d — DB ops hygiene.**
-
-SQLite is fine for the foreseeable horizon (dozens of builds with
-several hundred failures each = ~800K activity_log rows, ~8K
-bundles — well within SQLite's comfort zone). But three small
-hygiene items make it stay that way:
-
-- **WAL mode.** Set ``PRAGMA journal_mode=WAL`` in
-  :func:`init_db`. Decouples readers (tracker FastAPI processes)
-  from the writer (runner) so they don't block each other. One
-  line, big concurrency win. Verify whether it's already on; if
-  yes, this is just a documented assertion.
-- **``synchronous=NORMAL``.** Safe to pair with WAL (durability
-  on crash is "last committed transaction" vs FULL's "everything
-  fsync'd"). Faster commits, no correctness loss for our use
-  case. Optional micro-optimization.
-- **Periodic VACUUM.** A monthly cron (or a runner-startup
-  one-shot when the file grows past a threshold) keeps the file
-  compact after bundle/activity deletion. Without it, deleted
-  rows leave gaps that the file keeps but doesn't reuse
-  efficiently.
-- **Retention policy.** Archive or delete bundles + their
-  activity_log/job_events rows older than 6 months. Most useful
-  data is from the last few weeks; old data is for forensics and
-  can move to a separate ``state.archive.db`` (or just be
-  dropped — we keep the artifact_refs anyway).
-
-Document the Postgres-migration trigger criteria explicitly:
-
-- Direct-writer remote runners (Step 17 routes writes through the
-  tracker, so SQLite stays fine even with N runners).
-- ``activity_log`` over ~10M rows (years away at current shape).
-- Multi-host deployment without a central tracker (SQLite is a
-  single file).
-
-Until one of those crosses, SQLite is the right choice.
-
-LOC: ~80 (PRAGMA + VACUUM helper + retention script + docs).
-
-#### LOC estimate
-
-~480 total: 50 for 21a documentation + small migrations, 200 for
-21b refactor, 150 for 21c tests, 80 for 21d hygiene.
-
-#### Order
-
-21a → 21b → 21c → 21d. Connection management first (the
-canonical-pattern decision feeds 21b's helper signatures);
-writes consolidated next; tests once the helpers exist; hygiene
-last (cheap, no dependencies on 21a–c).
-
-#### Dependencies
-
-- **Hard:** none.
-- **Soft:** completing 21 before 17 (remote runners adds a
-  ``runners`` table — would prefer to plug it into 21b's helpers
-  rather than add a sixth ad-hoc INSERT site). Same for 18g
-  (audit-log immutability triggers — easier to add the trigger DDL
-  in the same place as the write helpers).
-
-#### Why not earlier
-
-The existing patterns work and the schema is reasonably stable.
-The pain is latent — it hasn't bit hard yet. Step 21 is exactly the
-kind of consolidation that pays off when *future* steps layer new
-tables on top; doing it before there's a real reason would have been
-premature.
-
-#### Suggested updated order
-
-10 → 20 → 11 → 16 → 21 → 19 → 12/13 → 17/18 → 14/15.
-
-21 sits between 16 and the architectural sweep (12/13/17/18) on
-purpose: small enough not to block the operator-facing features, and
-enables 17 + 18g to plug into a clean write surface rather than
-adding the sixth ad-hoc site.
+**The sequencing claim here does not hold.** `21 → 31` rested on Step 31
+otherwise having to relocate `artifact_store.py`'s "still-scattered write
+code". `ArtifactStore` is a cohesive class whose methods already map onto
+its six endpoints, and poly-g19 keeps the class. poly-g19 is not blocked
+by this.
 
 ### Step 22 — agent step layer refactor — pending
 
@@ -1384,9 +1113,12 @@ hits a transient issue.
 
 #### Dependencies
 
-- **Hard:** Step 21 (DB layer consolidation) — items 1 and 4 add
-  columns; landing them on the consolidated write surface avoids
-  a second schema migration.
+- **Hard:** ~~Step 21~~ — no longer. This rested on 21b's consolidated
+  write surface, which was dropped when Step 21 was rescoped (see
+  `poly-39v`): there is no surface to land on and no second migration to
+  avoid. Items 1 and 4 add columns to `schema.py` like any other change.
+  What `poly-39v` does offer them is the schema-drift test, which is
+  where a new NOT NULL column should be caught.
 - **Soft:** Step 22 (steps.py refactor) — item 7's CONVERT_START
   split is cleaner if it lands against the consolidated phase
   helpers.
@@ -1403,105 +1135,22 @@ hits a transient issue.
 
 ---
 
-### Step 31 — fold the artifact-store into the tracker (single service) — pending
+### Step 31 — fold the artifact-store into the tracker — MIGRATED TO BEADS
 
-Today the central side runs **two** HTTP services on one host:
+Tracked as **poly-g19**. Look it up with `bd show poly-g19`; do not work
+from a copy here.
 
-- **tracker** (`:8080`, FastAPI) — reads `state.db` and serves bundle
-  artifacts from a local `artifact_root`; also writes `state.db`
-  directly (operator actions: verify/accept/reject/take-over/…).
-- **artifact-store** (`:8788`, stdlib `BaseHTTPRequestHandler`) — the
-  nominal "single writer" for `state.db`, blobs, and full logs, with
-  `/v1/artifacts/{get,put,put-fs}`, `/v1/bundles/upsert`,
-  `/v1/jobs/transition`, `/v1/user-context`.
+The bead reconciles this step against the code. Two corrections worth
+knowing without opening it: the single-writer invariant is fiction
+*three* ways over, not two — the tracker writes 14 tables directly (24
+statements), which the text here called "operator actions". And the split
+already costs something concrete: the runner has two accessors for the
+same bytes and tries `:8788` before falling back to `:8080`, at two call
+sites, for no reason other than there being two services.
 
-The two share **one filesystem** (`/build/synth/logs`) and **one
-`state.db` file** — the tracker reads exactly what the artifact-store
-writes — so they already *must* co-locate. The "single writer"
-invariant is also already fiction: the tracker writes `state.db`
-directly, and so does the runner (via local sqlite). Running them as
-separate processes buys nothing and costs an extra port, an extra
-thing to supervise, and — critically — **a second network + auth
-surface** the moment a remote runner appears (Step 17/18).
-
-Folding the artifact-store into the tracker makes the tracker the
-single central service *and* the single writer process. The only
-remaining direct-sqlite writer is then the runner, which Step 17
-converts to HTTP.
-
-#### Goal
-
-After Step 31:
-
-- One process, one port (`:8080`). `:8788` retired.
-- The runner and the dsynth hook point at the tracker URL for blobs
-  and state writes; no `ARTIFACT_STORE_URL` second endpoint.
-- The tracker is the single *process* writing `state.db` (runner's
-  direct writes remain until Step 17 — see sequencing).
-
-No change to the on-disk layout (`artifact_root`, `objects/sha256/…`)
-or the wire contract of the `/v1/` endpoints — only the host:port they
-live on.
-
-#### Sub-steps
-
-**31a — mount the artifact-store endpoints on the FastAPI app.**
-Port `/v1/artifacts/{get,put,put-fs}`, `/v1/bundles/upsert`,
-`/v1/jobs/transition`, `/v1/user-context` to FastAPI routes that call
-the existing `ArtifactStore` class in-process (or `dportsv3.db.writes`
-once Step 21 lands — see sequencing). Define the blob `put` routes as
-**sync `def`** so FastAPI dispatches them in its threadpool and a large
-upload can't block the async UI/event loop. Keep the `/v1/` paths
-verbatim to minimise client churn.
-
-**31b — repoint clients.** Default the runner's `ARTIFACT_STORE_URL`
-and the hook's `artifact-store-client` (`hook_common.sh`) to the
-tracker URL. One env var (`DPORTSV3_TRACKER_URL`) becomes the single
-endpoint for both blobs and state.
-
-**31c — retire the standalone service.** Remove the
-`scripts/artifact-store` entrypoint, the `:8788` bind, and
-`ArtifactStoreServer` / `main()` argparse. Keep the `ArtifactStore`
-class — it's now invoked in-process by the FastAPI routes.
-
-**31d — ops + permissions.** The tracker process now *writes*
-`artifact_root` (it only read it before); confirm the service account
-has write perms and update the runbook / supervisor config to start
-one service instead of two.
-
-#### Sequencing
-
-- **After Step 21.** 21b centralizes scattered writes into
-  `dportsv3.db.writes`; doing it first means 31a is pure HTTP routing
-  onto that surface instead of physically relocating
-  `artifact_store.py`'s still-scattered write code and re-consolidating
-  later.
-- **Before Step 17.** A remote runner should aim at *one* service and
-  one auth surface, not two. Wiring remote against two endpoints you're
-  about to collapse is wasted work.
-- Recommended order: **21 → 31 → 17.** Exception: if reducing the
-  deployment surface is urgent on its own, 31 can ship first as a crude
-  routing change (mount `ArtifactStore` as-is) and let 21 tidy it
-  afterward — the "topology win now, refactor later" tradeoff.
-
-#### Tests
-
-- Existing artifact-store round-trip tests retargeted at the FastAPI
-  app (put → get returns identical bytes; `put-fs`; `bundles/upsert`
-  row written; `jobs/transition` applies a lifecycle event).
-- Blob `put` route runs off the event loop (threadpool) — a large
-  upload doesn't stall a concurrent UI request.
-- Client-repoint smoke: runner + hook configured with only
-  `DPORTSV3_TRACKER_URL` complete a full triage→patch→verify cycle.
-- WAL stays on; write transactions stay short (blob bytes go to the
-  filesystem, not the DB).
-
-#### LOC estimate
-
-Moderate — endpoint porting (~150) + client config (~30) + entrypoint
-removal (negative) + tests (~120).
-
----
+Still true and still worth reading here: the two share one filesystem and
+one `state.db`, so they already *must* co-locate; this lands after Step
+21 and before the auth half of poly-fij.
 
 ### Step 32 — job model definition (JobSpec / JobRecord + spec-vs-state ownership) — pending
 

@@ -134,9 +134,10 @@ Pending, in recommended order:
    attempt counter, `TRANSIENT_FAIL` edge, per-state timeout,
    `originating_bundle_id` for resolution propagation. The operator
    loop is feature-complete but its FSM seams are where the recurring
-   bugs live. Items 1+4 add columns (hard dep on Step 21 to avoid a
-   second migration); items 5–9 are pure FSM cleanups and can
-   interleave whenever.
+   bugs live. Items 1+4 add columns (the "hard dep on Step 21 to avoid a
+   second migration" is void — 21b's write surface was dropped when
+   Step 21 was rescoped, so there is nothing to land on); items 5–9 are
+   pure FSM cleanups and can interleave whenever.
 4. **25** — edit-intent DSL. **Shipped** (dops-only; see the
    2026-06-05 update above and the Step 25 record in the
    architecture backlog). The structural answer to the empty-diff /
@@ -153,17 +154,28 @@ Pending, in recommended order:
 7. **23 → 22** — execution layer then steps.py refactor. 23 first
    so 22's phase-helper extraction lands against the consolidated
    `chroot_exec`.
-8. **21 → 31 → 17 → 18** — consolidation + remote chain, in this
-   order:
-   - **21** DB layer consolidation — centralize scattered writes into
-     `dportsv3.db.writes`, settle connection patterns. No behavior
-     change. Natural landing site for Step 26 items 1+4.
+8. **21 / 31 → 17 → 18** — consolidation + remote chain. The chain is
+   shorter than it was: 21 is no longer a link in it.
+   - **21** DB layer consolidation — *rescoped and now tracked as
+     `poly-39v` (P3).* Centralizing every write was dropped: at 232
+     `conn.execute` sites across 22 files it is not one unit of work,
+     and schema-drift tests catch the same failure far cheaper. What
+     remains is one constructor for the write connection (15 inline
+     copies today) plus those tests. **It no longer blocks 31** —
+     `ArtifactStore` is already a cohesive class whose methods map onto
+     its six endpoints, so 31a relocates nothing.
    - **31** fold the artifact-store into the tracker — one service,
      one port, one auth surface. Makes the tracker the single writer
-     process. Pure HTTP routing once 21 has a clean write surface.
+     process. Pure HTTP routing onto the existing `ArtifactStore`
+     class. *Now tracked as `poly-g19`; not blocked by 21.*
    - **17** remote runners — runner stops opening `state.db` directly,
      uses the tracker's HTTP write endpoints + new read/claim
      endpoints. Only load-bearing when a second builder appears.
+     *Now tracked as `poly-fij` (epic, 6 children).* One amendment from
+     the bead: 17d, the claim endpoint, does **not** depend on 21 or 31
+     and should land first — it replaces the `pending/` sweep with a DB
+     claim, which is worth having on a single host because it closes the
+     chroot seam in `poly-7z1`.
    - **18** security hardening — auth on the (now single) service.
 9. **12 → 13 → 14 (system-prompt decomposition only) → 15** —
    abstraction work. 12 unblocks 13/14/15. Step 14's KEDB metadata
@@ -198,6 +210,7 @@ enough that seam/model-level bugs are the dominant failure mode: 26
 hardens the FSM transitions, 32 fixes the job *model* underneath them
 (single `JobSpec`, spec-vs-state ownership, the claim-time abandon
 guard). 32 is deliberately migration-free so it carries no dependency
-tax and can run alongside 26's column work (which waits on Step 21).
+tax and can run alongside 26's column work (which no longer waits on
+Step 21 — see item 8).
 Everything below them is cleanup that can wait for a real trigger (a
 second builder for 17/18, a non-GitHub target for 11d-4).
