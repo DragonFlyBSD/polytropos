@@ -63,6 +63,7 @@ from pathlib import Path
 # convention, but this one backs a module-level constant.
 from dportsv3 import paths
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
+from dportsv3.common.endpoints import tracker_url
 from dportsv3.engine import emit
 
 
@@ -76,7 +77,6 @@ class _VerifyBranchUnavailable(Exception):
 # Max fix iterations before giving up on a port
 DEFAULT_MAX_ITERATIONS = 3
 
-DEFAULT_TRACKER_URL = "http://127.0.0.1:8080"
 
 # Default location of agentic-policy.json. Resolution lives in
 # ``dportsv3.paths``: the operator's copy under $DPORTSV3_CONFIG_DIR wins,
@@ -445,7 +445,7 @@ def init_state_db(queue_root: Path) -> sqlite3.Connection | None:
 
 
 def _tracker_url() -> str:
-    return os.environ.get("DPORTSV3_TRACKER_URL", DEFAULT_TRACKER_URL)
+    return tracker_url()
 
 
 def artifact_get(bundle_id: str, relpath: str) -> bytes | None:

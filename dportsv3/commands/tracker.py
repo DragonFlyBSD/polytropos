@@ -34,10 +34,11 @@ from dportsv3.tracker.client import (
 )
 
 
-#: Address the tracker listens on when nothing says otherwise. Unlike
-#: artifact-store (127.0.0.1) this is the whole LAN, which is a deliberate
-#: choice for a build box on a trusted network — see poly-abr.6. It is a
-#: default rather than a literal so a deployment can say otherwise.
+#: Address the tracker listens on when nothing says otherwise: the whole
+#: LAN, a deliberate choice for a build box on a trusted network — see
+#: poly-abr.6. Since the fold this is the only bind there is, so it also
+#: governs the /v1/ ingest surface. A default rather than a literal, so a
+#: deployment can say otherwise.
 DEFAULT_BIND = "0.0.0.0"
 
 
