@@ -33,22 +33,9 @@ _HOOKS = _hooks_dir()
 
 
 @pytest.fixture
-def store_url(tmp_path):
-    """A real artifact-store on a real port, as the hook expects."""
-    from dportsv3.artifact_store import (
-        ArtifactStore, ArtifactStoreServer, Handler,
-    )
-
-    store = ArtifactStore(tmp_path / "store")
-    server = ArtifactStoreServer(("127.0.0.1", 0), Handler, store)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", store
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+def store_url(ingest_server):
+    """The hooks post to whatever serves /v1/; see conftest."""
+    return ingest_server
 
 
 @pytest.fixture

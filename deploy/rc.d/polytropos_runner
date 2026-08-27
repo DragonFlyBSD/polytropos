@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # PROVIDE: polytropos_runner
-# REQUIRE: LOGIN FILESYSTEMS polytropos_artifact_store polytropos_tracker
+# REQUIRE: LOGIN FILESYSTEMS polytropos_tracker
 # KEYWORD: shutdown
 
 #
@@ -164,8 +164,9 @@ polytropos_runner_prestart()
 	export DPORTS_DEV_ENV_CMD
 
 	# Root writing into a tree owned by ${polytropos_user}: without this
-	# the tracker and artifact-store cannot write the files this process
-	# creates. The failure looks like a read-only database, not a
+	# the tracker cannot write the files this process creates, and it
+	# writes the blobstore now too. The failure looks like a
+	# read-only database, not a
 	# permission error.
 	umask 002
 }

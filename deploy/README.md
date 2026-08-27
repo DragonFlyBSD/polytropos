@@ -7,7 +7,6 @@ DragonFly BSD only — these use `rc.subr`, `daemon(8)` and `newsyslog`.
 
 | Service | Runs as | Listens on |
 |---|---|---|
-| `polytropos_artifact_store` | `polytropos` | `127.0.0.1:8788` |
 | `polytropos_tracker` | `polytropos` | `0.0.0.0:8080` |
 | `polytropos_runner` | **root** | nothing |
 
@@ -39,7 +38,6 @@ Group inheritance only applies to *new* files, so the install has to
 
 ## Files
 
-    /usr/local/etc/rc.d/polytropos_artifact_store
     /usr/local/etc/rc.d/polytropos_tracker
     /usr/local/etc/rc.d/polytropos_runner
     /usr/local/etc/polytropos.conf              shared, world-readable
@@ -166,7 +164,6 @@ point — the install profile is part of each stamp, so one command does
 not cover the others:
 
     bin/dportsv3 tracker serve --help   # the [tracker] extra
-    bin/dportsv3 artifact-store --help  # the base profile
     bin/dportsv3 dev-env --help         # the dev-env venv
 
 `deploy install` prints these when it sees the console scripts are not in
@@ -175,11 +172,9 @@ the prefix.
 ## Enable
 
     # /etc/rc.conf
-    polytropos_artifact_store_enable="YES"
     polytropos_tracker_enable="YES"
     polytropos_runner_enable="YES"
 
-    service polytropos_artifact_store start
     service polytropos_tracker start
     service polytropos_runner start
 

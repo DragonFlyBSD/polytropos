@@ -28,3 +28,48 @@ def _isolate_env_resolver(monkeypatch):
     # in test A would bleed into test B for up to 1 s and silently
     # mask "the UI change reached the runner" behavior.
     monkeypatch.setattr(runner, "_GATE_RESOLVE_CACHE", None)
+
+
+@pytest.fixture
+def ingest_server(tmp_path):
+    """The /v1/ ingest surface on a real port, the way a dsynth hook
+    reaches it.
+
+    Post-fold that surface is the tracker, so this boots the FastAPI app
+    rather than the standalone store that used to own :8788. Yields
+    ``(url, store)``; the store is handed in so a test can inspect the
+    rows and blobs the hook produced.
+    """
+    import threading
+    import time
+
+    import uvicorn
+
+    from dportsv3.artifact_store import ArtifactStore
+    from dportsv3.tracker.server import create_app
+
+    evidence = tmp_path / "store" / "evidence"
+    evidence.mkdir(parents=True)
+    store = ArtifactStore.from_evidence_root(evidence)
+    app = create_app(store.db_path)
+    app.state.artifact_root = evidence
+    app.state.artifact_store = store
+
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while not server.started and time.monotonic() < deadline:
+        if not thread.is_alive():
+            raise RuntimeError("ingest server thread died during startup")
+        time.sleep(0.02)
+    if not server.started:
+        raise RuntimeError("ingest server did not start in time")
+    port = server.servers[0].sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}", store
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)

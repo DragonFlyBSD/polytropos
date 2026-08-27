@@ -32,8 +32,7 @@ from pathlib import Path
 from dportsv3 import paths
 
 #: Copied to ``<prefix>/etc/rc.d`` and made executable.
-RC_SCRIPTS = ("polytropos_artifact_store", "polytropos_tracker",
-              "polytropos_runner")
+RC_SCRIPTS = ("polytropos_tracker", "polytropos_runner")
 
 #: ``(sample name, destination relative to <prefix>/etc, mode, group-owned)``.
 #: Group-owned files are readable by the service account; the rest stay
@@ -354,7 +353,6 @@ in {prefix}/etc/polytropos.conf name commands that run.""",
     print(f"""
 done. To bring the stack up, add to /etc/rc.conf:
 
-    polytropos_artifact_store_enable="YES"
     polytropos_tracker_enable="YES"
     polytropos_runner_enable="YES"
 

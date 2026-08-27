@@ -1,11 +1,12 @@
 """Shared SQLite schema for state.db.
 
-Three processes write state.db: artifact-store, the tracker and the
-runner. SQLite WAL serializes them — one writer at a time, readers
-concurrent — and that is the only serialization there is; no
-application-level single-writer invariant exists. Defining the schema
-here keeps the writers in sync and makes integration tests easy (import
-+ spin up an in-memory DB).
+Two processes write state.db: the tracker (through both its own
+connection and the ``ArtifactStore`` it now hosts) and the runner.
+SQLite WAL serializes them — one writer at a time, readers concurrent —
+and that is the only serialization there is; no application-level
+single-writer invariant exists. Defining the schema here keeps the
+writers in sync and makes integration tests easy (import + spin up an
+in-memory DB).
 
 The DB is wiped, never migrated — so this is a single clean set of
 ``CREATE`` statements, not a base schema plus a tail of ``ALTER``
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS runs (
 -- issue_state.derived_regression), so the badge can never disagree with what
 -- the builds actually did. The rollups (times_seen / first_seen / last_seen /
 -- latest_bundle_id) are denormalized so the issue list is one cheap
--- read; artifact-store and the tracker both write them, serialized by WAL.
+-- read; the ingest path and the operator actions both write them.
 CREATE TABLE IF NOT EXISTS issues (
     issue_key        TEXT PRIMARY KEY,
     target           TEXT,

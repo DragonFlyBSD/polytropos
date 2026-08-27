@@ -71,8 +71,6 @@
 : ${polytropos_tracker_port:="8080"}
 
 # The artifact store only ever receives bundles from hooks on this host.
-: ${polytropos_artifact_store_bind:="127.0.0.1"}
-: ${polytropos_artifact_store_port:="8788"}
 
 # How the runner reaches the other two. Keep in step with the ports above.
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}

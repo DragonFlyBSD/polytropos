@@ -129,7 +129,7 @@ whether any are stale vs. the in-repo source. Re-run
 
 ## 5. Configure env for the services
 
-Pick a logs root that artifact-store + tracker share:
+Pick a logs root the tracker and the runner share:
 
 ```sh
 LOGS_ROOT=/build/synth/logs
@@ -175,11 +175,9 @@ Put real credentials in `/usr/local/etc/polytropos/harness.env`, then:
 
 ```sh
 # /etc/rc.conf
-polytropos_artifact_store_enable="YES"
 polytropos_tracker_enable="YES"
 polytropos_runner_enable="YES"
 
-service polytropos_artifact_store start
 service polytropos_tracker start
 service polytropos_runner start
 ```
@@ -189,21 +187,18 @@ command does not run, or the runner cannot read the dev-env store, you
 get an error at `service ... start` instead of a service that comes up
 and fails every job. `deploy/README.md` has the full reference.
 
-### In three shells (development)
+### In two shells (development)
 
 ```sh
-# Shell A — artifact-store (receives bundles, writes state.db + blobs)
-bin/dportsv3 artifact-store --logs-root $LOGS_ROOT
-
-# Shell B — tracker (UI + read API + SSE)
+# Shell A — tracker: UI, read API, SSE, and the /v1/ ingest surface
+# the hooks and the runner write bundles, blobs and state through
 DPORTSV3_STATE_DB=$STATE_DB \
 DPORTSV3_ARTIFACT_ROOT=$ARTIFACT_ROOT \
   bin/dportsv3 tracker serve --port 8080 --bind 0.0.0.0
 
-# Shell C — queue runner (claims jobs, runs triage/patch)
+# Shell B — queue runner (claims jobs, runs triage/patch)
 DPORTSV3_STATE_DB=$STATE_DB \
 DPORTSV3_TRACKER_URL=http://127.0.0.1:8080 \
-ARTIFACT_STORE_URL=http://127.0.0.1:8788 \
   bin/dportsv3 agent-queue-runner --queue-root $QUEUE_ROOT
 ```
 
@@ -222,8 +217,9 @@ an ssh tunnel:
 ssh -L 8080:localhost:8080 buildbox
 ```
 
-artifact-store defaults to `127.0.0.1` instead: it only ever receives
-bundles from hooks running on the same host.
+Note that the ingest surface is on that same bind. There is one service
+and one exposure, so `--bind 127.0.0.1` also stops hooks on other hosts
+from reaching it — which is correct today, where the hooks are local.
 
 ## 7. Run a build
 
@@ -289,12 +285,11 @@ behind: in-flight rows are marked dead, stranded job files move to
 is lost, not corrupted — re-enqueue it from the bundle.
 
 **Upgrading.** Pull, then restart the services. From a checkout, bootstrap
-the venvs first — and note that there are **three separate install stamps**,
+the venvs first — and note that there are **two separate install stamps**,
 one per entry point, so a single command does not cover them:
 
 ```sh
 bin/dportsv3 tracker serve --help   # the [tracker] extra
-bin/dportsv3 artifact-store --help  # the base profile
 bin/dportsv3 dev-env --help         # the dev-env venv, a separate distribution
 ```
 
@@ -325,7 +320,7 @@ see *Common stumbles*.
 |---|---|
 | `dportsv3` says "missing DragonFly packages" | install the `pkg install` list from §1 |
 | Hooks don't fire on failure | `bin/dportsv3 dev-env hooks-status myenv` for stale/missing; confirm the env's `/etc/dsynth/dportsv3-hooks.conf` is being sourced by the dsynth profile inside the chroot |
-| Tracker 500s on artifact stream | `DPORTSV3_ARTIFACT_ROOT` doesn't match `--logs-root`/evidence on the artifact-store |
+| Tracker 500s on artifact stream | `DPORTSV3_ARTIFACT_ROOT` does not name the evidence dir the hooks wrote into |
 | Triage 401s | provider key wrong, or `DP_HARNESS_TRIAGE_API_BASE` needs to be set for non-default endpoints |
 | Patch loop stops with `budget-exhausted` | check trust tier classification in `analysis/triage.md`; consider bumping the tier in `config/agentic-policy.json` |
 | Runner sees no jobs after a failure | check `bundles` row exists in `state.db` (hook side); check classification didn't resolve to MANUAL |

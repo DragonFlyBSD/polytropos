@@ -14,7 +14,7 @@ import pytest
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 RC_D = DEPLOY / "rc.d"
-SERVICES = ["polytropos_artifact_store", "polytropos_tracker",
+SERVICES = ["polytropos_tracker",
             "polytropos_runner"]
 
 # Enough of rc.subr to let a script run to the point where it has built
@@ -116,10 +116,8 @@ def test_runner_never_drops_privileges(tmp_path) -> None:
     assert " -u " not in got["ARGS"], got["ARGS"]
 
 
-@pytest.mark.parametrize("service", ["polytropos_artifact_store",
-                                     "polytropos_tracker"])
-def test_http_services_do_drop_privileges(tmp_path, service) -> None:
-    got = run_service(tmp_path, service)
+def test_http_services_do_drop_privileges(tmp_path) -> None:
+    got = run_service(tmp_path, "polytropos_tracker")
     assert "-u polytropos" in got["ARGS"], got["ARGS"]
 
 
@@ -131,12 +129,6 @@ def test_runner_sets_umask_for_the_shared_tree(tmp_path) -> None:
 
 
 # --- what actually gets launched ----------------------------------------
-
-def test_artifact_store_stays_on_loopback(tmp_path) -> None:
-    got = run_service(tmp_path, "polytropos_artifact_store")
-    assert "--bind 127.0.0.1" in got["ARGS"]
-    assert "--port 8788" in got["ARGS"]
-
 
 def test_tracker_binds_the_lan_by_default(tmp_path) -> None:
     """Deliberate, per poly-abr.6 — pinned so it is never an accident."""
@@ -371,7 +363,6 @@ def test_a_multi_word_dev_env_command_survives(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("service,argv", [
-    ("polytropos_artifact_store", "artifact-store --help"),
     ("polytropos_tracker", "tracker serve --help"),
 ])
 def test_probe_uses_the_services_own_argv(service, argv) -> None:
@@ -453,7 +444,7 @@ def test_absent_credentials_warn_but_start(tmp_path) -> None:
 # --- conventions taken from the ports tree ------------------------------
 
 @pytest.mark.parametrize("path", [
-    "rc.d/polytropos_artifact_store", "rc.d/polytropos_tracker",
+    "rc.d/polytropos_tracker",
     "rc.d/polytropos_runner", "polytropos.conf.sample",
 ])
 def test_defaults_use_the_colon_form(path) -> None:
@@ -492,8 +483,7 @@ def test_supervision_and_pidfile_flag_agree(tmp_path, service) -> None:
 
 # --- HOME across the privilege drop -------------------------------------
 
-@pytest.mark.parametrize("service", ["polytropos_artifact_store",
-                                     "polytropos_tracker"])
+@pytest.mark.parametrize("service", ["polytropos_tracker"])
 def test_home_is_set_for_dropped_privileges(tmp_path, service) -> None:
     """Verified on DragonFly: `daemon -u` lowers the uid and leaves HOME
     alone, so a child running as the service user still sees HOME=/root
@@ -520,7 +510,7 @@ def test_service_home_matches_the_installer() -> None:
 # --- no repository in the scripts (poly-abr.9) --------------------------
 
 @pytest.mark.parametrize("path", [
-    "rc.d/polytropos_artifact_store", "rc.d/polytropos_tracker",
+    "rc.d/polytropos_tracker",
     "rc.d/polytropos_runner", "polytropos.conf.sample", "README.md",
 ])
 def test_nothing_assumes_a_checkout_layout(path) -> None:
@@ -537,7 +527,6 @@ def test_nothing_assumes_a_checkout_layout(path) -> None:
 
 
 @pytest.mark.parametrize("service,default", [
-    ("polytropos_artifact_store", "/usr/local/bin/dportsv3"),
     ("polytropos_tracker", "/usr/local/bin/dportsv3"),
     ("polytropos_runner", "/usr/local/bin/dportsv3"),
 ])
