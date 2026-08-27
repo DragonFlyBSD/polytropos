@@ -308,18 +308,32 @@ var RESULT_GLYPHS = {
     skipped: '⇢'
 };
 
-function logfile(origin) {
-    var p = origin.split('/');
-    return '../' + p[0] + '___' + (p[1] || '') + '.log';
+// The build log lives on the failure's evidence bundle, as a blob the
+// tracker serves. dsynth-progress linked '../origin___port.log' — a file
+// beside its own static report — which under this UI's <base> resolved to
+// /api/progress/build/<x>.log and 404'd for every row.
+//
+// Root-relative on purpose: <base> rewrites relative URLs, not these.
+function logfile(bundleId) {
+    return '/api/bundles/' + encodeURIComponent(bundleId) + '/artifacts/logs/full.log.gz';
 }
 
-function infoHTML(result, origin, info) {
+function infoHTML(d) {
+    var result = d.result;
+    var info   = d.info;
     if (result === 'meta')    return 'meta-node complete.';
-    if (result === 'built')   return '<a href="' + logfile(origin) + '">logfile</a>';
-    if (result === 'failed')  return 'Failed ' + esc((info || '').split(':')[0]) + ' phase (<a href="' + logfile(origin) + '">logfile</a>)';
     if (result === 'skipped') return 'Issue with ' + esc(info);
     if (result === 'ignored') return esc((info || '').split(':|:')[0]);
-    return '';
+    if (result === 'failed') {
+        // No bundle means the evidence upload did not land; show the
+        // version alone rather than a link that cannot resolve.
+        return d.bundle_id
+            ? esc(info) + ' (<a href="' + logfile(d.bundle_id) + '">logfile</a>)'
+            : esc(info);
+    }
+    // built, and anything else: the version. A successful build uploads
+    // nothing, so there is no log to link to.
+    return esc(info || '');
 }
 
 function skipHTML(d) {
@@ -350,7 +364,7 @@ function renderTable() {
             '<td>[' + esc(d.ID) + ']</td>' +
             '<td><div class="' + d.result + ' result">' + glyph + ' ' + d.result + '</div></td>' +
             '<td>' + originLink(d.origin) + '</td>' +
-            '<td>' + infoHTML(d.result, d.origin, d.info) + '</td>' +
+            '<td>' + infoHTML(d) + '</td>' +
             '<td>' + skipHTML(d) + '</td>' +
             '<td>' + esc(d.duration) + '</td>' +
             '</tr>';

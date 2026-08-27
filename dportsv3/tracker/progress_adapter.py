@@ -6,6 +6,11 @@ two endpoints:
 - ``summary.json``      — profile + kickoff + stats + active builders
 - ``<NN>_history.json`` — array of build entries, paginated into chunks
 
+Entries carry one field dsynth-progress never had: ``bundle_id``, the
+evidence bundle a failed port produced. The lifted UI linked each row to
+a ``.log`` file sitting beside the static report; there is no such file
+here, so the link is built from the bundle instead.
+
 This module maps the tracker's ``state.db`` rows (``build_runs``,
 ``build_results``, ``port_status``) into that shape so the lifted UI
 runs against tracker data without modification.
@@ -150,30 +155,43 @@ def run_history_chunk(
     # 'building' and 'queued' rows are in-flight — they belong in
     # summary.builders, not in the historical record.
     rows = conn.execute(
-        """SELECT origin, version, result, recorded_at, status
-           FROM build_results
-           WHERE build_run_id = ?
-             AND status NOT IN ('building', 'queued')
-           ORDER BY recorded_at ASC, origin ASC
+        """SELECT br.origin, br.version, br.result, br.recorded_at, br.status,
+                  (SELECT b.bundle_id
+                     FROM bundles b
+                     JOIN runs r ON r.run_id = b.run_id
+                    WHERE r.build_run_id = br.build_run_id
+                      AND b.origin = br.origin
+                    ORDER BY b.ts_utc DESC
+                    LIMIT 1) AS bundle_id
+           FROM build_results br
+           WHERE br.build_run_id = ?
+             AND br.status NOT IN ('building', 'queued')
+           ORDER BY br.recorded_at ASC, br.origin ASC
            LIMIT ? OFFSET ?""",
         (run_id, CHUNK_SIZE, offset),
     ).fetchall()
 
     entries: list[dict[str, Any]] = []
     for i, row in enumerate(rows):
-        entries.append(
-            {
-                "entry": offset + i + 1,
-                "elapsed": "",
-                "ID": "00",
-                "result": _RESULT_TO_DSYNTH.get(
-                    str(row["result"] or ""), str(row["result"] or "")
-                ),
-                "origin": str(row["origin"]),
-                "info": str(row["version"] or ""),
-                "duration": "",
-            }
-        )
+        entry = {
+            "entry": offset + i + 1,
+            "elapsed": "",
+            "ID": "00",
+            "result": _RESULT_TO_DSYNTH.get(
+                str(row["result"] or ""), str(row["result"] or "")
+            ),
+            "origin": str(row["origin"]),
+            "info": str(row["version"] or ""),
+            "duration": "",
+        }
+        # The bundle this port's failure produced, when it produced one.
+        # It is what makes the row's logfile link resolvable: the log is a
+        # blob on the bundle, not a file beside a static report. Only
+        # failures upload evidence, so successes never carry this.
+        bundle_id = row["bundle_id"]
+        if bundle_id:
+            entry["bundle_id"] = str(bundle_id)
+        entries.append(entry)
     return entries
 
 
