@@ -325,6 +325,59 @@ def test_detect_toolchains_from_uses_line(tmp_path):
     assert "perl5" in tags
 
 
+def test_detect_toolchains_follows_a_wrapped_uses_line(tmp_path):
+    """USES= is a token list, so on any substantial port it wraps with a
+    trailing backslash. Parsing physical lines drops everything after the
+    wrap and the port detects as whatever happened to be on line one.
+
+    Measured on x6: devel/glib20 declares meson, perl5, pkgconfig and
+    python on its continuation line, detected as a bare C port, and
+    triage ran with 1 of 17 playbooks instead of 6.
+    """
+    from dportsv3.agent.playbooks import detect_toolchains
+    port = tmp_path / "port"
+    port.mkdir()
+    (port / "Makefile").write_text(
+        "PORTNAME=\tglib\n"
+        "USES=\t\tcompiler:c11 cpe gettext-runtime gnome iconv:wchar_t \\\n"
+        "\t\tmeson perl5 pkgconfig python tar:xz ${${FLAVOR}_USES}\n"
+        "USE_LDCONFIG=\tyes\n"
+    )
+    tags = detect_toolchains(port)
+    assert "c" in tags, "first line still parsed"
+    for expected in ("meson", "perl5", "pkg-config", "python"):
+        assert expected in tags, f"{expected} lost to the line continuation"
+
+
+def test_detect_toolchains_folds_several_continuations(tmp_path):
+    from dportsv3.agent.playbooks import detect_toolchains
+    port = tmp_path / "port"
+    port.mkdir()
+    (port / "Makefile").write_text(
+        "USES=\tcmake \\\n"
+        "\tmeson \\\n"
+        "\tperl5\n"
+    )
+    tags = detect_toolchains(port)
+    assert {"cmake", "meson", "perl5"} <= tags
+
+
+def test_a_continuation_does_not_revive_a_commented_out_uses(tmp_path):
+    """Folding happens before the comment check, so a commented USES=
+    must stay commented rather than being spliced into a live line."""
+    from dportsv3.agent.playbooks import detect_toolchains
+    port = tmp_path / "port"
+    port.mkdir()
+    (port / "Makefile").write_text(
+        "PORTNAME=z\n"
+        "# USES= cmake\n"
+        "USES=\tmeson\n"
+    )
+    tags = detect_toolchains(port)
+    assert "meson" in tags
+    assert "cmake" not in tags
+
+
 def test_detect_toolchains_handles_gnu_configure_and_use_gmake(tmp_path):
     from dportsv3.agent.playbooks import detect_toolchains
     port = tmp_path / "port"

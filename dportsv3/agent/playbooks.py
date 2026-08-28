@@ -266,15 +266,29 @@ _USES_TO_TAGS: dict[str, tuple[str, ...]] = {
 }
 
 
+_CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 _USES_ASSIGN_RE = re.compile(r"^USES\s*[+:?]?=\s*(.+?)\s*(?:#.*)?$")
 _GNU_CONFIGURE_RE = re.compile(r"^GNU_CONFIGURE\s*[+:?]?=\s*yes\b")
 _USE_GMAKE_RE = re.compile(r"^USE_GMAKE\s*[+:?]?=\s*yes\b")
 
 
+def _fold_continuations(text: str) -> str:
+    """Join make line-continuations into single logical lines.
+
+    A trailing backslash continues an assignment onto the next physical
+    line, and ``USES=`` is the assignment most likely to wrap — it is
+    a token list that grows. Parsing physical lines silently drops
+    every token after the wrap: devel/glib20 declares ``meson perl5
+    pkgconfig python`` on its continuation line, so it detected as a
+    bare C port and no toolchain playbook ever fired for it.
+    """
+    return _CONTINUATION_RE.sub(" ", text)
+
+
 def _tags_from_makefile_text(text: str) -> set[str]:
     """Parse a port Makefile for toolchain-relevant assignments."""
     tags: set[str] = set()
-    for raw in text.splitlines():
+    for raw in _fold_continuations(text).splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
