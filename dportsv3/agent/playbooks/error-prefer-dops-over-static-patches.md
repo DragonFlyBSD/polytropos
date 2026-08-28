@@ -75,27 +75,17 @@ so it has to be *established*, not assumed:
 3. If yes, delete `dragonfly/patch-*` and its `file materialize` line, and say
    in the summary that FreeBSD now covers it.
 
-**Same file and same lines is not evidence.** Worked counter-example,
-`devel/glib20` 2.86.4 — FreeBSD added `files/patch-gio_meson.build` editing the
-exact line our `dragonfly/patch-gio_meson.build` also edits:
+**Same file and same lines is not evidence.** Read both patches and ask what
+each *leaves behind*; if ours removes what theirs configures, they are not the
+same fix, however much they overlap. Then check the result actually works on
+DragonFly — a FreeBSD patch that links a library DragonFly does not ship has
+not superseded anything.
 
-```
-FreeBSD:   -  libelf = cc.find_library('elf', required : get_option ('libelf'))
-           +  libelf = declare_dependency(link_args: '/lib/libelf.so.2')
-
-DragonFly: removes the whole libelf block, leaving have_libelf = false
-```
-
-Opposite intents. FreeBSD keeps libelf and links it from base; DragonFly
-disables it. And DragonFly ships no libelf at all — no `/lib/libelf.so.2`, no
-`/usr/include/libelf.h` — so FreeBSD's version links a library that does not
-exist here. Deleting our patch on "FreeBSD already patches that line" would
-have broken the build. It is **not** superseded; it is drifted, and belongs in
-Step 2.
-
-The cheap discriminator is intent, not location: read both patches and ask what
-each leaves behind. If ours removes what theirs configures, they are not the
-same fix.
+Both traps in one real case: `devel/glib20` 2.86.4, where FreeBSD patches the
+exact line ours does. Theirs keeps libelf and links it from base; ours removes
+the libelf block outright, because DragonFly has no libelf to link. Same file,
+same line, opposite intent, and deleting ours would have broken the build. It
+is drifted, not superseded — Step 2.
 
 ### Step 2 — what does the failing patch target? (decide this before picking an op)
 
