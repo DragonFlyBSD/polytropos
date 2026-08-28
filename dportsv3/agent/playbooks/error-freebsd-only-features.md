@@ -78,13 +78,24 @@ patch under `dragonfly/` (`file materialize dragonfly/patch-X -> dragonfly/patch
 that wraps the code in `#ifdef` guards or drops the problematic includes — never
 `patch apply` a `dragonfly/*` patch (no extracted source at compose time).
 
-## Examples (the `OPTIONS_DEFAULT:NFOO` filter → `mk eval`)
-- `net/bsdrcmds`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NLIBBLACKLIST}"` — disables blacklistd
-- `www/bozohttpd`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NBLACKLIST}"` — same pattern, different option name
-- `security/sudo`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NAUDIT}"` — disables BSM audit
-- `net/yate`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NSCTP}"` — disables SCTP
-- `x11/waybar`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NPULSEAUDIO:NUDEV}"` — disables multiple
-- `x11-wm/sway`: `mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NBASU}"` — disables systemd/basu
+## The `OPTIONS_DEFAULT:NFOO` filter → `mk eval`
+
+Turning an option off is one line, whatever the option is called:
+
+```dops
+mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:N<OPTION>}"
+```
+
+`<OPTION>` is the name as it appears in the port's `OPTIONS_DEFINE` /
+`OPTIONS_DEFAULT` — read it there rather than guessing from the feature name.
+Filters chain, so several go in one op:
+
+```dops
+mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:N<FIRST>:N<SECOND>}"
+```
+
+This is the whole fix for a FreeBSD-only feature the port already gates behind
+an option. Reach for Option 3 only when there is no option to turn off.
 
 ## Triage Classification
 This error type is **patchable** when:

@@ -89,19 +89,21 @@ When generating a diff for the DeltaPorts overlay, the path format is:
 
 ```diff
 --- /dev/null
-+++ b/ports/net/example/dragonfly/patch-vht5g-guard
++++ b/ports/<category>/<port>/dragonfly/patch-<name>
 @@ -0,0 +1,10 @@
-+--- src/drivers/driver_bsd.c.orig
-++++ src/drivers/driver_bsd.c
-+@@ -638,6 +638,8 @@ bsd_set_freq(void *priv, struct hostapd_freq_params *freq)
++--- src/path/to/file.c.orig
+++++ src/path/to/file.c
++@@ -638,6 +638,8 @@ enclosing_function(args)
 + 	} else {
-++#if defined(IFM_IEEE80211_VHT5G)
-+ 		mode = freq->vht_enabled ? IFM_IEEE80211_VHT5G :
+++#if defined(SOME_FREEBSD_ONLY_SYMBOL)
++ 		value = uses_the_symbol(...);
 ++#endif
 + 		...
 ```
 
-Note: This creates a NEW file containing the patch content.
+The outer diff creates the patch file; the inner one is its content. Two
+levels, so every inner line is prefixed.
+
 
 **Agent guidance — patch flow:**
 
@@ -134,6 +136,3 @@ that owns it rather than improvising here:
 - **Malformed** (the diff itself is broken) → `flow-patch.md`,
   "Recovering from a broken patch". Regenerate first, swap second.
 
-## Examples
-- `net/hostapd`: Missing `IFM_IEEE80211_VHT5G` symbol - wrapped in `#if defined()` guard
-- `net/wpa_supplicant`: Similar VHT5G issue on older DragonFly versions

@@ -145,12 +145,11 @@ upstream version bump, etc.):
 3. Apply Option 1, 2, or 3 from above as the replacement.
 4. Re-run the build to confirm the cleaner fix still passes.
 
-## Examples
+## The shape to watch for
 
-- `devel/skalibs` (2026-06-01, commit `a8d053f050f`): upstream
-  `make/exports.sh` adds `-D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700`
-  for portability. First-pass agent emitted `mk add CFLAGS
-  "-D__BSD_VISIBLE"`. Compiled and shipped, but Option 1 (patch
-  `make/exports.sh` to drop the POSIX flags on DragonFly) would
-  have been the right shape. Worth re-fixing the next time the
-  port needs touching.
+Upstream build scripts commonly add `-D_POSIX_C_SOURCE` / `-D_XOPEN_SOURCE`
+for portability, which is what hides the BSD types in the first place. Patching
+the script to drop those flags on DragonFly is the durable fix; adding
+`-D__BSD_VISIBLE` to counteract them compiles and ships, but leaves two
+opposing flags fighting and is the shape to replace when the port is next
+touched.

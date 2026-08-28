@@ -180,14 +180,12 @@ Keep the static patch when:
 - The target file is hand-maintained upstream (not generated). These
   patches don't decay on every release because the source is stable.
 
-## Examples
+## Candidates worth converting
 
-- `devel/libuv`: `dragonfly/patch-Makefile.in` is a candidate — the
-  hunks adjust autotools `FREEBSD_TRUE` and `am__append_*` blocks
-  that automake regenerates on each upstream bump. Converting the
-  per-line conditionals to `text replace-once` ops against the
-  generated `Makefile.in` (or to patches against `Makefile.am`)
-  would remove this whole class of recurring breakage.
-- A future scan should flag every `ports/*/*/dragonfly/patch-Makefile.in`
-  and `ports/*/*/dragonfly/patch-configure` as a candidate for dops
-  conversion.
+- A `dragonfly/patch-Makefile.in` whose hunks adjust autotools-generated
+  blocks (`*_TRUE` conditionals, `am__append_*`) is the classic candidate:
+  automake regenerates those on every upstream bump, so the patch decays
+  every time. Convert the per-line conditionals to `text replace-once` ops
+  against the generated `Makefile.in`, or patch `Makefile.am` instead.
+- Likewise `dragonfly/patch-configure`: `configure` is generated from
+  `configure.ac`, so the same reasoning applies.
