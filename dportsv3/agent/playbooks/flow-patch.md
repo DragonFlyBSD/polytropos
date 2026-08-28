@@ -238,8 +238,8 @@ unified diff by hand from prior `get_file` reads and stage it directly.
 
 ## Recovering from a broken patch — never text-edit the diff
 
-**First decide which of two situations you are in. They present
-almost identically and have opposite fixes.**
+**First decide which of three situations you are in. They present
+almost identically and two of them have opposite fixes.**
 
 - **Stale / drifted** — the patch is well-formed and still encodes the
   change DragonFly wants; upstream simply edited the lines it targets.
@@ -249,6 +249,14 @@ almost identically and have opposite fixes.**
   line — see `error-prefer-dops-over-static-patches.md`, "Re-cut a
   drifted source patch". Deleting a drifted patch throws away a fix
   that is still wanted.
+- **Superseded** — FreeBSD has added a `files/patch-*` that already
+  achieves what ours did, and since `files/*` applies first ours now
+  rejects against source that is already fixed. → **Not this section
+  either**, and it is the one case where deleting the `dragonfly/` file
+  and its `file materialize` line is correct. It has to be established
+  rather than assumed — same file, even same line, is not evidence. See
+  `error-prefer-dops-over-static-patches.md`, "has FreeBSD made our
+  patch unnecessary?", which carries a worked counter-example.
 - **Malformed** — the patch file itself is garbage: a hunk header that
   disagrees with its own body, a truncated diff, `E_APPLY_PATCH_FAILED`
   with "malformed patch", `E_APPLY_MISSING_SUBJECT`. Nothing in the

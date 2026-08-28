@@ -36,7 +36,7 @@ upstream changes the lines it targets. Two distinct shapes:
   and upstream happened to edit the same line this release. A one-time drift,
   not constant decay.
 
-The durable fix differs by shape — that's what Step 1 decides. Do not assume
+The durable fix differs by shape — that's what Step 2 decides. Do not assume
 "static patch failed ⇒ convert to a dops substitution"; that's right for
 generated files and wrong (fragile) for hand-written source.
 
@@ -56,9 +56,50 @@ If you're about to write an `overlay.dops` and you don't have the
 syntax memorized, call `dops_reference()` **once** to get the
 condensed quick-reference.
 
-### Step 1 — what does the failing patch target? (decide this FIRST)
+### Step 1 — has FreeBSD made our patch unnecessary? (check this FIRST)
 
-This single question determines the approach. Look at the file the patch
+Sometimes FreeBSD adds a `files/patch-*` that fixes the same thing ours did.
+FreeBSD patches apply **before** `dragonfly/*`, so once that happens our patch
+is trying to change source that has already been changed, and it rejects. The
+right fix is then to **delete** it — the `dragonfly/` file and its
+`file materialize` line — not to re-cut it. A re-cut patch here is a patch that
+re-applies a fix already present.
+
+This is the one branch where removing the `file materialize` line is correct,
+so it has to be *established*, not assumed:
+
+1. Does a FreeBSD `files/patch-*` touch the same file?
+   `ls ports/<origin>/files/` and read it.
+2. Does it produce the end state ours wanted, **on DragonFly**? Not "does it
+   touch the same lines" — does the result work here.
+3. If yes, delete `dragonfly/patch-*` and its `file materialize` line, and say
+   in the summary that FreeBSD now covers it.
+
+**Same file and same lines is not evidence.** Worked counter-example,
+`devel/glib20` 2.86.4 — FreeBSD added `files/patch-gio_meson.build` editing the
+exact line our `dragonfly/patch-gio_meson.build` also edits:
+
+```
+FreeBSD:   -  libelf = cc.find_library('elf', required : get_option ('libelf'))
+           +  libelf = declare_dependency(link_args: '/lib/libelf.so.2')
+
+DragonFly: removes the whole libelf block, leaving have_libelf = false
+```
+
+Opposite intents. FreeBSD keeps libelf and links it from base; DragonFly
+disables it. And DragonFly ships no libelf at all — no `/lib/libelf.so.2`, no
+`/usr/include/libelf.h` — so FreeBSD's version links a library that does not
+exist here. Deleting our patch on "FreeBSD already patches that line" would
+have broken the build. It is **not** superseded; it is drifted, and belongs in
+Step 2.
+
+The cheap discriminator is intent, not location: read both patches and ask what
+each leaves behind. If ours removes what theirs configures, they are not the
+same fix.
+
+### Step 2 — what does the failing patch target? (decide this before picking an op)
+
+Our patch is still wanted, so this question determines the form. Look at the file the patch
 modifies — **not** at "static patch failed, so convert to dops". Picking the op
 before classifying the target is the #1 mistake here (it produces a fragile
 `REINPLACE` for a source patch that just needed re-cutting).
@@ -115,7 +156,10 @@ text replace-once file ${WRKSRC}/Makefile.in \
 ```
 
 Pair with **removing the patch from the overlay** — delete its
-`file materialize dragonfly/patch-<file> -> …` line. You have no file-delete
+`file materialize dragonfly/patch-<file> -> …` line. Do both in the **same**
+`put_file` rewrite of `overlay.dops`: the op replaces the patch, so an overlay
+that has lost the `file materialize` line and not yet gained the op composes
+green with the DragonFly fix absent. You have no file-delete
 tool and don't need one (and don't `git rm` — no git in the loop): the runner
 reconciles the now-orphaned `dragonfly/patch-<file>`, deleting it as part of
 the captured fix.

@@ -113,6 +113,55 @@ def test_the_authoring_entry_does_not_prescribe_a_repair() -> None:
             pytest.fail(f"authoring entry still prescribes removal: {' '.join(para.split())[:200]}")
 
 
+# --- the superseded case: the one legitimate delete ------------------------
+
+def _prefer_dops_body() -> str:
+    return _entry("error-prefer-dops-over-static-patches.md").body
+
+
+def test_the_superseded_case_exists_and_owns_the_delete() -> None:
+    """FreeBSD sometimes adds a files/patch-* that does what ours did.
+    files/* applies first, so ours then rejects against already-fixed
+    source and deleting it is correct. Without this branch the corpus
+    says "never delete", which is wrong in exactly this case."""
+    body = _prefer_dops_body()
+    assert "has FreeBSD made our patch unnecessary?" in body
+    step = body[body.index("has FreeBSD made our patch unnecessary?"):]
+    step = step[:step.index("### Step 2")]
+    assert re.search(r"delete", step, re.I)
+    assert "file materialize" in step
+
+
+def test_the_delete_is_gated_on_evidence_not_on_touching_the_same_file() -> None:
+    """The dangerous shortcut. devel/glib20 has FreeBSD patching the
+    exact same line and our patch is still required, because DragonFly
+    ships no libelf at all. Deleting on 'FreeBSD patches that line'
+    would have broken the build."""
+    body = _prefer_dops_body()
+    step = body[body.index("has FreeBSD made our patch unnecessary?"):]
+    step = step[:step.index("### Step 2")]
+    assert re.search(r"not evidence", step, re.I), "the shortcut is not warned against"
+    assert "glib20" in step, "the worked counter-example is gone"
+    assert re.search(r"on DragonFly|exist here|does not exist", step), \
+        "the test is 'does it work here', not 'does it touch the same lines'"
+
+
+def test_drift_still_keeps_the_patch() -> None:
+    """The new branch must not become a general licence to delete."""
+    body = _prefer_dops_body()
+    recut = body[body.index("Re-cut a drifted source patch"):]
+    recut = recut[:recut.index("### Option A")]
+    assert re.search(r"\*\*keep\*\* the `file materialize`", recut)
+    assert "overlay.dops` is not edited at all" in recut
+
+
+def test_the_recovery_router_lists_all_three() -> None:
+    sec = _recovery_section()
+    assert re.search(r"three situations", sec), "the router still says two"
+    for case in ("Superseded", "drifted", "Malformed"):
+        assert re.search(case, sec, re.I), f"{case} missing from the router"
+
+
 # --- the ordering ----------------------------------------------------------
 
 def test_regeneration_comes_before_any_overlay_edit() -> None:
@@ -142,6 +191,17 @@ def test_the_green_window_is_named_as_the_hazard() -> None:
     sec = _recovery_section()
     assert re.search(r"green", sec, re.I), sec[:300]
     assert re.search(r"never leave `overlay\.dops`", sec, re.I)
+
+
+def test_the_dops_conversion_removes_and_replaces_in_one_write() -> None:
+    """Option A swaps a static patch for a dops op. Removing the
+    materialize line before the op exists reopens the same green window
+    the recovery section warns about, just in a different branch."""
+    body = _prefer_dops_body()
+    opt = body[body.index("Option A (GENERATED-file target only)"):]
+    opt = opt[:opt.index("### Option B")]
+    assert "same**" in opt or "same `put_file`" in opt.replace("**", ""), opt[:400]
+    assert re.search(r"green", opt, re.I), "the hazard is not named"
 
 
 # --- the corpus stays navigable --------------------------------------------
