@@ -141,9 +141,9 @@ def test_the_delete_is_gated_on_evidence_not_on_touching_the_same_file() -> None
     step = body[body.index("has FreeBSD made our patch unnecessary?"):]
     step = step[:step.index("### Step 2")]
     assert re.search(r"not evidence", step, re.I), "the shortcut is not warned against"
-    assert "glib20" in step, "the worked counter-example is gone"
-    assert re.search(r"on DragonFly|exist here|does not exist", step), \
-        "the test is 'does it work here', not 'does it touch the same lines'"
+    assert re.search(r"leaves behind|intent", step, re.I), "the intent check is gone"
+    assert re.search(r"does not ship|reachable on\s+DragonFly", step), \
+        "the applicability check is gone"
 
 
 def test_drift_still_keeps_the_patch() -> None:

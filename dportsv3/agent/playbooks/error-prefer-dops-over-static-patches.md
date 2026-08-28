@@ -75,17 +75,19 @@ so it has to be *established*, not assumed:
 3. If yes, delete `dragonfly/patch-*` and its `file materialize` line, and say
    in the summary that FreeBSD now covers it.
 
-**Same file and same lines is not evidence.** Read both patches and ask what
-each *leaves behind*; if ours removes what theirs configures, they are not the
-same fix, however much they overlap. Then check the result actually works on
-DragonFly — a FreeBSD patch that links a library DragonFly does not ship has
-not superseded anything.
+**Same file and same lines is not evidence**, and this is where the branch
+goes wrong. Two checks, both cheap:
 
-Both traps in one real case: `devel/glib20` 2.86.4, where FreeBSD patches the
-exact line ours does. Theirs keeps libelf and links it from base; ours removes
-the libelf block outright, because DragonFly has no libelf to link. Same file,
-same line, opposite intent, and deleting ours would have broken the build. It
-is drifted, not superseded — Step 2.
+- **Intent.** Read both patches and ask what each *leaves behind*. If ours
+  removes a block theirs merely reconfigures, they are not the same fix
+  however much they overlap — one is disabling a feature, the other is
+  making it work.
+- **Applicability here.** A FreeBSD patch that depends on something DragonFly
+  does not ship has superseded nothing. Confirm the end state is reachable on
+  DragonFly, not just that the diff looks equivalent.
+
+If either check fails, ours is still wanted: it is drifted, not superseded, and
+belongs in Step 2.
 
 ### Step 2 — what does the failing patch target? (decide this before picking an op)
 
