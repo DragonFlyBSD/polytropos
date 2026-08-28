@@ -122,10 +122,17 @@ introduce one, both ending in a `file materialize dragonfly/patch-…
 
 **Never** text-edit a `dragonfly/` patch in place — nudging context
 lines or hunk headers shifts the hunk body but not its header,
-producing a patch that lies about its own bytes. If a patch is wrong
-or drifted, remove its install line from `overlay.dops` and
-regenerate. See `flow-patch.md` (the static-patch workflow and
-"Recovering from a broken patch") for the full sequence.
+producing a patch that lies about its own bytes.
+
+This entry is about *authoring* a new patch. Repairing one that already
+exists is a different job with a different answer, so go to the entry
+that owns it rather than improvising here:
+
+- **Drifted** (well-formed, stopped applying after a version bump) →
+  `error-prefer-dops-over-static-patches.md`. Re-cut it and **keep** the
+  `file materialize` line.
+- **Malformed** (the diff itself is broken) → `flow-patch.md`,
+  "Recovering from a broken patch". Regenerate first, swap second.
 
 ## Examples
 - `net/hostapd`: Missing `IFM_IEEE80211_VHT5G` symbol - wrapped in `#if defined()` guard

@@ -238,14 +238,46 @@ unified diff by hand from prior `get_file` reads and stage it directly.
 
 ## Recovering from a broken patch — never text-edit the diff
 
-When a patch applies dirty (`E_APPLY_PATCH_FAILED`, "malformed patch",
-wrong hunk count, line-number mismatch), the patch file is broken and
-the only correct recovery is **remove and regenerate**:
+**First decide which of two situations you are in. They present
+almost identically and have opposite fixes.**
 
-1. Remove its install line from `overlay.dops` (rewrite via `put_file`)
-   so compose stops referencing it.
-2. Regenerate a correct patch via the dupe→genpatch flow above, or stage
+- **Stale / drifted** — the patch is well-formed and still encodes the
+  change DragonFly wants; upstream simply edited the lines it targets.
+  The tell is `<N> out of <M> hunks failed--saving rejects to <file>.rej`
+  after a version bump, with the rejects naming real hunks.
+  → **Not this section.** Refresh it and *keep* the `file materialize`
+  line — see `error-prefer-dops-over-static-patches.md`, "Re-cut a
+  drifted source patch". Deleting a drifted patch throws away a fix
+  that is still wanted.
+- **Malformed** — the patch file itself is garbage: a hunk header that
+  disagrees with its own body, a truncated diff, `E_APPLY_PATCH_FAILED`
+  with "malformed patch", `E_APPLY_MISSING_SUBJECT`. Nothing in the
+  file is worth keeping. → This section.
+
+For a malformed patch the only correct recovery is **regenerate, then
+overwrite in place** — in that order:
+
+1. Regenerate a correct patch via the dupe→genpatch flow above, or stage
    a corrected hand-written diff.
+2. Write it over the broken one, at the same `dragonfly/` path.
+
+**`overlay.dops` needs no edit at all.** Its `file materialize` line
+already names that path, so overwriting the file is the whole swap: one
+write, and no moment where the port is staged without a patch. Only if
+the replacement must take a *different* filename do you touch
+`overlay.dops`, and then only after the new file exists.
+
+**Never leave `overlay.dops` with the install line removed and no
+replacement written.** In that window the port composes green with the
+DragonFly fix silently absent — a build that passes and a platform
+regression that nothing reports. If your attempt dies there (budget
+exhausted, a tool error, an interrupted run), that broken-but-green
+state is what you leave behind. Regenerating first means every
+intermediate state carries either the old patch or the new one.
+
+If compose genuinely must be made green *before* a replacement exists,
+that is the deferred-patch channel's job (see the `make_patch` step
+above), not a bare line removal — it records that a patch was dropped.
 
 **Do not** text-edit the diff to "fix" line numbers. Editing a diff
 shifts the hunk *body* but not the hunk *header*, producing a patch that

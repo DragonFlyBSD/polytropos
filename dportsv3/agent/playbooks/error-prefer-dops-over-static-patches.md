@@ -86,6 +86,20 @@ before classifying the target is the #1 mistake here (it produces a fragile
    `dragonfly/`, and **keep** the `file materialize` line. Done — the patch
    applies cleanly now and surfaces loudly the next time it drifts.
 
+**`overlay.dops` is not edited at all in this flow.** The refreshed patch
+overwrites the old one at the same path, so the existing `file materialize`
+line already points at it. If you find yourself removing that line, stop —
+you are about to delete the fix rather than repair it. A drifted patch is
+not a broken patch: it is still the change DragonFly needs, aimed at lines
+that moved.
+
+That failure has happened. The port then builds **green** with the
+DragonFly fix gone, and nothing reports it — the worst shape a change can
+take here, because it looks like a pass. Guidance for genuinely malformed
+patches (`flow-patch.md`, "Recovering from a broken patch") does touch
+`overlay.dops`; that procedure is for a different situation and does not
+apply to drift.
+
 ### Option A (GENERATED-file target only) — convert to dops
 
 The change is a small textual substitution on a *generated* file. Express it as
