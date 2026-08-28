@@ -1911,6 +1911,36 @@ def make_extract(env: str, origin: str) -> dict:
     )
     p = _exec(env, "/bin/sh", "-c", extract_cmd)
     if p.returncode != 0:
+        # Distinguish "this port is unbuildable in this environment"
+        # from "extract went wrong". bsd.port.mk sets IGNORE when a
+        # precondition fails (an unsupported ${X}_DEFAULT, a missing
+        # dependency it refuses to guess at) and then stops. No amount
+        # of work on the port's patches changes that, and an agent that
+        # keeps going will improvise around a wall it cannot see.
+        # `make -V IGNORE` is the framework's own answer, so ask it
+        # rather than pattern-matching the error text.
+        ignore_cmd = (
+            f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
+            f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
+            f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+            f'     BATCH=yes -V IGNORE'
+        )
+        ig = _exec(env, "/bin/sh", "-c", ignore_cmd)
+        reason = ig.stdout.strip() if ig.returncode == 0 else ""
+        if reason:
+            return _exec_result(
+                p.returncode, p.stdout, p.stderr,
+                origin=origin, wrkdir="", wrksrc="",
+                blocking=True,
+                ignore_reason=reason,
+                summary=(
+                    f"{origin} is IGNOREd by the ports framework in this "
+                    f"environment: {reason}. This is an environment "
+                    f"problem, not a defect in the port's patches — the "
+                    f"source cannot be extracted, so the patch cannot be "
+                    f"regenerated. Stop and report it."
+                ),
+            )
         return _exec_result(p.returncode, p.stdout, p.stderr,
                             origin=origin, wrkdir="", wrksrc="")
     query_cmd = (

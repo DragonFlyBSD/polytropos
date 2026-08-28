@@ -169,20 +169,52 @@ def run(
             except Exception:
                 pass
 
-        response, attempt_usage, rebuild_ok_seen = tool_loop.run(
-            messages,
-            model=model,
-            env=env,
-            api_base=api_base,
-            api_key=api_key,
-            custom_llm_provider=custom_llm_provider,
-            timeout=timeout,
-            max_turns=max_tool_turns,
-            max_tokens=remaining,
-            on_event=on_event,
-            attempt_idx=attempt_idx,
-            tool_whitelist=tool_whitelist,
-        )
+        try:
+            response, attempt_usage, rebuild_ok_seen = tool_loop.run(
+                messages,
+                model=model,
+                env=env,
+                api_base=api_base,
+                api_key=api_key,
+                custom_llm_provider=custom_llm_provider,
+                timeout=timeout,
+                max_turns=max_tool_turns,
+                max_tokens=remaining,
+                on_event=on_event,
+                attempt_idx=attempt_idx,
+                tool_whitelist=tool_whitelist,
+            )
+        except tool_loop.EnvironmentBlocked as blocked:
+            # A tool reported something no further agent work can clear.
+            # Stop here rather than letting the model improvise around
+            # it: the alternative is a full budget spent producing a
+            # plausible-looking fix for a port that could not be built
+            # in this environment either way.
+            if blocked.usage is not None:
+                total_usage.add(blocked.usage)
+            if session_dump is not None:
+                try:
+                    session_dump(attempt_idx, messages)
+                except Exception as exc:
+                    log.warning(
+                        "attempt_loop: session_dump failed on blocked "
+                        "attempt %d: %s", attempt_idx, exc)
+            log.warning(
+                "attempt_loop: attempt %d ended by %s: %s",
+                attempt_idx, blocked.tool, blocked.reason)
+            return PatchResult(
+                status="environment-blocked",
+                final_text=(
+                    "## Environment\n\n"
+                    f"Stopped: `{blocked.tool}` reported a condition this "
+                    f"agent cannot clear.\n\n{blocked.reason}\n\n"
+                    "No patch was attempted. This needs an operator to fix "
+                    "the environment, not a different fix for the port."
+                ),
+                usage=total_usage,
+                attempts=attempts,
+                proof=None,
+            )
         total_usage.add(attempt_usage)
         prev_text = response.text or ""
         final_text = prev_text

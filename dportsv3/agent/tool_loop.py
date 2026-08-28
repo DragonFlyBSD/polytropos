@@ -30,6 +30,25 @@ log = logging.getLogger(__name__)
 GRACE_TOKENS_AFTER_REBUILD_OK = 100_000
 
 
+class EnvironmentBlocked(Exception):
+    """A tool reported a condition no further agent work can clear.
+
+    Raised out of the dispatch loop rather than returned, because every
+    caller unpacks a fixed tuple and none of them should be able to
+    ignore this by accident. The tool result is appended to the message
+    history first, so a session dump still shows what the model was told
+    before the loop stopped.
+    """
+
+    def __init__(self, reason: str, tool: str, usage=None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.tool = tool
+        # Spent before the condition fired. Without this the caller
+        # loses the attempt's accounting and the audit under-reports.
+        self.usage = usage
+
+
 def _assistant_message_from(response: Response) -> dict:
     """Reconstruct the assistant message dict that produced ``response``.
 
@@ -252,6 +271,25 @@ def run(
                     "content": json.dumps(result),
                 }
             )
+            if isinstance(result, dict) and result.get("blocking"):
+                reason = str(result.get("ignore_reason")
+                             or result.get("summary") or "").strip()
+                log.warning(
+                    "tool_loop: %s reported a blocking condition on turn %d; "
+                    "ending the attempt: %s", call.name, turn, reason,
+                )
+                if on_event is not None:
+                    try:
+                        on_event({
+                            "type": "environment_blocked",
+                            "attempt": attempt_idx,
+                            "turn": turn,
+                            "tool": call.name,
+                            "reason": reason,
+                        })
+                    except Exception:
+                        pass
+                raise EnvironmentBlocked(reason, call.name, total)
     log.warning(
         "tool_loop: hit max_turns=%d without a text-only response", max_turns
     )
