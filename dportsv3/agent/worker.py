@@ -950,6 +950,42 @@ def materialize_dports_with_report(env: str, origin: str) -> dict:
 
 WRKDIRPREFIX = "/work/obj"
 
+# Why the agent's `make` calls set NO_DEPENDS.
+#
+# A dsynth builder installs the port's dependencies from the repo it
+# built itself (`pkg install /packages/All/<pkgfile>`), so inside a
+# builder every version matches the tree. The dev-env chroot has no such
+# repo: its /usr/local comes from the base, provisioned once from the
+# official mirror, which tracks DragonFly releases rather than a ports
+# branch. The base is null-mounted read-only and shared across envs, so
+# nothing can install a tree-matched package into it either.
+#
+# `*-depends` resolve with DEPENDS_TARGET=install, which walks into each
+# unsatisfied dependency and builds it. Against a mismatched /usr/local
+# that recursion dies on a version skew several ports deep, long before
+# do-extract runs — a wall the agent cannot see and cannot fix by
+# editing the port's patches.
+#
+# We don't need those dependencies. `make extract` unpacks the distfile
+# and `make patch` applies files/patch-* then dragonfly/*; both use tools
+# from the base. bsd.port.mk guards every depends type on this one
+# variable:
+#
+#     .for deptype in PKG EXTRACT PATCH FETCH BUILD LIB RUN TEST
+#     ${deptype:tl}-depends:
+#     .  if defined(${deptype}_DEPENDS) && !defined(NO_DEPENDS)
+#
+# Its only other uses are in `fetch-required`/`fetch-required-list`,
+# which we never invoke, and it leaves WRKSRC, PATCHDIR, PATCH_LIST,
+# EXTRACT_ONLY and DISTFILES untouched.
+#
+# The cost: a port whose extract genuinely needs an unarchiver package
+# now fails in do-extract rather than while installing it. Base bsdtar
+# covers gz/bz2/xz/zst, so this is rare — and `make_extract` names
+# EXTRACT_DEPENDS in the failure so it reads as a missing tool rather
+# than a corrupt distfile.
+NO_DEPENDS = "NO_DEPENDS=yes"
+
 
 # Per-(env, origin) WRKSRC cache, populated by `make_extract()` and
 # read by `genpatch()` (to invoke the script from the right cwd with a
@@ -1424,6 +1460,13 @@ def _clean_port_workdir(env: str, origin: str) -> dict:
     with everything the agent's ``dupe``/``genpatch``/``put_file``
     edits dropped into WRKSRC.
 
+    ``NOCLEANDEPENDS`` — not ``NO_DEPENDS``, which does not reach this
+    target — keeps that to *this* port. bsd.port.mk's ``clean`` pulls in
+    ``limited-clean-depends``, which walks the dependency graph running
+    ``make clean`` in each port it finds. We only ever asked for one
+    WRKDIR, and the walk goes looking for dependencies the dev-env's
+    package universe cannot satisfy anyway.
+
     Drops the in-process ``_WRKSRC_CACHE`` and ``_MATERIALIZE_STATE``
     entries for ``(env, origin)`` regardless of the make rc —
     once we've asked for the WRKDIR to go away, any cached path
@@ -1436,6 +1479,7 @@ def _clean_port_workdir(env: str, origin: str) -> dict:
         f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'     NOCLEANDEPENDS=yes '
         f'     BATCH=yes clean'
     )
     p = _exec(env, "/bin/sh", "-c", cmd)
@@ -1895,7 +1939,9 @@ def make_extract(env: str, origin: str) -> dict:
 
     Returns ``wrkdir`` + ``wrksrc`` from ``make -V``. ``WRKDIRPREFIX``
     is redirected to ``/work/obj`` (the writable overlay) because
-    bsd.port.mk's default (``/usr/obj/dports``) is read-only.
+    bsd.port.mk's default (``/usr/obj/dports``) is read-only, and
+    ``NO_DEPENDS`` is set because the dev-env's package universe does
+    not match the tree — see the constant for the full reasoning.
 
     ``$DPORTS_COMPOSE_ROOT`` is set in the dev-env's chroot environment
     (see ``build_env_dict`` in tools/dev-env helpers); we expand it in
@@ -1907,6 +1953,7 @@ def make_extract(env: str, origin: str) -> dict:
         f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'     {NO_DEPENDS} '
         f'     BATCH=yes extract'
     )
     p = _exec(env, "/bin/sh", "-c", extract_cmd)
@@ -1939,6 +1986,34 @@ def make_extract(env: str, origin: str) -> dict:
                     f"problem, not a defect in the port's patches — the "
                     f"source cannot be extracted, so the patch cannot be "
                     f"regenerated. Stop and report it."
+                ),
+            )
+        # Not IGNOREd, so the extract itself broke. We skip
+        # extract-depends (see NO_DEPENDS above), which for the handful
+        # of ports that need a real unarchiver means do-extract runs
+        # without it and fails looking like a corrupt distfile. Name the
+        # dependency we skipped so it reads as what it is.
+        deps_cmd = (
+            f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
+            f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
+            f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+            f'     BATCH=yes -V EXTRACT_DEPENDS'
+        )
+        ed = _exec(env, "/bin/sh", "-c", deps_cmd)
+        declared = ed.stdout.strip() if ed.returncode == 0 else ""
+        if declared:
+            return _exec_result(
+                p.returncode, p.stdout, p.stderr,
+                origin=origin, wrkdir="", wrksrc="",
+                extract_depends=declared,
+                summary=(
+                    f"`make extract` FAILED for {origin}, which declares "
+                    f"EXTRACT_DEPENDS={declared}. Those are not installed "
+                    f"— the dev-env cannot install tree-matched packages "
+                    f"— so if the failure is a missing extract tool it is "
+                    f"an environment problem, not a defect in the port's "
+                    f"patches. Check stdout_tail/stderr_tail before "
+                    f"treating this as a distfile or checksum problem."
                 ),
             )
         return _exec_result(p.returncode, p.stdout, p.stderr,
@@ -1996,7 +2071,7 @@ def make_patch(env: str, origin: str) -> dict:
     build-time tree, rejecting at ``dsynth_build``.
 
     Same target/env model as ``make_extract``: compose root,
-    ``WRKDIRPREFIX=/work/obj``. On failure the per-patch reject
+    ``WRKDIRPREFIX=/work/obj``, ``NO_DEPENDS``. On failure the per-patch reject
     (``Hunk #N ... FAILED``) is in stdout/stderr — surfaced in the
     tails so the caller can see WHICH patch rejected without a
     separate log read. ``do-patch`` writes a ``.patch_done`` cookie
@@ -2007,6 +2082,7 @@ def make_patch(env: str, origin: str) -> dict:
         f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'     {NO_DEPENDS} '
         f'     BATCH=yes patch'
     )
     p = _exec(env, "/bin/sh", "-c", patch_cmd)
