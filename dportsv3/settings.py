@@ -96,6 +96,29 @@ SECRET_MODES: dict[str, tuple[int, bool]] = {
 }
 
 
+#: Model names a provider is known to reject, and what to use instead.
+#:
+#: Exact strings rather than a validator. A provider's real model list
+#: changes without us, so a checker that guessed would eventually reject
+#: a name that had just become valid — the one failure mode worse than
+#: not checking. This only ever fires on a name we have watched an API
+#: refuse.
+#:
+#: deepseek-v4 is here because the retired harness.env.sample and
+#: chat.env.sample shipped it, and `config migrate` carried it onto
+#: every host that used one — faithfully, which is what a migration must
+#: do. The failure it causes is late and misleading: triage names a
+#: valid model and succeeds, a tier is chosen, the patch job is
+#: enqueued, and only then does the request come back BadRequestError.
+#: It reads as a patch-loop bug rather than a config typo.
+RETIRED_MODELS: dict[str, str] = {
+    "deepseek/deepseek-v4":
+        "deepseek/deepseek-v4-pro, or deepseek/deepseek-v4-flash for triage",
+    "deepseek-v4":
+        "deepseek-v4-pro, or deepseek-v4-flash for triage",
+}
+
+
 SETTINGS: list[Setting] = [
     # ---------------------------------------------------------------- paths
     Setting(

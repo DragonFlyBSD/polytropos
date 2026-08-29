@@ -757,3 +757,48 @@ def test_the_sample_has_no_trailing_whitespace() -> None:
     offenders = [line for line in settings.sample_text().splitlines()
                  if line != line.rstrip()]
     assert not offenders, offenders
+
+
+# --- poly-0qv: a model name the API rejects is caught at check time ---------
+
+def _run_check(capsys) -> tuple[int, str]:
+    from argparse import Namespace
+
+    from dportsv3.commands import config as config_cmd
+
+    rc = config_cmd._check(Namespace())
+    return rc, capsys.readouterr().err
+
+
+def test_config_check_flags_a_model_the_provider_rejects(
+        set_setting, capsys) -> None:
+    """The samples that shipped deepseek-v4 are gone, but `config migrate`
+    carried the value onto every host that had one. Without this the
+    failure surfaces only when the patch job dies — after triage has
+    succeeded and a tier has been chosen — and reads as a patch-loop bug."""
+    set_setting("llm.chat.model", "deepseek/deepseek-v4")
+    rc, err = _run_check(capsys)
+    assert rc == 1
+    assert "llm.chat.model" in err
+    assert "deepseek-v4-pro" in err, "say what to use instead"
+
+
+def test_config_check_is_quiet_about_a_valid_model(set_setting, capsys) -> None:
+    set_setting("llm.chat.model", "deepseek/deepseek-v4-pro")
+    _rc, err = _run_check(capsys)
+    assert "rejects" not in err
+
+
+def test_every_retired_model_names_a_replacement_that_is_not_retired() -> None:
+    """A table that pointed a bad name at another bad name would turn one
+    late failure into two."""
+    import re
+
+    from dportsv3 import settings
+
+    for bad, replacement in settings.RETIRED_MODELS.items():
+        assert replacement, bad
+        tokens = set(re.split(r"[,\s]+", replacement))
+        assert not (tokens & set(settings.RETIRED_MODELS)), (
+            f"{bad} is pointed at a name that is itself retired"
+        )

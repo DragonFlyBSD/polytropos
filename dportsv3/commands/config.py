@@ -178,6 +178,24 @@ def _check(args: Namespace) -> int:
                   f"{oct(want)[2:]} is enough", file=sys.stderr)
             problems += 1
 
+    for item in sch.settings:
+        if not (item.path.startswith("llm.")
+                and item.path.endswith(".model")):
+            continue
+        try:
+            value = str(sch.resolve(item.path).value or "").strip()
+        except settings.ConfigError:
+            continue  # already reported by the resolve loop above
+        replacement = settings.RETIRED_MODELS.get(value)
+        if replacement:
+            # Caught here because the rc scripts run `config check` at
+            # service start. The alternative is finding out when the
+            # patch job dies, several minutes and one enqueued tier
+            # later, in a message that names the loop and not the file.
+            print(f"warning: {item.path} is {value!r}, which the provider "
+                  f"rejects; use {replacement}", file=sys.stderr)
+            problems += 1
+
     if problems:
         print(f"\n{problems} problem(s) found", file=sys.stderr)
         return 1
