@@ -100,6 +100,14 @@ def queue_env(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "assert_port_clean",
                         lambda env, origin: {"ok": True})
 
+    # poly-15l: the preflight also composes the origin before the agent
+    # starts, and refuses the job if that fails — the compose tree is
+    # shared across jobs, so an attempt must establish its own starting
+    # state rather than inherit the previous one's. These tests exercise
+    # the orchestrator event chain, not compose, so stub it succeeding.
+    monkeypatch.setattr(worker, "materialize_dports",
+                        lambda env, origin: {"ok": True})
+
     # B1 gives each job its own worktree, and since poly-m7o a job that
     # cannot get one is retired worktree_unavailable instead of running
     # against whatever the ports link points at. These tests exercise the

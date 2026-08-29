@@ -1501,11 +1501,26 @@ def reset_port(env: str, origin: str) -> dict:
        state ``make clean`` was authored against.
 
     2. ``reapply <origin>`` — regenerate
-       ``/work/artifacts/compose/<target>/<origin>/`` from the
-       now-reset substrate. Without this, the compose tree still
-       carries whatever the agent's last reapply produced from its
-       patched substrate, and any later read (operator verify, next
-       attempt's first ``get_file``) starts against stale output.
+       ``/work/artifacts/compose/<target>/<origin>/``.
+
+       READ THIS BEFORE RELYING ON IT. This does NOT compose from a
+       reset substrate, despite what it used to claim. Stage 1's source
+       reset was removed when B1 gave each job its own worktree, and
+       that worktree is destroyed later, in ``runner.py``, after this
+       runs. So the substrate here still holds the agent's edits and
+       this composes them.
+
+       It succeeds — it composed *something* — so ``reapply_ok`` is
+       True and nothing warns, while the shared compose tree is left
+       contradicting the repository. Measured on devel/glib20: a later
+       build reported "packages built: 3, failed: 0" against a tree
+       missing two of the port's five patches (poly-15l).
+
+       Correctness therefore does not rest on this. Each consumer
+       composes the origin for itself before it works — see the
+       compose-at-start in ``steps.py``. This stage remains only so an
+       operator poking at the env between jobs finds something
+       plausible rather than a half-written tree.
 
        Best-effort: a reapply failure here means baseline HEAD
        itself doesn't compose cleanly — which was already the

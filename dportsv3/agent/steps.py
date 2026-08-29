@@ -985,6 +985,51 @@ class PatchAttemptStep:
             return _err(msg, services, job_path,
                         JobEvent.PATCH_GAVE_UP)
 
+        # Compose this one origin BEFORE the agent touches anything, so
+        # the attempt starts from a tree derived from the repo it can
+        # see (poly-15l).
+        #
+        # The compose tree lives outside the job worktree and is shared
+        # across jobs, so without this an attempt inherits whatever the
+        # previous one left there. That is not hypothetical: reset_port
+        # regenerates it AFTER the patch but BEFORE runner.py destroys
+        # the worktree, so it composes the previous agent's abandoned
+        # edits, reports success, and leaves a tree contradicting the
+        # repo. Measured on devel/glib20 — a build reported
+        # "packages built: 3, failed: 0" against a tree missing two of
+        # the port's five patches, which is why nothing failed.
+        #
+        # Establishing it here makes each attempt responsible for its own
+        # starting state instead of trusting an ordering that spans two
+        # modules. It also seeds _MATERIALIZE_STATE, so dsynth_build's
+        # staleness guard has a baseline from the first turn.
+        #
+        # Refuse on failure rather than proceeding: a compose that did
+        # not work means we do not know what is on disk, and the whole
+        # point is to not build against an unknown tree.
+        composed = _worker.materialize_dports(env, origin)
+        if not composed.get("ok"):
+            msg = (
+                f"patch refused: could not compose {origin} before "
+                f"starting. The compose tree is shared across jobs, so "
+                f"proceeding would work against whatever the previous "
+                f"job left there. Underlying error: "
+                f"{(composed.get('stderr_tail') or composed.get('error') or '')[:300]}"
+            )
+            services.activity_log(
+                queue_root, "patch_preflight_compose_failed",
+                msg, job_id=ctx.job_id,
+                extra={"origin": origin, "rc": composed.get("rc")},
+            )
+            services.write_error_note(job_path, msg)
+            return _err(msg, services, job_path,
+                        JobEvent.PATCH_GAVE_UP)
+        services.activity_log(
+            queue_root, "patch_preflight_composed",
+            f"composed {origin} from baseline before patch",
+            job_id=ctx.job_id, extra={"origin": origin},
+        )
+
         dispatcher = PatchEventDispatcher(
             queue_root=queue_root,
             job_id=ctx.job_id,
@@ -1122,7 +1167,8 @@ class PatchAttemptStep:
         else:
             services.activity_log(
                 queue_root, "patch_post_reset",
-                f"reset ports/{origin}/ to baseline after patch",
+                f"reset ports/{origin}/ to baseline after patch "
+                f"(reapply_ok={reset.get('reapply_ok')})",
                 job_id=ctx.job_id,
             )
 
