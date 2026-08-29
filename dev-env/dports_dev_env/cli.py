@@ -126,8 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ab = subparsers.add_parser(
         "apply-and-build",
-        help="Substrate primitive: optionally apply a diff to the env's "
-             "DeltaPorts overlay, then reapply + dsynth build one origin",
+        help="Verify substrate primitive: optionally apply a diff to the "
+             "env's DeltaPorts overlay, then reapply + dsynth build one "
+             "origin. Suppresses the dsynth hooks, so the build is NOT "
+             "tracked and a failure raises no bundle — run dtest/dbuild "
+             "inside the env for an operator build that feeds the loop",
     )
     ab.add_argument("name", help="Environment name")
     ab.add_argument("origin", help="category/portname to build")

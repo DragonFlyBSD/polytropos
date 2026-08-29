@@ -39,6 +39,22 @@ umask 022
 # legitimate operator dsynth would skip its hooks too.
 _dports_hooks_flag="${DPORTSV3_HOOKS_FLAG_FILE:-/work/.dports-agent-hooks-disabled}"
 if [ -f "$_dports_hooks_flag" ]; then
+	# Say so, once per run. Exiting silently made a suppressed build
+	# indistinguishable from a tracked one: the hook log simply
+	# stopped, and nothing anywhere said why. That matters most in
+	# the case this comment warns about below — a flag left behind by
+	# an agent killed uncatchably disables tracking for every later
+	# operator build, and the only symptom is an absence.
+	#
+	# Only run_start logs. The per-port hooks fire once per port, so
+	# logging there would add hundreds of identical lines to a build
+	# that is deliberately not being tracked.
+	if [ "$(basename "$0")" = "hook_run_start" ] && [ -d "${DIR_LOGS:-}" ]; then
+		printf '%s hooks suppressed for profile=%s by flag %s\n' \
+			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+			"${PROFILE:-unknown}" "$_dports_hooks_flag" \
+			>> "${DIR_LOGS}/dportsv3-hooks.log" 2>/dev/null || true
+	fi
 	exit 0
 fi
 unset _dports_hooks_flag
