@@ -324,6 +324,74 @@ def _typed(path: str, raw: str) -> object:
     return raw
 
 
+def _set_in(document: dict, path: str, value: object) -> None:
+    node = document
+    parts = path.split(".")
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = value
+
+
+def _already_set(document: dict, path: str) -> bool:
+    node: object = document
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
+def merge_settings(target: Path, values: dict[str, object], *,
+                   force: bool = False) -> tuple[list[str], list[str]]:
+    """Write ``values`` into ``target``, leaving what is already there.
+
+    Merging rather than replacing is what makes this safe to run on an
+    install that already has a settings file — which every install does,
+    because ``deploy install`` lays one down from the sample. Refusing on
+    "the file exists" left the operator with an install that told them to
+    run a migration the migration then declined to do.
+
+    Returns ``(written, skipped)``: paths taken, and paths left alone
+    because the file already set them.
+    """
+    import tomli_w
+    import tomllib
+
+    document: dict = {}
+    if target.is_file():
+        try:
+            document = tomllib.loads(target.read_text())
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigParseError(f"{target}: not valid TOML: {exc}") from exc
+
+    written, skipped = [], []
+    for path, value in sorted(values.items()):
+        if not force and _already_set(document, path):
+            skipped.append(path)
+            continue
+        _set_in(document, path, value)
+        written.append(path)
+    if written:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(tomli_w.dumps(document))
+    return written, skipped
+
+
+class ConfigParseError(Exception):
+    """The settings file exists and cannot be read."""
+
+
+def typed_values(raw: dict[str, str]) -> dict[str, object]:
+    """Coerce migrated shell strings to their settings' declared types."""
+    out: dict[str, object] = {}
+    for path, value in raw.items():
+        try:
+            out[path] = _typed(path, str(value))
+        except ValueError:
+            continue
+    return out
+
+
 def _migrate(args: Namespace) -> int:
     """Fold polytropos.conf, harness.env and chat.env into the settings.
 
@@ -332,8 +400,6 @@ def _migrate(args: Namespace) -> int:
     you have confirmed the new one works is not a migration, it is a
     gamble.
     """
-    import tomli_w
-
     directory = paths.config_dir()
     if directory is None:
         print("error: $DPORTSV3_CONFIG_DIR is unset; nothing to migrate into",
@@ -365,17 +431,6 @@ def _migrate(args: Namespace) -> int:
     values, secrets, unmapped = plan_migration(legacy)
     target = directory / settings.CONFIG_FILENAME
 
-    document: dict = {}
-    for path, raw in sorted(values.items()):
-        node = document
-        parts = path.split(".")
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-        try:
-            node[parts[-1]] = _typed(path, str(raw))
-        except ValueError:
-            print(f"warning: {path}: {raw!r} is not a valid value, skipped",
-                  file=sys.stderr)
 
     legacy_delivery = directory / "delivery.toml"
     if legacy_delivery.is_file():
@@ -395,14 +450,21 @@ def _migrate(args: Namespace) -> int:
         print("\ndry run; nothing was written")
         return 0
 
-    if target.exists() and not getattr(args, "force", False):
-        print(f"\nerror: {target} already exists. Move it aside, or pass "
-              f"--force to overwrite it.", file=sys.stderr)
+    try:
+        written, skipped = merge_settings(
+            target, typed_values(values),
+            force=getattr(args, "force", False),
+        )
+    except ConfigParseError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(tomli_w.dumps(document))
-    target.chmod(0o644)
+    if target.is_file():
+        target.chmod(0o644)
+    for path in skipped:
+        print(f"  kept: {path} is already set in {target.name}")
+    if not written and not secrets:
+        print("\nnothing to do: everything is already in place")
+        return 0
 
     for path, value in secrets.items():
         destination = settings.secret_path(path)

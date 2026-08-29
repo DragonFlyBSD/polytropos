@@ -357,13 +357,21 @@ def _migrate_legacy_config(prefix: Path, group: str, log) -> None:
         log(f"  migrated a credential into {destination} "
             f"({oct(mode)[2:]}{', ' + group if grouped else ', root only'})")
 
+    # And the values, not just the credentials. Leaving these to the
+    # operator was the same outage in slower motion: the rc scripts stop
+    # sourcing harness.env in this upgrade, so an install that migrated
+    # the keys but not llm.triage.model comes back up with no model
+    # configured and refuses every job.
+    #
+    # merge_settings leaves anything the file already sets, so this is
+    # safe against a settings file the operator has edited, and safe to
+    # run twice.
     target = etc / "polytropos.toml"
-    if settings_values and target.is_file() and not target.read_text().strip():
-        pass  # freshly installed sample is all comments; fall through
-    if settings_values:
-        log(f"  {len(settings_values)} setting(s) from the old .env files are "
-            f"NOT written automatically; run `dportsv3 config migrate` to "
-            f"fold them into {target}")
+    written, _kept = config_cmd.merge_settings(
+        target, config_cmd.typed_values(settings_values))
+    if written:
+        target.chmod(0o644)
+        log(f"  migrated {len(written)} setting(s) into {target}")
 
 
 #: ``secret setting -> the file it names``, read once so the installer

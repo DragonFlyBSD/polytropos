@@ -616,3 +616,66 @@ def test_config_check_flags_a_runner_key_left_group_readable(
     err = capsys.readouterr().err
     assert code == 1
     assert "group-readable" in err and "patch.key" in err
+
+
+# --- migration merges, so an upgrade is not an outage -----------------------
+
+def test_migration_merges_into_the_installed_settings_file(tmp_path) -> None:
+    """deploy install lays down a settings file from the sample, so by the
+    time a migration runs one always exists. Refusing on "the file exists"
+    left the operator with an install that told them to run a migration
+    the migration then declined to do — and the rc scripts had already
+    stopped sourcing the .env files that held the models."""
+    target = tmp_path / "polytropos.toml"
+    target.write_text('[llm.triage]\nmodel = "already/chosen"\n')
+
+    written, kept = config_cmd.merge_settings(target, {
+        "llm.triage.model": "from/migration",
+        "llm.patch.model": "new/value",
+    })
+    assert kept == ["llm.triage.model"], "an operator's value must survive"
+    assert written == ["llm.patch.model"]
+
+    import tomllib
+    got = tomllib.loads(target.read_text())
+    assert got["llm"]["triage"]["model"] == "already/chosen"
+    assert got["llm"]["patch"]["model"] == "new/value"
+
+
+def test_migration_into_a_pristine_sample_writes_everything(tmp_path) -> None:
+    """The real case: the installed file is all comments, so it sets
+    nothing and every migrated value lands."""
+    target = tmp_path / "polytropos.toml"
+    target.write_text(settings.sample_text())
+    written, kept = config_cmd.merge_settings(
+        target, {"llm.triage.model": "a/b", "runner.max_patch_attempts": 5})
+    assert sorted(written) == ["llm.triage.model", "runner.max_patch_attempts"]
+    assert kept == []
+
+
+def test_migration_is_safe_to_run_twice(tmp_path) -> None:
+    target = tmp_path / "polytropos.toml"
+    values = {"llm.triage.model": "a/b"}
+    config_cmd.merge_settings(target, values)
+    written, kept = config_cmd.merge_settings(target, values)
+    assert written == [] and kept == ["llm.triage.model"]
+
+
+def test_force_overwrites_a_value_already_set(tmp_path) -> None:
+    target = tmp_path / "polytropos.toml"
+    target.write_text('[llm.triage]\nmodel = "old"\n')
+    written, kept = config_cmd.merge_settings(
+        target, {"llm.triage.model": "new"}, force=True)
+    assert written == ["llm.triage.model"] and kept == []
+
+
+def test_migration_coerces_to_the_declared_type() -> None:
+    """Shell files carry strings; a port that stays "9090" would fail the
+    schema's int check on the next read."""
+    got = config_cmd.typed_values({
+        "tracker.port": "9090",
+        "runner.dump_session": "1",
+        "delivery.git_timeout": "30",
+    })
+    assert got == {"tracker.port": 9090, "runner.dump_session": True,
+                   "delivery.git_timeout": 30.0}
