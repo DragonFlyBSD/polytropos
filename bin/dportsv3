@@ -210,7 +210,8 @@ STAMP_VALUE="$(compute_stamp)+$(compute_dev_env_stamp)"
 # after which a base-profile command sees a mismatch and — under
 # DPORTSV3_NO_BOOTSTRAP=1, which is how the rc.d services run — refuses to
 # start against a venv that can run it perfectly well. Found bringing the
-# services up on x6. The relation is one-way: base does not satisfy tracker.
+# services up on hardware. The relation is one-way: base does not
+# satisfy tracker.
 stamp_satisfied() {
     [ "$1" = "$2" ] && return 0
     if [ "$INSTALL_PROFILE" = "base" ] && [ "$1" = "tracker:${2#base:}" ]; then

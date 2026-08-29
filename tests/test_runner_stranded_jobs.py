@@ -3,8 +3,8 @@
 A hook writes its job file into the queue root *it* can see. Inside a
 dev-env chroot that is /work/dsynth/logs/evidence/queue, which the host
 runner cannot resolve, so the file lands where nothing reads it and the
-failure sits queued forever — measured on x6, three real failures, host
-queue empty.
+failure sits queued forever — measured on hardware, three real
+failures, host queue empty.
 
 Everything else already crossed the boundary over HTTP: the jobs row
 arrived, the bundle reached the store with its artifacts. Only locating

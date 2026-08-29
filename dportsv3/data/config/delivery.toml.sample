@@ -33,7 +33,7 @@ repo = "DragonFlyBSD/DeltaPorts"
 #   - have its `origin` remote authorized to push (HTTPS via the
 #     token, or SSH via a deploy key)
 # Required for network providers; ignored by local-patch.
-clone_dir = "/Users/tuxillo/s/DeltaPorts"
+clone_dir = "/home/you/s/DeltaPorts"
 
 # Branch the PR targets on the upstream remote.
 base_branch = "master"

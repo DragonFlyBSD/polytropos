@@ -10,7 +10,7 @@ it.
 ``*-depends`` resolve with ``DEPENDS_TARGET=install``, which walks into
 each unsatisfied dependency and builds it. Against a mismatched
 /usr/local that recursion dies several ports deep, before do-extract
-ever runs. Measured on x6: extract died on
+ever runs. Measured on hardware: extract died on
 gobject-introspection -> bison -> m4 -> texinfo -> help2man ->
 p5-Locale-gettext -> gettext-runtime, none of which the agent needs to
 unpack a distfile.
@@ -21,8 +21,9 @@ bsd.port.mk guards every depends type on one variable::
     ${deptype:tl}-depends:
     .  if defined(${deptype}_DEPENDS) && !defined(NO_DEPENDS)
 
-Verified against the tree on x6: with NO_DEPENDS=yes, ``extract-depends``
-emits zero commands where it otherwise runs do-depends.sh.
+Verified against a real ports tree: with NO_DEPENDS=yes,
+``extract-depends`` emits zero commands where it otherwise runs
+do-depends.sh.
 """
 
 from __future__ import annotations
@@ -85,7 +86,7 @@ def test_the_wrksrc_query_is_left_alone(monkeypatch) -> None:
     """`make -V` evaluates variables and runs no targets, so the flag
     would be noise there — and NO_DEPENDS changes none of WRKSRC,
     PATCHDIR, PATCH_LIST, EXTRACT_ONLY or DISTFILES (verified against
-    the tree on x6)."""
+    a real ports tree)."""
     payloads = _capture(monkeypatch)
     worker.make_extract("env", "devel/foo")
     query = next(p for p in payloads if "-V WRKDIR" in p)
@@ -220,7 +221,7 @@ def test_clean_does_not_walk_into_dependencies(monkeypatch) -> None:
 def test_clean_is_guarded_by_nocleandepends_not_no_depends(
     monkeypatch,
 ) -> None:
-    """Verified by dry-run against the tree on x6: `make NO_DEPENDS=yes
+    """Verified by dry-run against a real ports tree: `make NO_DEPENDS=yes
     clean` still runs limited-clean-depends; NOCLEANDEPENDS=yes is what
     drops it. Two variables, and only one works here."""
     payloads = _capture(monkeypatch)

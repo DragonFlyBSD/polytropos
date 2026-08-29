@@ -1,10 +1,10 @@
 """Stopping when a tool reports a wall the agent cannot clear (poly-n78).
 
-devel/glib20 on x6: ``make_extract`` failed with "Invalid perl5 version
-5.36" — the ports framework IGNOREing the port because the environment's
-installed perl predates the tree's. With no WRKSRC there is nothing to
-dupe and nothing to genpatch, so the procedure the playbook prescribes
-was unavailable.
+Measured on hardware, devel/glib20: ``make_extract`` failed with
+"Invalid perl5 version 5.36" — the ports framework IGNOREing the port
+because the environment's installed perl predates the tree's. With no
+WRKSRC there is nothing to dupe and nothing to genpatch, so the
+procedure the playbook prescribes was unavailable.
 
 The agent kept going for 44 more tool calls, spent the whole 120K
 billable budget, and emitted a hand-edited patch that did not apply. Its

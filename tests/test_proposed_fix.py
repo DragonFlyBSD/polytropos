@@ -92,10 +92,10 @@ def test_render_apply_recipe_uses_tracker_url_when_set():
     """When tracker_url is set, the recipe is a one-shot curl that
     pulls the diff from the artifact API."""
     out = pf.render_proposed_fix(_ctx(
-        tracker_url="http://192.168.5.98:8080",
+        tracker_url="http://tracker.test:8080",
         diff_bytes=999,
     ))
-    assert "curl -sS http://192.168.5.98:8080" in out
+    assert "curl -sS http://tracker.test:8080" in out
     assert "/api/bundles/b-1/artifacts/analysis/changes.diff" in out
     assert "git apply --3way --index /tmp/proposed-fix.diff" in out
 

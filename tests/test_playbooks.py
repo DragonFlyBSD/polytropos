@@ -330,8 +330,8 @@ def test_detect_toolchains_follows_a_wrapped_uses_line(tmp_path):
     trailing backslash. Parsing physical lines drops everything after the
     wrap and the port detects as whatever happened to be on line one.
 
-    Measured on x6: devel/glib20 declares meson, perl5, pkgconfig and
-    python on its continuation line, detected as a bare C port, and
+    Measured on hardware: devel/glib20 declares meson, perl5, pkgconfig
+    and python on its continuation line, detected as a bare C port, and
     triage ran with 1 of 17 playbooks instead of 6.
     """
     from dportsv3.agent.playbooks import detect_toolchains
