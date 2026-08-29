@@ -41,6 +41,14 @@ OPERATOR_FILES = (
     ("polytropos.conf.sample", "polytropos.conf", 0o644, False),
     ("harness.env.sample", "polytropos/harness.env", 0o600, False),
     ("chat.env.sample", "polytropos/chat.env", 0o640, True),
+    # Installed as the .sample, not as the live name, and that is the
+    # point: a delivery.toml that exists is a delivery.toml that loads,
+    # and no shipped value can be right for a host nobody configured.
+    # Landing the template here means the operator finds it in the
+    # config dir the services already read, one `cp` from live, while a
+    # fresh install delivers nothing. Group-owned because the tracker —
+    # which is what delivers — runs unprivileged.
+    ("delivery.toml.sample", "polytropos/delivery.toml.sample", 0o640, True),
     # /etc/newsyslog.conf includes this directory already. Operator-owned
     # like the rest: retention is a local policy question.
     ("newsyslog.conf.sample", "newsyslog.conf.d/polytropos.conf", 0o644, False),
@@ -350,12 +358,29 @@ services refuse to start until polytropos_cmd and polytropos_dev_env_cmd
 in {prefix}/etc/polytropos.conf name commands that run.""",
               file=sys.stderr)
 
+    etc_p = prefix / "etc" / "polytropos"
+    user, group = args.user, args.group
     print(f"""
 done. To bring the stack up, add to /etc/rc.conf:
 
     polytropos_tracker_enable="YES"
     polytropos_runner_enable="YES"
 
-then put real credentials in {prefix}/etc/polytropos/harness.env and
-start the services.""")
+then put real credentials in {etc_p}/harness.env and
+start the services.
+
+Delivery is off until you turn it on, and Accept logs no_config until
+then. To enable it:
+
+    cp {etc_p}/delivery.toml.sample {etc_p}/delivery.toml
+    $EDITOR {etc_p}/delivery.toml
+
+For a forge provider, add the credential and hand it to the tracker's
+account — the tracker is what delivers, and it does not run as root:
+
+    install -m 0640 -o root -g {group} /dev/null {etc_p}/delivery.token
+    $EDITOR {etc_p}/delivery.token
+
+provider.clone_dir must be a git working tree writable by {user}. The
+tracker checks all of this when it starts and logs what is wrong.""")
     return 0

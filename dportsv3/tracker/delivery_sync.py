@@ -185,12 +185,25 @@ def resolve_issue_for_bundle(
     return issue_key
 
 
+#: Reasons already logged by :func:`_resolve_merge_probe`, so a broken
+#: config produces one line rather than one per page view. Process-lifetime,
+#: which is the right scope: the config is read at each call, so a restart
+#: after fixing it starts the log over.
+_PROBE_FAILURES_LOGGED: set[str] = set()
+
+
 def _resolve_merge_probe(target: str | None) -> Callable[[str], dict[str, Any]] | None:
     """Build a ``pr_id -> {merged, state, url}`` probe from delivery
     config, or None when GitHub delivery isn't configured/available.
 
     Import-local so the tracker doesn't hard-depend on the delivery
     package at module load and so a broken config degrades to no-op.
+
+    Degrading is right — merge reconciliation is a nicety and must not
+    break a page render — but degrading *silently* is not. This used to
+    swallow the exception whole, so a config error meant PRs simply
+    stopped being marked merged, with nothing anywhere saying why. The
+    reason is logged once per distinct message.
     """
     try:
         from dportsv3.delivery.orchestrator import (  # noqa: PLC0415
@@ -200,7 +213,15 @@ def _resolve_merge_probe(target: str | None) -> Callable[[str], dict[str, Any]] 
         if cfg is None or cfg.provider_type != "github":
             return None
         provider = build_provider(cfg)
-    except Exception:  # config/build failure → can't poll, that's fine
+    except Exception as exc:  # noqa: BLE001 — a page render must not die here
+        reason = f"{type(exc).__name__}: {exc}"
+        if reason not in _PROBE_FAILURES_LOGGED:
+            _PROBE_FAILURES_LOGGED.add(reason)
+            _LOG.warning(
+                "merge reconciliation is off: delivery config could not be "
+                "resolved (%s). PRs will not be marked merged until this is "
+                "fixed and the tracker restarted.", reason,
+            )
         return None
     probe = getattr(provider, "pull_request_merge_state", None)
     if probe is None:

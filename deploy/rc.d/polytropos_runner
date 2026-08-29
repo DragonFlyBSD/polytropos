@@ -29,6 +29,7 @@
 # polytropos_runner_dev_env  (str)  Default dev-env name. Empty means
 #                                   "let the tracker or auto-pick decide".
 # polytropos_harness_env     (str)  File holding the LLM credentials.
+# polytropos_config_dir      (str)  Where agentic-policy.json lives.
 #
 
 . /etc/rc.subr
@@ -59,6 +60,7 @@ export PATH
 : ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}
 : ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
+: ${polytropos_config_dir:="/usr/local/etc/polytropos"}
 : ${polytropos_runner_dev_env:=""}
 
 # $pidfile is the SUPERVISOR's, and has to be. rc.subr matches the pid it
@@ -87,6 +89,7 @@ logfile="${polytropos_log_dir}/runner.log"
 # polytropos_runner_env. Setting the latter here would silently replace
 # this.
 polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
+DPORTSV3_CONFIG_DIR=${polytropos_config_dir} \
 DPORTSV3_STATE_DB=${polytropos_state_db} \
 DPORTSV3_TRACKER_URL=${polytropos_tracker_url}"
 

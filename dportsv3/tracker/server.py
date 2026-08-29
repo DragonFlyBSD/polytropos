@@ -41,6 +41,34 @@ from dportsv3.tracker.routes._common import (
 
 _LOG = logging.getLogger(__name__)
 
+_PREFLIGHT_LEVELS = {
+    "ok": logging.INFO,
+    "warn": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+
+def _log_delivery_preflight() -> None:
+    """Say at startup whether delivery could work, rather than at Accept.
+
+    This service is the one that delivers, so every precondition —
+    a readable token, a writable clone — is a question about *this*
+    process's account, and startup is the first moment we can answer it.
+    Left to the Accept path, the answer arrives after a human has already
+    approved a fix, which is when it is least useful.
+
+    Best-effort in the strict sense: nothing here may stop the tracker
+    from serving. A stale forge credential should be a line in the log,
+    not a service that will not boot.
+    """
+    try:
+        from dportsv3.delivery import preflight  # noqa: PLC0415
+
+        for level, message in preflight.format_report(preflight.check()):
+            _LOG.log(_PREFLIGHT_LEVELS.get(level, logging.INFO), message)
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("delivery preflight could not run: %s", exc)
+
 
 def create_app(db_path: str | Path) -> Any:
     """Create one tracker FastAPI app instance."""
@@ -97,6 +125,7 @@ def create_app(db_path: str | Path) -> Any:
     def _startup() -> None:
         conn = init_db(app.state.db_path)
         conn.close()
+        _log_delivery_preflight()
 
     @app.on_event("shutdown")
     def _shutdown() -> None:

@@ -135,11 +135,25 @@ def test_missing_sample_raises(tmp_path) -> None:
 
 # --- apply, for the steps that need no privileges -----------------------
 
+#: Destinations whose install ends in ``shutil.chown(group=...)``, which
+#: needs the group to exist on the machine running the tests. Derived from
+#: OPERATOR_FILES rather than listed, so adding a group-owned file does not
+#: silently break three tests with a LookupError about a missing group.
+GROUP_OWNED = frozenset(
+    dst for _sample, dst, _mode, grouped in dep.OPERATOR_FILES if grouped
+)
+
+
+def _installable(tmp_path, prefix):
+    """The plan's file-placing actions, minus the ones that chown."""
+    return [a for a in plan(tmp_path, exists=True, prefix=prefix)
+            if a.kind in ("mkdir", "rc_script", "operator_file")
+            and str(a.target) not in GROUP_OWNED]
+
+
 def test_apply_installs_the_files_with_the_right_modes(tmp_path) -> None:
     prefix = tmp_path / "usr" / "local"
-    actions = [a for a in plan(tmp_path, exists=True, prefix=prefix)
-               if a.kind in ("mkdir", "rc_script", "operator_file")
-               and "polytropos/chat.env" != str(a.target)]  # chat.env chowns
+    actions = _installable(tmp_path, prefix)
     dep.apply(actions, deploy=DEPLOY_SRC, prefix=prefix,
               user="polytropos", group="polytropos",
               logs_root=tmp_path / "logs", log=lambda *a: None)
@@ -158,9 +172,7 @@ def test_apply_installs_the_files_with_the_right_modes(tmp_path) -> None:
 def test_apply_is_idempotent(tmp_path) -> None:
     prefix = tmp_path / "usr" / "local"
     for _ in range(2):
-        actions = [a for a in plan(tmp_path, exists=True, prefix=prefix)
-                   if a.kind in ("mkdir", "rc_script", "operator_file")
-                   and "polytropos/chat.env" != str(a.target)]
+        actions = _installable(tmp_path, prefix)
         dep.apply(actions, deploy=DEPLOY_SRC, prefix=prefix,
                   user="polytropos", group="polytropos",
                   logs_root=tmp_path / "logs", log=lambda *a: None)
@@ -172,9 +184,7 @@ def test_apply_does_not_clobber_edited_config(tmp_path) -> None:
     (prefix / "etc").mkdir(parents=True)
     (prefix / "etc" / "polytropos.conf").write_text("# mine\n")
 
-    actions = [a for a in plan(tmp_path, exists=True, prefix=prefix)
-               if a.kind in ("mkdir", "rc_script", "operator_file")
-               and "polytropos/chat.env" != str(a.target)]
+    actions = _installable(tmp_path, prefix)
     dep.apply(actions, deploy=DEPLOY_SRC, prefix=prefix,
               user="polytropos", group="polytropos",
               logs_root=tmp_path / "logs", log=lambda *a: None)

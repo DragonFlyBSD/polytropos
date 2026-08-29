@@ -39,3 +39,23 @@ the packaged defaults.
 `delivery.token` has no template and never will — it is a secret, so the only
 sensible thing to ship is nothing. Supply it as a file here or via
 `$DPORTSV3_DELIVERY_TOKEN`.
+
+`delivery.toml` is the one file with no packaged fallback. The others degrade
+to the sample; this one cannot, because a delivery config names one upstream
+repo, one local clone and one credential, and no shipped value could be right
+for a host nobody has configured. Absent, delivery is simply off and Accept
+logs `no_config`.
+
+## The token's mode follows its reader
+
+On a deployed host the token is `0640 root:<service group>`, not `0400 root`.
+Delivery runs inside the **tracker** — `tracker/routes/bundle_actions.py` on
+Accept, `tracker/delivery_sync.py` when reconciling merges — and never in the
+queue runner. The tracker drops to the unprivileged service account, so a
+root-only token is unreadable by the only process that wants it. This is the
+same reason `chat.env` is `0640` while `harness.env`, which the root runner
+reads, is `0600`.
+
+`provider.clone_dir` has to be writable by that same account: delivery resets
+and commits in that tree. The tracker checks both at startup and logs what is
+wrong, so a misconfigured install says so before an operator accepts a fix.

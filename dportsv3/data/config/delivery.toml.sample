@@ -1,18 +1,29 @@
 # DeltaPorts agentic delivery — Step 11d configuration.
 #
-# Copy to delivery.toml and edit. The tracker loads this file from:
-#   1. $DPORTSV3_DELIVERY_CONFIG (explicit path), or
-#   2. $DPORTSV3_CONFIG_DIR/delivery.toml, or
-#   3. <repo-root>/config/delivery.toml (default; mirrors how
-#      agentic-policy.json is found).
+# THIS FILE IS A TEMPLATE. Nothing loads it. Copy it to
+# delivery.toml and edit the copy:
 #
-# If neither resolves to an existing file, delivery is silently
-# disabled and Accept stays a pure tracker-side action.
+#     cp dportsv3/data/config/delivery.toml.sample config/delivery.toml
+#
+# The tracker looks in exactly two places, in order:
+#   1. $DPORTSV3_DELIVERY_CONFIG (explicit path), then
+#   2. $DPORTSV3_CONFIG_DIR/delivery.toml
+#
+# Neither resolving means delivery is disabled: Accept stays a pure
+# tracker-side action and logs skip_reason=no_config. There is no
+# fallback to this sample, deliberately — a delivery config names one
+# repo, one local clone and one credential, so no shipped value could
+# be right for a host nobody configured.
 #
 # The only env-var input is the GitHub token (it's a secret and
 # doesn't belong in a committable file):
 #   1. $DPORTSV3_DELIVERY_TOKEN env var, then
-#   2. $DPORTSV3_CONFIG_DIR/delivery.token (chmod 0400).
+#   2. $DPORTSV3_CONFIG_DIR/delivery.token
+#
+# The token file must be readable by whoever runs the tracker — that
+# is the process that delivers. On a packaged install that is the
+# unprivileged service account, so 0640 root:<service group>, not
+# 0400 root. clone_dir must be writable by that same account.
 # local-patch never needs a token.
 
 [provider]

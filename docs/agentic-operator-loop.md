@@ -908,9 +908,13 @@ If the operator clicks Accept twice, or the push fails partway:
 - Tracker must show a "delivery in progress" / "delivery succeeded
   with URL X" / "delivery failed: Y" state distinctly. Operator
   shouldn't have to refresh and pray.
-- Token storage: read from env var or a 0400 file under
+- Token storage: read from env var or a file under
   ``$DPORTSV3_CONFIG_DIR/delivery.token``. Never committed to the
   repo, never written to artifact-store.
+  **Correction (poly-cu8.1):** this said 0400, and a deployment that
+  obeyed it produced a token the delivering process could not read.
+  Delivery runs in the *tracker*, which drops to the unprivileged
+  service account, so the mode is 0640 root:<service group>.
 - Each provider has a ``--dry-run`` mode that prints what it would
   do without pushing — useful for the first run against a new
   target repo, and required for the test suite.
@@ -955,8 +959,11 @@ The foundation, no network:
   branch_template / draft. Per-target overrides via TOML sections
   (e.g. ``[target."@2026Q2"]``). Env-var precedence:
   ``DPORTSV3_DELIVERY_PROVIDER`` overrides TOML; the token comes
-  from ``DPORTSV3_DELIVERY_TOKEN`` env var or a 0400 file under
-  ``$DPORTSV3_CONFIG_DIR/delivery.token``.
+  from ``DPORTSV3_DELIVERY_TOKEN`` env var or a file under
+  ``$DPORTSV3_CONFIG_DIR/delivery.token`` (0640 root:<service group>,
+  not 0400 — see the correction above). As built, there is no
+  ``DPORTSV3_DELIVERY_PROVIDER``; the provider comes from the TOML
+  only, and ``DPORTSV3_DELIVERY_CONFIG`` overrides the file path.
 - Tests: schema migration applies cleanly; partial-unique index
   enforces one-open-row-per-signature; LocalPatchProvider happy
   path + collision (same patch twice → same outbox file) +

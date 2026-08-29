@@ -23,14 +23,23 @@ unspecified fields fall back to the top-level.
 
 Token resolution (highest precedence first):
 - ``$DPORTSV3_DELIVERY_TOKEN`` env var.
-- ``$DPORTSV3_CONFIG_DIR/delivery.token`` file (must be 0400 or
-  caller-readable only — we don't enforce the mode but document
-  the expectation).
+- ``$DPORTSV3_CONFIG_DIR/delivery.token`` file.
 - None — only valid when ``provider.type == "local-patch"``.
 
 Tokens are the ONLY env-var input — they're secrets and don't
 belong in a committable file. Everything else (clone path,
 outbox) lives in this TOML.
+
+**Who reads the token decides its mode: 0640 root:<service group>,
+not 0400 root.** Delivery runs in the *tracker*
+(``tracker/routes/bundle_actions.py`` on Accept, and
+``tracker/delivery_sync.py`` when reconciling merges) and never in
+the queue runner. The tracker drops to the unprivileged service
+account, so a root-owned 0400 token is unreadable by the only
+process that wants it — the same reason ``chat.env`` is 0640
+root:group while ``harness.env``, which the root runner reads, is
+0600. ``provider.clone_dir`` has to be writable by that same
+account, for the same reason.
 """
 
 from __future__ import annotations
@@ -229,20 +238,15 @@ def load_delivery_config(
 
 
 def _resolve_token(env: dict[str, str]) -> str | None:
-    """Token from env var, then from file. Search order mirrors
-    ``orchestrator.resolve_config``'s tier-3 fallback so an operator
-    who drops ``delivery.toml`` + ``delivery.token`` into the repo's
-    ``config/`` directory (next to ``agentic-policy.json``) doesn't
-    also have to export ``$DPORTSV3_CONFIG_DIR`` just for the token
-    lookup. The prior shape gated the file lookup entirely on
-    ``$DPORTSV3_CONFIG_DIR`` and silently treated "env var unset"
-    as "no token", producing ``DeliveryConfigError: requires a
-    token`` even when ``config/delivery.token`` was sitting right
-    next to the TOML the loader had just successfully read.
+    """Token from env var, then from file.
 
     Search order:
       1. ``$DPORTSV3_DELIVERY_TOKEN`` env var.
       2. ``$DPORTSV3_CONFIG_DIR/delivery.token``.
+
+    Both tiers sit beside ``orchestrator.resolve_config``'s, so a token
+    dropped next to the ``delivery.toml`` the loader just read is found
+    without exporting anything extra.
 
     There is no bundled default, and deliberately so: a token is a secret,
     so the only sensible thing to ship is nothing. Absent both, this returns

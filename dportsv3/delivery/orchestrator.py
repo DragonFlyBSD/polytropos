@@ -32,7 +32,6 @@ from . import (
     ReviewRequestResult,
 )
 from .config import DeliveryConfig, load_delivery_config
-from .. import paths
 
 
 @dataclass
@@ -63,21 +62,39 @@ def resolve_config(
 ) -> DeliveryConfig | None:
     """Locate + load delivery.toml from environment.
 
-    Search order:
+    Search order, and there are only two entries:
       1. ``$DPORTSV3_DELIVERY_CONFIG`` — explicit path override.
-      2. ``$DPORTSV3_CONFIG_DIR/delivery.toml`` — env-pointed dir.
-      3. ``<repo-root>/config/delivery.toml`` — repo-anchored
-         default, mirrors how ``agent/runner.py`` finds
-         ``agentic-policy.json``. The asymmetry was a footgun:
-         operators dropped delivery.toml next to agentic-policy.json
-         expecting it to be picked up the same way, and got a
-         silent ``no_config`` skip instead.
+      2. ``$DPORTSV3_CONFIG_DIR/delivery.toml`` — the operator's file.
 
-    Returns ``None`` if no file is found at any of the three (delivery
-    silently disabled). Raises ``DeliveryConfigError`` only on a
-    config file that EXISTS but is malformed — silent "no config
-    found" path doesn't disrupt accepts on systems that haven't
-    opted into delivery.
+    Anything else means delivery is not configured, and this returns
+    None (delivery disabled). Raises ``DeliveryConfigError`` only for a
+    file that EXISTS but is malformed, so a host that never opted into
+    delivery keeps accepting bundles.
+
+    **No ``.sample`` tier and no bundled tier, deliberately.** This is
+    where ``paths.config_file`` and this function part company, and the
+    difference is not an oversight:
+
+    ``agentic-policy.json.sample`` is a usable default — a tier table
+    and a classification map that are correct for any host. Falling
+    back to it is right. A delivery config is the opposite: it names
+    one specific upstream repo, one specific local clone directory and
+    one specific credential. No bundled value can be correct for a host
+    nobody has configured, so there is nothing safe to fall back to.
+
+    Treating the bundled sample as a live default is what this function
+    used to do, and it was worse than a missing feature. With
+    ``$DPORTSV3_CONFIG_DIR`` unset — which is every packaged install,
+    because neither rc script sets it — the sample resolved, loaded,
+    and named ``type = "github"`` against the real upstream repo with a
+    ``clone_dir`` that does not exist on any host. The token lookup then
+    failed, so every single bundle Accept reported ``create_failed``
+    instead of taking the ``no_config`` skip a few lines below it, and
+    ``delivery_sync`` swallowed the same error and quietly stopped
+    reconciling merges.
+
+    The sample keeps its job as a template an operator copies. It is
+    just never loaded on their behalf.
     """
     env = env if env is not None else dict(os.environ)
     explicit = env.get("DPORTSV3_DELIVERY_CONFIG", "").strip()
@@ -85,14 +102,9 @@ def resolve_config(
         path = Path(explicit)
     else:
         config_dir = env.get("DPORTSV3_CONFIG_DIR", "").strip()
-        if config_dir:
-            path = Path(config_dir) / "delivery.toml"
-        else:
-            # The template bundled with the package. `config_file` is not
-            # used here because it reads $DPORTSV3_CONFIG_DIR from the real
-            # environment, and this function takes `env` as a parameter so
-            # callers can pass a synthetic one.
-            path = paths.BUNDLED_CONFIG_DIR / "delivery.toml.sample"
+        if not config_dir:
+            return None
+        path = Path(config_dir) / "delivery.toml"
     if not path.is_file():
         return None
     return load_delivery_config(path, target=target, env=env)

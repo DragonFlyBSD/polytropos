@@ -75,6 +75,27 @@
 # How the runner reaches the other two. Keep in step with the ports above.
 : ${polytropos_tracker_url:="http://127.0.0.1:8080"}
 
+# Where the tool looks for its own config files. Both services export
+# this as $DPORTSV3_CONFIG_DIR, which is the only way anything in the
+# Python packages finds a config file at all — nothing searches for a
+# surrounding directory.
+#
+# What lives here:
+#   agentic-policy.json  classification + confidence -> tier and budget.
+#                        Optional: absent falls back to the packaged
+#                        default, which is a usable policy.
+#   delivery.toml        what Accept does with a fix. Absent means
+#                        delivery is off. Copy delivery.toml.sample and
+#                        edit it to turn it on; there is no fallback,
+#                        because no shipped value could name the right
+#                        repo, clone and credential for this host.
+#   delivery.token       the forge credential, when delivery.toml uses a
+#                        network provider. Mode 0640 root:${polytropos_group}
+#                        — the TRACKER delivers, and it runs
+#                        unprivileged, so a 0400 root token is
+#                        unreadable by the only process that wants it.
+: ${polytropos_config_dir:="/usr/local/etc/polytropos"}
+
 # --- runner ------------------------------------------------------------
 
 # Default dev-env for jobs that do not carry one and when the tracker has

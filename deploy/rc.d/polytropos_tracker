@@ -24,6 +24,8 @@
 # polytropos_tracker_port   (str)   Listen port. Default 8080.
 # polytropos_chat_env       (str)   Credentials for the fix-chat panel.
 #                                   Absent means chat is disabled.
+# polytropos_config_dir     (str)   Where delivery.toml, delivery.token and
+#                                   agentic-policy.json live.
 #
 
 . /etc/rc.subr
@@ -54,6 +56,7 @@ export PATH
 : ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
 : ${polytropos_artifact_root:="${polytropos_logs_root}/evidence"}
 : ${polytropos_chat_env:="/usr/local/etc/polytropos/chat.env"}
+: ${polytropos_config_dir:="/usr/local/etc/polytropos"}
 : ${polytropos_tracker_bind:="0.0.0.0"}
 : ${polytropos_tracker_port:="8080"}
 
@@ -84,6 +87,7 @@ logfile="${polytropos_log_dir}/tracker.log"
 # reason. Anything using Path.home() or a ~/.cache would fail in a
 # way that points nowhere near this file.
 polytropos_tracker_env="HOME=${polytropos_home} DPORTSV3_NO_BOOTSTRAP=1 \
+DPORTSV3_CONFIG_DIR=${polytropos_config_dir} \
 DPORTSV3_STATE_DB=${polytropos_state_db} \
 DPORTSV3_ARTIFACT_ROOT=${polytropos_artifact_root}"
 

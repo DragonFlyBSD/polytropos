@@ -40,9 +40,15 @@ Group inheritance only applies to *new* files, so the install has to
 
     /usr/local/etc/rc.d/polytropos_tracker
     /usr/local/etc/rc.d/polytropos_runner
-    /usr/local/etc/polytropos.conf              shared, world-readable
-    /usr/local/etc/polytropos/harness.env       root:wheel 0600
-    /usr/local/etc/polytropos/chat.env          root:polytropos 0640
+    /usr/local/etc/polytropos.conf                 shared, world-readable
+    /usr/local/etc/polytropos/harness.env          root:wheel 0600
+    /usr/local/etc/polytropos/chat.env             root:polytropos 0640
+    /usr/local/etc/polytropos/delivery.toml.sample root:polytropos 0640
+
+`/usr/local/etc/polytropos/` is also `$DPORTSV3_CONFIG_DIR`: both services
+export it from `polytropos_config_dir`, and it is the only way anything in
+the Python packages finds a config file — nothing searches for a
+surrounding directory.
 
 Precedence for every knob, highest first: `/etc/rc.conf`, then
 `polytropos.conf`, then the script's own default. That works because all
@@ -86,6 +92,29 @@ different users:
 
 Neither belongs in `polytropos.conf` or `rc.conf` — both are
 world-readable.
+
+## Delivery
+
+Off until you turn it on. `deploy install` places a template, not a live
+config, because a `delivery.toml` that exists is a `delivery.toml` that
+loads — and no shipped value could name the right repo, clone and
+credential for your host. Until you copy it, Accept stays a pure
+tracker-side action and logs `skip_reason=no_config`.
+
+    cp /usr/local/etc/polytropos/delivery.toml.sample \
+       /usr/local/etc/polytropos/delivery.toml
+
+The template starts at `type = "local-patch"`, which writes the diff to a
+directory instead of pushing anywhere. That proves the whole Accept path
+with no credentials and no network; switch to `github` once you have seen
+a patch land in the outbox.
+
+For a forge provider, `delivery.token` is `root:polytropos 0640` — **not**
+`0400 root`. Delivery runs inside the *tracker*, which drops to the
+unprivileged account, so a root-only token is unreadable by the only
+process that wants it, and `provider.clone_dir` has to be writable by that
+same account. The tracker checks all of this when it starts and logs what
+is wrong, rather than waiting for the first Accept to find out.
 
 ## Logs and rotation
 
