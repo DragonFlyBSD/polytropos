@@ -3838,7 +3838,13 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
         rb = result.get("rebuild_ok")
         return f"origin={args.get('origin', '')} rebuild_ok={rb}{ok_tag}"
     if tool == "dsynth_log":
-        return f"origin={args.get('origin', '')} lines={len((result.get('text') or '').splitlines())}{ok_tag}"
+        # `tail` is the key this tool returns; reading `text` printed
+        # lines=0 on every call, success included, which made a working
+        # read look identical to a missing log.
+        n = len((result.get("tail") or "").splitlines())
+        fl = result.get("flavor") or ""
+        return (f"origin={args.get('origin', '')}"
+                f"{'@' + fl if fl else ''} lines={n}{ok_tag}")
     # Fallback: show first arg key=value pair
     if args:
         k, v = next(iter(args.items()))

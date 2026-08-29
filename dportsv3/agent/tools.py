@@ -125,9 +125,12 @@ _TOOLS: list[dict] = [
           "not in this tool's stdout_tail.",
           {"origin": _STR}, ["origin"]),
     _tool("dsynth_log",
-          "Read the tail of dsynth's per-port build log "
-          "(/work/dsynth/logs/<origin-with-underscores>.log). Call after dsynth_build failure.",
-          {"origin": _STR, "tail_lines": _INT}, ["origin"]),
+          "Read the tail of dsynth's per-port build log under "
+          "/work/dsynth/logs. Call after a dsynth_build failure. dsynth "
+          "writes one log per flavor; omit `flavor` to get the most "
+          "recent one, and the result names the others in "
+          "available_flavors if you need a specific one.",
+          {"origin": _STR, "tail_lines": _INT, "flavor": _STR}, ["origin"]),
     _tool("dops_reference",
           "Return a condensed quick-reference for the dops DSL (overlay.dops "
           "syntax: mk set/add/remove, mk replace-if, mk target set/append, "

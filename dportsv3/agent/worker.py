@@ -2367,13 +2367,42 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
 DSYNTH_LOGS_DIR = "/work/dsynth/logs"
 
 
-def _dsynth_log_path(origin: str) -> str:
-    """Where dsynth writes the per-port build log inside the chroot.
+def _dsynth_log_stem(origin: str) -> str:
+    """dsynth's log filename stem: '/' becomes '___' in the origin."""
+    return origin.replace("/", "___")
 
-    dsynth replaces '/' in the origin with '___' for its log filenames
-    (per the dsynth source convention).
+
+def _dsynth_log_candidates(env: str, origin: str) -> list[Path]:
+    """Every per-port log dsynth wrote for ``origin``, newest first.
+
+    dsynth writes one log PER FLAVOR, suffixed ``@<flavor>``, so a
+    flavored port has no ``<origin>.log`` at all — devel/glib20 produces
+    devel___glib20@bootstrap.log and devel___glib20@default.log and
+    nothing else. Building the unflavored name and stopping there is why
+    this used to report "no log" for a port whose logs were sitting in
+    the directory the agent then listed by hand.
     """
-    return f"{DSYNTH_LOGS_DIR}/{origin.replace('/', '___')}.log"
+    stem = _dsynth_log_stem(origin)
+    try:
+        logs = env_paths(env).writable / "work" / "dsynth" / "logs"
+        found = [p for p in (logs / f"{stem}.log",) if p.is_file()]
+        found += sorted(logs.glob(f"{stem}@*.log"))
+        return sorted(set(found), key=lambda p: p.stat().st_mtime,
+                      reverse=True)
+    except (OSError, RuntimeError):
+        # Resolving the env can fail outright. Callers use this to
+        # decorate a result, never to decide anything, so degrade to
+        # "no logs known" rather than turning a hint into an exception.
+        return []
+
+
+def _dsynth_log_path(origin: str) -> str:
+    """The unflavored in-chroot log path, for messages only.
+
+    Only a hint: a flavored port has no such file. Callers that need a
+    real path use ``_dsynth_log_candidates``.
+    """
+    return f"{DSYNTH_LOGS_DIR}/{_dsynth_log_stem(origin)}.log"
 
 
 def dsynth_build(env: str, origin: str) -> dict:
@@ -2385,7 +2414,8 @@ def dsynth_build(env: str, origin: str) -> dict:
     - ``-y`` to assume-yes on all prompts (no stdin gymnastics)
 
     The result dict carries ``log_hint``: the in-chroot path to the
-    per-port build log. On failure, the agent should call
+    per-port build log dsynth actually wrote, and ``log_flavors`` when
+    the port has more than one. On failure, the agent should call
     ``dsynth_log(origin)`` to read it — stdout/stderr_tail here only
     capture the wrapper output, not the actual build error.
 
@@ -2458,35 +2488,74 @@ def dsynth_build(env: str, origin: str) -> dict:
         'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" build "$1"'
     )
     p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)
-    log_hint = _dsynth_log_path(origin)
+    # Name the log dsynth actually wrote. The unflavored path is a
+    # guess that is wrong for every flavored port, and handing the
+    # model a path that does not exist costs it turns discovering so.
+    written = _dsynth_log_candidates(env, origin)
+    log_hint = (f"{DSYNTH_LOGS_DIR}/{written[0].name}" if written
+                else _dsynth_log_path(origin))
     return _exec_result(
         p.returncode, p.stdout, p.stderr,
         origin=origin,
         rebuild_ok=p.returncode == 0,
         log_hint=log_hint,
+        log_flavors=[_dsynth_log_flavor(x, origin) for x in written],
     )
 
 
-def dsynth_log(env: str, origin: str, tail_lines: int = 200) -> dict:
+def _dsynth_log_flavor(path: Path, origin: str) -> str:
+    """The flavor a log filename encodes, or "" for an unflavored one."""
+    stem = _dsynth_log_stem(origin)
+    name = path.name[:-len(".log")] if path.name.endswith(".log") else path.name
+    return name[len(stem) + 1:] if name.startswith(f"{stem}@") else ""
+
+
+def dsynth_log(env: str, origin: str, tail_lines: int = 200,
+               flavor: str = "") -> dict:
     """Read the tail of dsynth's per-port build log.
 
     Call this when ``dsynth_build`` returned ``rebuild_ok=false``;
     the actual error message lives here, not in dsynth_build's
     stdout (which is just wrapper output).
 
-    Returns the last ``tail_lines`` lines from
-    ``/work/dsynth/logs/<origin-with-slashes-as-underscores>.log``.
+    dsynth writes one log per flavor. Pass ``flavor`` to pick one;
+    without it the most recently written is used and the rest are
+    named in ``available_flavors`` so a second call can be exact.
     """
-    paths = env_paths(env)
-    log_path = paths.writable / "work" / "dsynth" / "logs" / f"{origin.replace('/', '___')}.log"
-    if not log_path.is_file():
+    candidates = _dsynth_log_candidates(env, origin)
+    if flavor:
+        stem = _dsynth_log_stem(origin)
+        wanted = f"{stem}@{flavor.lstrip('@')}.log"
+        picked = [p for p in candidates if p.name == wanted]
+        if not picked:
+            return {
+                "ok": False,
+                "error": (
+                    f"no log for flavor {flavor!r}; dsynth wrote "
+                    f"{[p.name for p in candidates]}"
+                ),
+                "origin": origin,
+                "log_path": "",
+                "available_flavors": [_dsynth_log_flavor(p, origin)
+                                      for p in candidates],
+                "tail": "",
+            }
+        candidates = picked
+    if not candidates:
+        logs_dir = env_paths(env).writable / "work" / "dsynth" / "logs"
         return {
             "ok": False,
-            "error": f"no log at {log_path}",
+            "error": (
+                f"dsynth wrote no log for {origin} under {DSYNTH_LOGS_DIR}. "
+                f"It writes one only after a build starts, so run "
+                f"dsynth_build first."
+            ),
             "origin": origin,
-            "log_path": str(log_path),
+            "log_path": "",
+            "available_flavors": [],
             "tail": "",
         }
+    log_path = candidates[0]
     try:
         text = log_path.read_text(errors="replace")
     except OSError as exc:
@@ -2507,7 +2576,10 @@ def dsynth_log(env: str, origin: str, tail_lines: int = 200) -> dict:
     return {
         "ok": True,
         "origin": origin,
-        "log_path": str(log_path),
+        "log_path": f"{DSYNTH_LOGS_DIR}/{log_path.name}",
+        "flavor": _dsynth_log_flavor(log_path, origin),
+        "available_flavors": [_dsynth_log_flavor(p, origin)
+                              for p in candidates],
         "tail": "\n".join(kept),
         "truncated": truncated,
         "total_lines": len(lines),
