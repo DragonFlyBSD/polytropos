@@ -91,8 +91,9 @@ def check(*, target: str | None = None,
         return [Finding(
             "ok",
             f"delivery is not configured; Accept will skip with no_config. "
-            f"Copy delivery.toml.sample to delivery.toml in {config_dir} "
-            f"to enable it.",
+            f"Set delivery.type in {config_dir}/polytropos.toml to enable "
+            f"it — start with 'local-patch', which writes the diff to "
+            f"delivery.outbox instead of pushing.",
         )]
 
     out: list[Finding] = [

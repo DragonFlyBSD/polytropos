@@ -202,7 +202,8 @@ def test_preflight_reports_a_configured_dir_with_no_delivery_as_ok(tmp_path) -> 
     findings = preflight.check(env={"DPORTSV3_CONFIG_DIR": str(tmp_path)})
     assert [f.level for f in findings] == ["ok"]
     assert "not configured" in findings[0].detail
-    assert str(tmp_path) in findings[0].detail, "say where to put the file"
+    assert "delivery.type" in findings[0].detail, "say what to set"
+    assert str(tmp_path) in findings[0].detail, "and in which file"
 
 
 def test_preflight_warns_about_a_world_readable_token(tmp_path) -> None:
