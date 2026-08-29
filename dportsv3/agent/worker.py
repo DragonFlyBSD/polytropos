@@ -986,6 +986,40 @@ WRKDIRPREFIX = "/work/obj"
 # than a corrupt distfile.
 NO_DEPENDS = "NO_DEPENDS=yes"
 
+# Why the agent's `make` calls set PACKAGE_BUILDING.
+#
+# bsd.default-versions.mk derives a handful of *_DEFAULT knobs from what
+# is installed rather than from what the tree declares. PERL5_DEFAULT is
+# the one that bites:
+#
+#     .  if !exists(${LOCALBASE}/bin/perl) || (!defined(_PORTS_ENV_CHECK) \
+#         && defined(PACKAGE_BUILDING))
+#     PERL5_DEFAULT?=     5.42                    # what the tree declares
+#     .  elif !defined(PERL5_DEFAULT)
+#     _PERL5_FROM_BIN!=   ${LOCALBASE}/bin/perl -e 'printf "%vd\n", $$^V;'
+#     PERL5_DEFAULT:=     ${_PERL5_FROM_BIN:R}    # what happens to be installed
+#
+# The base's perl is whatever the official mirror had; the tree wants a
+# newer one. So PERL5_DEFAULT resolves to the installed version, perl5.mk
+# rejects it as unsupported, and IGNORE is set. An IGNOREd port has no
+# real targets at all — bsd.port.mk replaces extract, patch and eleven
+# others with `echo the reason; exit 1` — so the agent cannot even unpack
+# a distfile to re-cut a patch, and NO_DEPENDS above never gets reached.
+#
+# dsynth sets this in every builder's make.conf (dsynth's build.c:
+# addbuildenv("PACKAGE_BUILDING", "yes", BENV_MAKECONF)), which is why
+# the same tree builds there and IGNOREs here. Setting it makes the
+# agent read the tree the way the builder it is repairing reads it,
+# rather than diverging from it a second way.
+#
+# Not a bypass: with it set the framework itself stops objecting. The
+# port-facing effects run the same direction — NO_PACKAGE and
+# MANUAL_PACKAGE_BUILD ports become IGNOREd, exactly as they are on the
+# farm, so the agent declines them instead of pretending. WRKSRC,
+# PATCHDIR, PATCH_LIST, EXTRACT_ONLY, DISTFILES and DISTNAME are
+# unchanged (verified against the tree on hardware).
+PACKAGE_BUILDING = "PACKAGE_BUILDING=yes"
+
 
 # Per-(env, origin) WRKSRC cache, populated by `make_extract()` and
 # read by `genpatch()` (to invoke the script from the right cwd with a
@@ -1940,8 +1974,12 @@ def make_extract(env: str, origin: str) -> dict:
     Returns ``wrkdir`` + ``wrksrc`` from ``make -V``. ``WRKDIRPREFIX``
     is redirected to ``/work/obj`` (the writable overlay) because
     bsd.port.mk's default (``/usr/obj/dports``) is read-only, and
-    ``NO_DEPENDS`` is set because the dev-env's package universe does
-    not match the tree — see the constant for the full reasoning.
+    ``NO_DEPENDS`` and ``PACKAGE_BUILDING`` are both set because the
+    dev-env's package universe does not match the tree. They clear
+    different walls — ``PACKAGE_BUILDING`` stops the framework IGNOREing
+    the port over an installed version, ``NO_DEPENDS`` stops the targets
+    that survive from recursing into a read-only /usr/local. See the
+    constants for the full reasoning.
 
     ``$DPORTS_COMPOSE_ROOT`` is set in the dev-env's chroot environment
     (see ``build_env_dict`` in tools/dev-env helpers); we expand it in
@@ -1954,6 +1992,7 @@ def make_extract(env: str, origin: str) -> dict:
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
         f'     {NO_DEPENDS} '
+        f'     {PACKAGE_BUILDING} '
         f'     BATCH=yes extract'
     )
     p = _exec(env, "/bin/sh", "-c", extract_cmd)
@@ -2071,7 +2110,8 @@ def make_patch(env: str, origin: str) -> dict:
     build-time tree, rejecting at ``dsynth_build``.
 
     Same target/env model as ``make_extract``: compose root,
-    ``WRKDIRPREFIX=/work/obj``, ``NO_DEPENDS``. On failure the per-patch reject
+    ``WRKDIRPREFIX=/work/obj``, ``NO_DEPENDS``, ``PACKAGE_BUILDING``.
+    On failure the per-patch reject
     (``Hunk #N ... FAILED``) is in stdout/stderr — surfaced in the
     tails so the caller can see WHICH patch rejected without a
     separate log read. ``do-patch`` writes a ``.patch_done`` cookie
@@ -2083,6 +2123,7 @@ def make_patch(env: str, origin: str) -> dict:
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
         f'     {NO_DEPENDS} '
+        f'     {PACKAGE_BUILDING} '
         f'     BATCH=yes patch'
     )
     p = _exec(env, "/bin/sh", "-c", patch_cmd)
