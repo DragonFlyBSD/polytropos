@@ -63,7 +63,12 @@ _TOOLS: list[dict] = [
           "or encoding=base64 (binary, capped at 32KB). On truncation, the "
           "result includes total_lines + a hint with the next offset_lines to "
           "request. Use sha256 from this result in put_file's expected_sha256 "
-          "to guard stale writes (sha256 is over the FULL file, not the window).",
+          "to guard stale writes (sha256 is over the FULL file, not the window). "
+          "If you ask for a window you already read and the file has not "
+          "changed, the reply is unchanged=true with no content — that is "
+          "success, not an error: those lines are already above in this "
+          "conversation. Read a different offset_lines/limit_lines, or grep, "
+          "rather than asking again.",
           {"path": _STR,
            "offset_lines": _INT,
            "limit_lines": _INT},

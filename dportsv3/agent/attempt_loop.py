@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import llm, prompts, tool_loop
+from . import llm, prompts, tool_loop, worker
 from .llm import Usage
 
 log = logging.getLogger(__name__)
@@ -144,6 +144,10 @@ def run(
     budget = int(getattr(tier, "max_tokens", 0) or 0)
 
     for attempt_idx in range(1, iterations + 1):
+        # Each attempt starts from a fresh message list, so anything the
+        # tools elided as "you already have this" has to be forgotten —
+        # otherwise a retry is refused content it never saw.
+        worker.reset_attempt_caches()
         if attempt_idx == 1:
             messages = list(base_messages)
         else:

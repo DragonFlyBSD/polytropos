@@ -515,6 +515,36 @@ def get_file(
             first_line = start + 1
         else:
             first_line = 0
+        # Already shown this exact window, and the file has not changed
+        # since? Then the bytes are still verbatim in the conversation,
+        # and returning them again buys nothing while re-billing them as
+        # fresh input. Point at them instead.
+        #
+        # The sha is what makes this safe: after a put_file the hash
+        # differs and the new content is returned normally. Keyed on the
+        # window too, so asking for a different slice always reads.
+        key = (env, path, start, limit_lines)
+        if _READ_CACHE.get(key) == full_sha:
+            return {
+                "path": path,
+                "encoding": "text",
+                "unchanged": True,
+                "sha256": full_sha,
+                "size": full_size,
+                "total_lines": total_lines,
+                "first_line": first_line,
+                "last_line": end,
+                "truncated": truncated,
+                "note": (
+                    f"Lines {first_line}-{end} of {path} are unchanged "
+                    f"since you read them earlier in this attempt "
+                    f"(sha256 {full_sha[:12]}…), so the content is not "
+                    f"repeated — scroll back to it. Pass different "
+                    f"offset_lines/limit_lines to read another part, or "
+                    f"grep to search."
+                ),
+            }
+        _READ_CACHE[key] = full_sha
         result = {
             "path": path,
             "encoding": "text",
@@ -841,6 +871,21 @@ def _exec(
 
 # (env, origin) → port-subtree content hash at last successful materialize
 _MATERIALIZE_STATE: dict[tuple[str, str], str] = {}
+
+# (env, path, offset, limit) → sha256 of the file when that exact window
+# was last returned to the model, THIS ATTEMPT.
+#
+# Scoped to an attempt on purpose. The saving here is "you already have
+# these bytes in your context"; a retry starts from a fresh message list,
+# so carrying this across attempts would withhold content the model does
+# not actually have. `reset_attempt_caches` is what enforces that, and
+# attempt_loop calls it before every attempt.
+_READ_CACHE: dict[tuple[str, str, int, int], str] = {}
+
+
+def reset_attempt_caches() -> None:
+    """Forget what the model has been shown; call at each attempt start."""
+    _READ_CACHE.clear()
 
 
 def _port_subtree_hash(env: str, origin: str) -> str:
