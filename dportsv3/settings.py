@@ -73,6 +73,22 @@ CONFIG_FILENAME = "polytropos.toml"
 #: secret's own reader.
 SECRETS_SUBDIR = "secrets"
 
+#: ``secret setting -> (mode, readable by the service group)``.
+#:
+#: The mode follows the READER, which is the whole argument for keeping
+#: credentials in files rather than in the settings. The queue runner is
+#: root and reads the triage and patch keys; the tracker drops to the
+#: unprivileged account and reads the chat key and the delivery token. A
+#: blanket 0640 would hand the expensive patch key to the tracker, which
+#: has no authentication and an API that can spend LLM credit — the
+#: exact thing the split exists to prevent.
+SECRET_MODES: dict[str, tuple[int, bool]] = {
+    "llm.triage.api_key_file": (0o600, False),
+    "llm.patch.api_key_file": (0o600, False),
+    "llm.chat.api_key_file": (0o640, True),
+    "delivery.token_file": (0o640, True),
+}
+
 
 SETTINGS: list[Setting] = [
     # ---------------------------------------------------------------- paths

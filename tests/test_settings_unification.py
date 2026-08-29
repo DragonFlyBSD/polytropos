@@ -573,3 +573,46 @@ def test_an_explicit_policy_file_still_wins(set_setting, tmp_path) -> None:
         "confidence_floor": {},
     }))
     assert policy.load_policy(str(other)).tiers["AUTO"].max_iterations == 99
+
+
+# --- the mode follows the reader --------------------------------------------
+
+def test_every_secret_declares_who_reads_it() -> None:
+    for setting in settings.SETTINGS:
+        if setting.secret:
+            assert setting.path in settings.SECRET_MODES, setting.path
+
+
+def test_the_runners_keys_are_not_group_readable() -> None:
+    """The tracker has no authentication and an API that can spend LLM
+    credit. A blanket 0640 across all four secrets — which the installer
+    did, and hardware caught — hands it the expensive patch key. That is
+    the exact thing the two-file split existed to prevent."""
+    for path in ("llm.triage.api_key_file", "llm.patch.api_key_file"):
+        mode, grouped = settings.SECRET_MODES[path]
+        assert mode == 0o600 and not grouped, path
+
+
+def test_the_trackers_secrets_are_group_readable() -> None:
+    """It runs unprivileged, so root-only would make them unreadable by
+    the only process that wants them."""
+    for path in ("llm.chat.api_key_file", "delivery.token_file"):
+        mode, grouped = settings.SECRET_MODES[path]
+        assert mode == 0o640 and grouped, path
+
+
+def test_config_check_flags_a_runner_key_left_group_readable(
+    set_setting, capsys, tmp_path,
+) -> None:
+    from argparse import Namespace
+
+    set_setting("llm.patch.model", "x")
+    key = tmp_path / "config" / "secrets" / "patch.key"
+    key.parent.mkdir(parents=True, exist_ok=True)
+    key.write_text("sk\n")
+    key.chmod(0o640)
+
+    code = config_cmd.cmd_config(Namespace(config_action="check"))
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "group-readable" in err and "patch.key" in err

@@ -334,6 +334,8 @@ def _migrate_legacy_config(prefix: Path, group: str, log) -> None:
     if not settings_values and not secrets:
         return
 
+    from dportsv3 import settings  # noqa: PLC0415
+
     for path, secret in secrets.items():
         name = Path(str(_SECRET_FILES[path])).name
         destination = etc / "secrets" / name
@@ -341,12 +343,19 @@ def _migrate_legacy_config(prefix: Path, group: str, log) -> None:
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(secret + "\n")
-        _os.chmod(destination, 0o640)
-        try:
-            shutil.chown(destination, user="root", group=group)
-        except (LookupError, PermissionError):
-            pass
-        log(f"  migrated a credential into {destination}")
+        # The mode follows the reader. 0600 root for the two the queue
+        # runner uses, 0640 root:group for the ones the tracker needs —
+        # a blanket 0640 would hand the patch key to a service that has
+        # no authentication and an API that can spend LLM credit.
+        mode, grouped = settings.SECRET_MODES.get(path, (0o600, False))
+        _os.chmod(destination, mode)
+        if grouped:
+            try:
+                shutil.chown(destination, user="root", group=group)
+            except (LookupError, PermissionError):
+                pass
+        log(f"  migrated a credential into {destination} "
+            f"({oct(mode)[2:]}{', ' + group if grouped else ', root only'})")
 
     target = etc / "polytropos.toml"
     if settings_values and target.is_file() and not target.read_text().strip():

@@ -164,9 +164,18 @@ def _check(args: Namespace) -> int:
         if target is None or not target.is_file():
             continue
         mode = target.stat().st_mode & 0o777
+        want, grouped = settings.SECRET_MODES.get(item.path, (0o600, False))
         if mode & 0o007:
             print(f"warning: {target} is world-readable (mode {mode:04o}); "
                   f"it holds a credential", file=sys.stderr)
+            problems += 1
+        elif mode & 0o070 and not grouped:
+            # The reader is the root runner, so group access buys nothing
+            # and hands the key to the unprivileged tracker, which has no
+            # authentication and an API that can spend LLM credit.
+            print(f"warning: {target} is group-readable (mode {mode:04o}) "
+                  f"but only the root queue runner reads it; "
+                  f"{oct(want)[2:]} is enough", file=sys.stderr)
             problems += 1
 
     if problems:
@@ -401,10 +410,12 @@ def _migrate(args: Namespace) -> int:
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(value + "\n")
-        # 0640 rather than 0600: the chat key is read by the tracker,
-        # which runs unprivileged. The installer sets the group; here we
-        # can only make sure it is not world-readable.
-        os.chmod(destination, 0o640)
+        # The mode follows the reader — 0600 for the root runner's keys,
+        # 0640 for the ones the unprivileged tracker needs. A blanket
+        # 0640 would hand the patch key to the tracker. Only root can set
+        # the group, so that part is the installer's job.
+        mode, _grouped = settings.SECRET_MODES.get(path, (0o600, False))
+        os.chmod(destination, mode)
 
     print("\ndone. The old files are untouched; check "
           "`dportsv3 config show` and remove them when you are satisfied.")
