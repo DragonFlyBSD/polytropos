@@ -43,6 +43,17 @@ def env_dir(tmp_path, monkeypatch):
     return writable
 
 
+def _strip_numbers(text: str) -> list[str]:
+    """Drop get_file's cat -n prefix (number + tab) from each line.
+
+    Content is line-numbered as of poly-pg4 — the file's own numbers, so
+    a window starting at line 166 begins at 166. These tests are about
+    which lines come back, so they compare the content underneath.
+    """
+    return [line.split("\t", 1)[1] if "\t" in line else line
+            for line in text.splitlines()]
+
+
 def _write(env_dir: Path, rel: str, content: str) -> Path:
     target = env_dir / "work" / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -67,12 +78,13 @@ def test_get_file_default_returns_first_200_lines(env_dir):
     assert res["last_line"] == 200
     assert res["truncated"] is True
     # Content covers exactly lines 1..200.
-    lines = res["content"].splitlines()
+    lines = _strip_numbers(res["content"])
     assert len(lines) == 200
     assert lines[0] == "line 1"
     assert lines[-1] == "line 200"
-    # Hint points at the next offset.
-    assert "offset_lines=200" in res["hint"]
+    # The hint continues in the same 1-indexed terms the numbered
+    # content uses: line 200 was the last shown, so resume at 201.
+    assert "start_line=201" in res["hint"]
     assert "grep" in res["hint"]
 
 
@@ -83,7 +95,7 @@ def test_get_file_window_respects_offset_and_limit(env_dir):
 
     res = worker.get_file("env", "/work/mid.txt",
                           offset_lines=10, limit_lines=5)
-    lines = res["content"].splitlines()
+    lines = _strip_numbers(res["content"])
     assert len(lines) == 5
     assert lines[0] == "line 11"
     assert lines[-1] == "line 15"
@@ -100,7 +112,7 @@ def test_get_file_small_file_not_truncated(env_dir):
     res = worker.get_file("env", "/work/small.txt")
     assert res["truncated"] is False
     assert "hint" not in res
-    assert res["content"] == "alpha\nbeta\n"
+    assert _strip_numbers(res["content"]) == ["alpha", "beta"]
     assert res["total_lines"] == 2
 
 

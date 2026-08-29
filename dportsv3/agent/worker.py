@@ -28,6 +28,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -432,6 +433,8 @@ def get_file(
     *,
     offset_lines: int = 0,
     limit_lines: int = _GET_FILE_DEFAULT_LIMIT_LINES,
+    start_line: int = 0,
+    end_line: int = 0,
 ) -> dict:
     """Read ``path`` from the env's writable overlay, **line-windowed**.
 
@@ -501,11 +504,29 @@ def get_file(
         # offset_lines<0 means "from start".
         if limit_lines <= 0:
             limit_lines = _GET_FILE_DEFAULT_LIMIT_LINES
-        if offset_lines < 0:
-            offset_lines = 0
-        start = min(offset_lines, total_lines)
-        end = min(start + limit_lines, total_lines)
-        window = "".join(lines[start:end])
+        # A 1-indexed inclusive range wins when given. "lines 201-212"
+        # is how the model states it and how every other harness's tool
+        # takes it; offset+count is kept for existing callers.
+        if start_line > 0:
+            start = min(max(start_line - 1, 0), total_lines)
+            end = (min(end_line, total_lines) if end_line > 0
+                   else min(start + limit_lines, total_lines))
+            end = max(end, start)
+        else:
+            if offset_lines < 0:
+                offset_lines = 0
+            start = min(offset_lines, total_lines)
+            end = min(start + limit_lines, total_lines)
+        # cat -n: number, tab, content — the convention Claude Code, Zed
+        # and Roo Code all use. Numbers are the FILE's, so a window
+        # starting at line 166 begins at 166 rather than 1. Without this
+        # the model rebuilds the mapping in its own reasoning: one
+        # measured turn spent 53,124 chars transcribing a file to attach
+        # numbers before it could write a patch (poly-pg4).
+        window = "".join(
+            f"{n:6d}\t{line}"
+            for n, line in enumerate(lines[start:end], start=start + 1)
+        )
         truncated = end < total_lines
         # When the window is empty (offset past EOF, or empty file),
         # report first_line=0 to signal "no content returned" rather
@@ -549,6 +570,10 @@ def get_file(
             "path": path,
             "encoding": "text",
             "content": window,
+            # Explicit, so nothing downstream has to infer it from the
+            # shape of the text — and so put_file's guard has a name to
+            # point at when it refuses numbered content.
+            "content_is_line_numbered": True,
             "sha256": full_sha,
             "size": full_size,
             "total_lines": total_lines,
@@ -560,7 +585,7 @@ def get_file(
             remaining = total_lines - end
             result["hint"] = (
                 f"{remaining} more line(s) past line {end}. To continue, "
-                f"call get_file({path!r}, offset_lines={end}). To narrow "
+                f"call get_file({path!r}, start_line={end + 1}). To narrow "
                 f"down without reading the whole file, prefer grep "
                 f"(returns only matching lines + context)."
             )
@@ -594,6 +619,44 @@ def get_file(
     }
 
 
+def _reject_line_numbered_content(path: str, content: str) -> dict | None:
+    """Refuse a write that still carries get_file's line numbers.
+
+    get_file returns ``cat -n`` output — six-wide right-aligned number,
+    tab, content — because the model otherwise rebuilds that mapping by
+    hand at enormous cost. The hazard it introduces is that the model
+    can echo the numbered text straight back into put_file and write a
+    file where every line is prefixed with a number, silently corrupting
+    it. Cheaper to refuse here than to debug a mangled patch later.
+
+    Deliberately strict about what counts: three or more consecutive
+    lines matching the exact emitted shape. Real files do contain
+    number-then-tab lines — TSV data, some tables — but not the
+    right-aligned six-column form repeated down the file.
+    """
+    lines = content.splitlines()
+    if len(lines) < 3:
+        return None
+    numbered = re.compile(r"^\s{0,5}\d+\t")
+    run = best = 0
+    for line in lines:
+        run = run + 1 if numbered.match(line) else 0
+        best = max(best, run)
+    if best < 3:
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"refusing to write {path}: the content still has get_file's "
+            f"line numbers on it ({best} consecutive numbered lines). "
+            f"Those are display only — strip the number and tab from "
+            f"each line before writing, or the file gets them baked in."
+        ),
+        "kind": "line_numbered_content",
+        "path": path,
+    }
+
+
 def put_file(
     env: str,
     path: str,
@@ -622,6 +685,10 @@ def put_file(
     refused = _reject_orphan_dops_write(path)
     if refused is not None:
         return refused
+    if encoding == "text":
+        refused = _reject_line_numbered_content(path, content)
+        if refused is not None:
+            return refused
     paths = env_paths(env)
     host = _resolve_chroot_path(paths, path)
 

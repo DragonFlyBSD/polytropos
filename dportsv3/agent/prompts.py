@@ -300,14 +300,21 @@ range you genuinely need to see.
 | "Does this file mention X?" | `grep("X", path)` |
 | "Show me lines around 'foo'" | `grep("foo", path, context=5)` |
 | "What's in this small config file?" | `get_file` (no offset — small files are fine) |
-| "Read a specific known line range" | `get_file(path, offset_lines=N, limit_lines=M)` |
+| "Read a specific known line range" | `get_file(path, start_line=N, end_line=M)` |
 | "Dump the whole 200KB Makefile.in to look around" | **NO** — use grep with the pattern you're investigating |
 
 `grep` returns matched lines plus `context` surrounding lines
 (default 3) — almost always enough. If after a grep you still need
 more, ask for the specific line range with
-`get_file(path, offset_lines=START, limit_lines=N)` — NOT the whole
-file.
+`get_file(path, start_line=START, end_line=END)` — NOT the whole
+file. The range is 1-indexed and inclusive, matching the line numbers
+grep just reported.
+
+`get_file` returns content line-numbered (`cat -n` style: the file's
+own number, a tab, then the line), so a window starting at line 166
+begins at 166 and you never need to count lines yourself. Those
+numbers are display only — strip the number and tab before passing any
+of it to `put_file`, which refuses content that still carries them.
 
 `get_file` is line-windowed by default (200 lines from offset 0).
 For large files this means you get only the first chunk; the result

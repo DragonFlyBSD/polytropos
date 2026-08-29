@@ -44,6 +44,12 @@ def env(tmp_path, monkeypatch):
     return root
 
 
+def _lines(text: str) -> list[str]:
+    """Content underneath get_file's cat -n prefix (poly-pg4)."""
+    return [ln.split("\t", 1)[1] if "\t" in ln else ln
+            for ln in text.splitlines()]
+
+
 def _write(root, rel, text):
     p = root / rel.lstrip("/")
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +62,7 @@ def _write(root, rel, text):
 def test_the_first_read_returns_content(env) -> None:
     _write(env, "work/a.txt", "one\ntwo\nthree\n")
     out = worker.get_file("e", "/work/a.txt")
-    assert out["content"] == "one\ntwo\nthree\n"
+    assert _lines(out["content"]) == ["one", "two", "three"]
     assert "unchanged" not in out
 
 
@@ -92,7 +98,7 @@ def test_a_changed_file_is_returned_in_full(env) -> None:
 
     out = worker.get_file("e", "/work/a.txt")
     assert out.get("unchanged") is not True
-    assert out["content"] == "one\ntwo\nthree\n"
+    assert _lines(out["content"]) == ["one", "two", "three"]
 
 
 def test_a_different_window_is_always_read(env) -> None:
@@ -109,7 +115,7 @@ def test_a_different_path_is_always_read(env) -> None:
     _write(env, "work/b.txt", "same\n")
     worker.get_file("e", "/work/a.txt")
     out = worker.get_file("e", "/work/b.txt")
-    assert out["content"] == "same\n", (
+    assert _lines(out["content"]) == ["same"], (
         "two files with identical content are still two files"
     )
 
@@ -128,7 +134,7 @@ def test_a_new_attempt_sees_the_content_again(env) -> None:
 
     out = worker.get_file("e", "/work/a.txt")
     assert out.get("unchanged") is not True
-    assert out["content"] == "one\n"
+    assert _lines(out["content"]) == ["one"]
 
 
 def test_the_attempt_loop_resets_before_every_attempt() -> None:

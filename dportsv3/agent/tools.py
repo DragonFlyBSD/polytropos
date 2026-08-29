@@ -55,8 +55,15 @@ _TOOLS: list[dict] = [
           "List a directory's entries in the writable overlay.",
           {"path": _STR, "max_entries": _INT}, ["path"]),
     _tool("get_file",
-          "Read up to limit_lines lines from a file starting at zero-indexed "
-          "offset_lines. Default 200 lines from start. **Prefer grep first** to "
+          "Read a window of a file. Give either start_line/end_line (1-indexed, "
+          "inclusive — 'lines 201-212') or offset_lines/limit_lines (0-indexed "
+          "offset plus a count). Default 200 lines from the start. "
+          "**Content comes back line-numbered, cat -n style: the file's own "
+          "line number, a tab, then the line.** A window starting at line 166 "
+          "begins at 166, not 1 — so you never need to count lines yourself. "
+          "Those numbers are display only: strip the number and the tab before "
+          "passing any of it to put_file, which refuses content that still "
+          "carries them. **Prefer grep first** to "
           "narrow down before reading — whole-file reads on large files (e.g. "
           "Makefile.in, configure) inflate every subsequent turn's prompt by "
           "the file's full size. Returns encoding=text (UTF-8, line-windowed) "
@@ -71,11 +78,16 @@ _TOOLS: list[dict] = [
           "rather than asking again.",
           {"path": _STR,
            "offset_lines": _INT,
-           "limit_lines": _INT},
+           "limit_lines": _INT,
+           "start_line": _INT,
+           "end_line": _INT},
           ["path"]),
     _tool("put_file",
           "Write a file. encoding='text' (UTF-8, default) or 'base64' (binary). "
-          "expected_sha256 is an optimistic lock — pass the sha256 from a prior get_file.",
+          "expected_sha256 is an optimistic lock — pass the sha256 from a prior get_file. "
+          "Write the file's real content: get_file's line numbers are display "
+          "only, and a write that still has them is refused rather than baked "
+          "into the file.",
           {"path": _STR, "content": _STR,
            "encoding": {"type": "string", "enum": ["text", "base64"]},
            "expected_sha256": _STR},
