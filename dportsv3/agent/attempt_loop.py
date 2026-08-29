@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +66,27 @@ def _parse_rebuild_proof(text: str) -> dict | None:
     if not isinstance(proof, dict):
         return None
     return proof
+
+
+#: Smallest share of the total budget an attempt after the first may
+#: start on. Below this a retry cannot reach useful work: on the
+#: measured glib20 run the cheapest path to the first real tool call
+#: (make_extract, turn 4) had already cost 37,227 billable of 120,000 —
+#: about 31% — and a retry that cannot get that far only re-establishes
+#: context before dying. Overridable for tiers whose attempts are
+#: cheaper than the ones this was measured on.
+MIN_ATTEMPT_BUDGET_FRACTION = 0.25
+
+
+def _min_attempt_budget(budget: int) -> int:
+    """Billable tokens a retry must have available to be worth starting."""
+    try:
+        frac = float(os.environ.get("DP_HARNESS_MIN_ATTEMPT_BUDGET_FRACTION",
+                                    MIN_ATTEMPT_BUDGET_FRACTION))
+    except ValueError:
+        frac = MIN_ATTEMPT_BUDGET_FRACTION
+    frac = min(max(frac, 0.0), 1.0)
+    return int(budget * frac)
 
 
 def _failure_context_message(attempt_idx: int, prev_text: str) -> dict:
@@ -140,6 +162,32 @@ def run(
 
         if budget and remaining <= 0:
             log.warning("attempt_loop: budget already exhausted before attempt %d", attempt_idx)
+            return PatchResult(
+                status="budget-exhausted",
+                final_text=final_text,
+                usage=total_usage,
+                attempts=attempts,
+                proof=None,
+            )
+
+        # A retry needs enough budget to be worth starting. Measured on
+        # devel/glib20: attempt 2 began with 8,446 billable remaining,
+        # spent 12,018 over five turns re-reading files attempt 1 had
+        # already read, and overran on the turn it was always going to
+        # overrun on. Nothing it did could have survived.
+        #
+        # The floor is a fraction of the whole budget rather than an
+        # absolute, because the budget is per-tier: a bigger allowance
+        # implies bigger attempts, so the "too small to bother" point
+        # scales with it. Attempt 1 is never gated — it is the attempt
+        # the budget was granted for.
+        if budget and attempt_idx > 1 and remaining < _min_attempt_budget(budget):
+            log.warning(
+                "attempt_loop: not starting attempt %d — %d billable left is "
+                "below the %d floor; spending it would re-derive context "
+                "rather than finish the work",
+                attempt_idx, remaining, _min_attempt_budget(budget),
+            )
             return PatchResult(
                 status="budget-exhausted",
                 final_text=final_text,
