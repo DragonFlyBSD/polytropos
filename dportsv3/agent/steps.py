@@ -325,6 +325,7 @@ class TriageStep:
                 custom_llm_provider=custom_llm_provider,
                 timeout=timeout,
                 max_snippet_rounds=max_snippet_rounds,
+                reasoning=_reasoning_for("triage"),
                 on_event=_triage_event,
                 session_dump=_sd.make_dumper(
                     bundle_id=ctx.bundle_id or job.get("bundle_id"),
@@ -598,6 +599,31 @@ class TriageStep:
                 except Exception:
                     pass
         shutil.rmtree(materialized_tmp, ignore_errors=True)
+
+
+# --- thinking-mode control (TEMPORARY) --------------------------------
+#
+# Reasoning is ~50% of billable spend and the API can turn it down, but
+# our pinned litellm 1.65.0 cannot deliver the parameter. These knobs
+# exist so the openai-SDK backend in llm.py can, and should be REMOVED
+# once py311-litellm reaches >= 1.93.2 (the first release that maps
+# reasoning_effort="none" to thinking disabled) — at which point the
+# ordinary `reasoning_effort` parameter covers every provider and this
+# per-role plumbing is redundant. Blocked on poly-170 (rustc >= 1.89).
+#
+# Values: "none" (off), "low", "high", "max", or unset for the
+# provider default.
+def _reasoning_for(role: str) -> str | None:
+    """Thinking-mode setting for ``role`` ("triage" or "patch")."""
+    value = os.environ.get(f"DP_HARNESS_{role.upper()}_REASONING")
+    if value is None:
+        # Triage classifies a failure against a fixed schema; the patch
+        # loop reasons about code. Default the cheap one off and leave
+        # the expensive one low rather than off, so a regression in
+        # patch quality is a smaller step to walk back.
+        return {"triage": "none", "patch": "low"}.get(role)
+    value = value.strip()
+    return value or None
 
 
 def _try_write_proposed_fix(
@@ -982,6 +1008,7 @@ class PatchAttemptStep:
                 api_key=api_key,
                 custom_llm_provider=custom_llm_provider,
                 timeout=timeout,
+                reasoning=_reasoning_for("patch"),
                 on_event=dispatcher,
                 origin=origin,
                 session_dump=_sd.make_dumper(

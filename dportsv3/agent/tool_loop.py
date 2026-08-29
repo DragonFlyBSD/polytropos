@@ -90,6 +90,7 @@ def run(
     on_event=None,
     attempt_idx: int = 1,
     tool_whitelist: set[str] | frozenset[str] | None = None,
+    reasoning: str | None = None,
 ) -> tuple[Response, Usage, bool]:
     """Drive the LLM through tool calls until it returns text-only.
 
@@ -138,6 +139,7 @@ def run(
             api_key=api_key,
             custom_llm_provider=custom_llm_provider,
             timeout=timeout,
+            reasoning=reasoning,
         )
         total.add(response.usage)
         final = response

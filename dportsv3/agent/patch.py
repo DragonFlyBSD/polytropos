@@ -20,6 +20,7 @@ def run(
     on_event=None,
     origin: str | None = None,
     session_dump=None,
+    reasoning: str | None = None,
 ) -> PatchResult:
     """Run the patch agent for one bundle. Returns the PatchResult.
 
@@ -50,4 +51,5 @@ def run(
         system_prompt=prompts.PATCH_SYSTEM,
         tool_whitelist=tools.patch_tool_names(),
         session_dump=session_dump,
+        reasoning=reasoning,
     )

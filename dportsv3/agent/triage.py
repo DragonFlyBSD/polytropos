@@ -88,6 +88,7 @@ def run(
     max_snippet_rounds: int | None = None,
     on_event=None,
     session_dump=None,
+    reasoning: str | None = None,
 ) -> TriageResult:
     """Run the triage flow end-to-end for one bundle.
 
@@ -119,6 +120,7 @@ def run(
             api_key=api_key,
             custom_llm_provider=custom_llm_provider,
             timeout=timeout,
+            reasoning=reasoning,
         )
         total_usage.add(response.usage)
         response_text = response.text

@@ -64,3 +64,4 @@
 {"id":"int-7abdd9a70877b3bf2af89c6e8501cef3","kind":"field_change","created_at":"2026-08-28T12:14:59.064891Z","actor":"Fred [bot]","issue_id":"poly-7eh","extra":{"field":"priority","new_value":"2","old_value":"1"}}
 {"id":"int-f723bbe131fd07c9cea6fd73dbab5c09","kind":"field_change","created_at":"2026-08-29T12:03:12.11479Z","actor":"Fred [bot]","issue_id":"poly-cx6","extra":{"field":"priority","new_value":"1","old_value":"3"}}
 {"id":"int-878c88d39fd3c5106337529a5e1df660","kind":"field_change","created_at":"2026-08-29T12:54:56.739006Z","actor":"Fred [bot]","issue_id":"poly-cx6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-a755cf130db5a15918f8f970743de220","kind":"field_change","created_at":"2026-08-29T14:21:37.797242Z","actor":"Fred [bot]","issue_id":"poly-3f9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
