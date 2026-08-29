@@ -170,11 +170,11 @@ def test_precheck_fails_when_no_models_set(tmp_path, policy_file, monkeypatch):
     ctx.state["policy_path"] = str(policy_file)
     readiness = PatchAttemptStep().precheck(ctx)
     assert readiness.status == "fail"
-    assert "neither DP_HARNESS_PATCH_MODEL nor DP_HARNESS_TRIAGE_MODEL" in readiness.reason
+    assert "neither llm.patch.model nor llm.triage.model" in readiness.reason
 
 
-def test_precheck_uses_patch_model(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub-patch")
+def test_precheck_uses_patch_model(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.patch.model", "stub-patch")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, log_rec = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     ctx.state["policy_path"] = str(policy_file)
@@ -185,8 +185,8 @@ def test_precheck_uses_patch_model(tmp_path, policy_file, monkeypatch):
     assert log_rec.entries == []
 
 
-def test_precheck_falls_back_to_triage_model_with_warn(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_TRIAGE_MODEL", "stub-triage")
+def test_precheck_falls_back_to_triage_model_with_warn(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.triage.model", "stub-triage")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, log_rec = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     ctx.state["policy_path"] = str(policy_file)
@@ -203,8 +203,8 @@ def test_precheck_falls_back_to_triage_model_with_warn(tmp_path, policy_file, mo
 # --- dev_env resolution -----------------------------------------------------
 
 
-def test_precheck_dev_env_from_job_field(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_dev_env_from_job_field(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     ctx, _ = _ctx(tmp_path, job={
         "tier": "AUTO", "origin": "devel/foo", "dev_env": "from-job-env",
     })
@@ -214,8 +214,8 @@ def test_precheck_dev_env_from_job_field(tmp_path, policy_file, monkeypatch):
     assert ctx.state["env"] == "from-job-env"
 
 
-def test_precheck_dev_env_from_cli_flag(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_dev_env_from_cli_flag(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "from-cli")
     ctx, _ = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     ctx.state["policy_path"] = str(policy_file)
@@ -224,8 +224,8 @@ def test_precheck_dev_env_from_cli_flag(tmp_path, policy_file, monkeypatch):
     assert ctx.state["env"] == "from-cli"
 
 
-def test_precheck_fails_without_dev_env(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_fails_without_dev_env(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     ctx, _ = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     ctx.state["policy_path"] = str(policy_file)
     readiness = PatchAttemptStep().precheck(ctx)
@@ -236,8 +236,8 @@ def test_precheck_fails_without_dev_env(tmp_path, policy_file, monkeypatch):
 # --- tier resolution --------------------------------------------------------
 
 
-def test_precheck_tier_from_job_field(tmp_path, policy_file, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_tier_from_job_field(set_setting, tmp_path, policy_file, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(tmp_path, job={
         "tier": "ASSIST", "origin": "devel/foo",
@@ -248,12 +248,12 @@ def test_precheck_tier_from_job_field(tmp_path, policy_file, monkeypatch):
     assert ctx.state["tier"].name == "ASSIST"
 
 
-def test_precheck_tier_fallback_to_decide_for_hand_fired_job(
+def test_precheck_tier_fallback_to_decide_for_hand_fired_job(set_setting, 
     tmp_path, policy_file, monkeypatch,
 ):
     """No 'tier' field → parse triage.md → decide() resolves it.
     Empty history + None env_health → legacy tier_for semantics."""
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
 
     triage_md = (
@@ -273,12 +273,12 @@ def test_precheck_tier_fallback_to_decide_for_hand_fired_job(
     assert ctx.state["tier"].name == "AUTO"
 
 
-def test_precheck_tier_fallback_with_missing_triage_md_lands_at_manual(
+def test_precheck_tier_fallback_with_missing_triage_md_lands_at_manual(set_setting, 
     tmp_path, policy_file, monkeypatch,
 ):
     """Hand-fired patch with no triage.md → empty classification
     → unknown → MANUAL via the policy default."""
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(
         tmp_path,
@@ -291,10 +291,10 @@ def test_precheck_tier_fallback_with_missing_triage_md_lands_at_manual(
     assert ctx.state["tier"].name == "MANUAL"
 
 
-def test_precheck_tier_fallback_bogus_classification_lands_at_manual(
+def test_precheck_tier_fallback_bogus_classification_lands_at_manual(set_setting, 
     tmp_path, policy_file, monkeypatch,
 ):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(
         tmp_path,
@@ -307,12 +307,12 @@ def test_precheck_tier_fallback_bogus_classification_lands_at_manual(
     assert ctx.state["tier"].name == "MANUAL"
 
 
-def test_precheck_unknown_tier_string_falls_back_to_decide(
+def test_precheck_unknown_tier_string_falls_back_to_decide(set_setting, 
     tmp_path, policy_file, monkeypatch,
 ):
     """If job['tier'] is set but not a known tier name, fall back
     to parsing triage.md (don't crash, don't silently accept)."""
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(
         tmp_path,
@@ -328,8 +328,8 @@ def test_precheck_unknown_tier_string_falls_back_to_decide(
 # --- policy load -------------------------------------------------------------
 
 
-def test_precheck_fails_when_policy_path_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_fails_when_policy_path_missing(set_setting, tmp_path, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     # Intentionally don't set ctx.state["policy_path"]
@@ -338,8 +338,8 @@ def test_precheck_fails_when_policy_path_missing(tmp_path, monkeypatch):
     assert "policy_path missing" in readiness.reason
 
 
-def test_precheck_fails_when_policy_file_unreadable(tmp_path, monkeypatch):
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub")
+def test_precheck_fails_when_policy_file_unreadable(set_setting, tmp_path, monkeypatch):
+    set_setting("llm.patch.model", "stub")
     monkeypatch.setattr(_runner, "_CLI_ENV_DEFAULT", "test-env")
     ctx, _ = _ctx(tmp_path, job={"tier": "AUTO", "origin": "devel/foo"})
     ctx.state["policy_path"] = "/nonexistent/policy.json"

@@ -87,14 +87,27 @@ DEFAULT_MAX_ITERATIONS = 3
 # Resolved lazily, not at import: $DPORTSV3_CONFIG_DIR is environment, and
 # baking it into a module-level constant meant tests (and any caller that
 # sets it after import) silently got the value from import time.
-def _policy_path() -> str:
-    override = os.environ.get("DP_HARNESS_POLICY", "").strip()
+def _policy_path() -> str | None:
+    """An explicit agentic-policy.json to read, or None for the settings.
+
+    None is now the normal answer: the tiers, the classification map and
+    the confidence floor live in ``[policy]`` in the one settings file,
+    with the same values the packaged JSON carried. This exists for the
+    operator who points one run at a different policy file, and for an
+    install that still has a hand-written agentic-policy.json next to
+    its config.
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+    override = settings.get_str("policy.file")
     if override:
         # Take the override as given, without resolving the default — an
         # operator pointing at their own file should not be able to trip
         # over a missing packaged template.
         return override
-    return str(paths.require_config_file("agentic-policy.json"))
+    legacy = paths.config_dir()
+    if legacy is not None and (legacy / "agentic-policy.json").is_file():
+        return str(legacy / "agentic-policy.json")
+    return None
 
 # Heartbeat interval (seconds)
 HEARTBEAT_INTERVAL = 5
@@ -376,9 +389,10 @@ def _looks_env_suspicious(result: dict) -> bool:
 
 def get_state_db_path(queue_root: Path) -> Path:
     """Get path to state.db used for lifecycle/status writes."""
-    env_db = os.environ.get("DPORTSV3_STATE_DB")
-    if env_db:
-        return Path(env_db)
+    from dportsv3 import settings  # noqa: PLC0415
+    configured = settings.get("paths.state_db")
+    if configured and str(configured):
+        return Path(configured)
     # Queue is at <logs>/evidence/queue/, state.db is at <logs>/evidence/state.db
     return queue_root.parent / "state.db"
 
@@ -1707,10 +1721,11 @@ def activity_log(
             )
             
             # Prune to keep only last N entries (N comes from
-            # DP_ACTIVITY_LOG_MAX, default 5000). The previous cap of
+            # runner.activity_log_max, default 5000). The previous cap of
             # 10 made the UI's activity page useless and dropped
             # tool-call traces before the next page-refresh.
-            cap = max(50, int(os.environ.get("DP_ACTIVITY_LOG_MAX", "5000")))
+            from dportsv3 import settings  # noqa: PLC0415
+            cap = max(50, int(settings.get("runner.activity_log_max")))
             _state_db_conn.execute(
                 """DELETE FROM activity_log WHERE id NOT IN (
                      SELECT id FROM activity_log ORDER BY id DESC LIMIT ?
@@ -2101,7 +2116,8 @@ def build_snippet_feedback(bundle_dir: Path, round_num: int) -> str:
     
     # Add summary
     total_rounds = manifest.get("total_rounds", 0)
-    max_rounds = int(os.environ.get("DP_HARNESS_MAX_SNIPPET_ROUNDS", "5"))
+    from dportsv3 import settings  # noqa: PLC0415
+    max_rounds = int(settings.get("runner.max_snippet_rounds"))
     remaining_rounds = max_rounds - total_rounds
     
     parts.append(f"**Snippet rounds used:** {total_rounds}/{max_rounds} (remaining: {remaining_rounds})")
@@ -2288,8 +2304,9 @@ def build_patch_payload(
                 break
 
     # Automation-context inputs.
-    window_hours = int(os.environ.get("DP_HARNESS_ATTEMPT_WINDOW_HOURS", "2"))
-    max_attempts_cap = int(os.environ.get("DP_HARNESS_MAX_PATCH_ATTEMPTS", "3"))
+    from dportsv3 import settings  # noqa: PLC0415
+    window_hours = int(settings.get("runner.attempt_window_hours"))
+    max_attempts_cap = int(settings.get("runner.max_patch_attempts"))
     prior_failures = (
         _load_port_history(target, origin, window_hours).recent_failures
         if origin else 0
@@ -4897,8 +4914,9 @@ def main(argv: list[str] | None = None) -> int:
         from dportsv3.agent.playbooks import find_playbooks_dir  # noqa: PLC0415
         playbooks_dir = find_playbooks_dir()
 
-    triage_model = os.environ.get("DP_HARNESS_TRIAGE_MODEL") or "<unset>"
-    patch_model_env = os.environ.get("DP_HARNESS_PATCH_MODEL")
+    from dportsv3 import settings  # noqa: PLC0415
+    triage_model = settings.get_opt("llm.triage.model") or "<unset>"
+    patch_model_env = settings.get_opt("llm.patch.model")
     if patch_model_env:
         patch_model = patch_model_env
     elif triage_model != "<unset>":
@@ -4949,7 +4967,7 @@ def main(argv: list[str] | None = None) -> int:
     _last_health_reason = ""
     _last_no_env_reason = ""
     health_cache_seconds = int(
-        os.environ.get("DP_HARNESS_HEALTH_CACHE_SECONDS", "60")
+        settings.get("runner.health_cache_seconds")
     )
 
     def _gate_blocked() -> bool:

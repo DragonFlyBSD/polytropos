@@ -35,5 +35,19 @@ def tracker_url() -> str:
     Callers join paths onto this, so a trailing slash produces ``//v1``
     and a 404 that looks like a missing endpoint rather than a config
     typo. Stripped once, here.
+
+    Prefers ``tracker.url`` from the settings, and falls back to the
+    environment when the settings cannot be imported at all. That is not
+    defensive padding: this module is reached from
+    ``artifact_store_client`` running inside a build chroot, where the
+    only thing guaranteed is the interpreter — no dportsv3, no
+    dports_dev_env, no settings file. The environment is how the value
+    crosses that boundary, which is why ``tracker.url`` is one of the few
+    settings that keeps an override.
     """
-    return os.environ.get(TRACKER_URL_ENV, DEFAULT_TRACKER_URL).rstrip("/")
+    try:
+        from dportsv3 import settings  # noqa: PLC0415
+        value = settings.get_str("tracker.url")
+    except Exception:  # noqa: BLE001 — see the docstring: no deps in a chroot
+        value = os.environ.get(TRACKER_URL_ENV, "").strip()
+    return (value or DEFAULT_TRACKER_URL).rstrip("/")

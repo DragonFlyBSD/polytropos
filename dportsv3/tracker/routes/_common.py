@@ -144,44 +144,29 @@ class RouteContext:
 
 
 def _chat_llm_config() -> dict[str, Any] | None:
-    """Resolve the chat model config from ``DP_HARNESS_CHAT_*`` env.
+    """Resolve the chat model config from the ``[llm.chat]`` settings.
 
-    Returns ``None`` when ``DP_HARNESS_CHAT_MODEL`` is unset — this is the
+    Returns ``None`` when ``llm.chat.model`` is empty — this is the
     feature gate. Callers treat ``None`` as "chat disabled" (503 on the
-    endpoint, hidden panel in the UI). The other three vars mirror the
-    runner's per-flow config: ``*_API_KEY``, ``*_API_BASE`` (custom
-    endpoint), ``*_PROVIDER`` (force litellm's provider code path).
+    endpoint, hidden panel in the UI). The rest mirrors the runner's
+    per-role config: a key file, an optional custom endpoint, and an
+    optional provider code path.
     """
-    model = os.environ.get("DP_HARNESS_CHAT_MODEL", "").strip()
+    from dportsv3 import settings  # noqa: PLC0415
+
+    model = settings.get_opt("llm.chat.model")
     if not model:
         return None
-
-    def _clean(name: str) -> str | None:
-        v = os.environ.get(name, "").strip()
-        return v or None
-
-    try:
-        timeout = int(os.environ.get("DP_HARNESS_CHAT_TIMEOUT", "120") or "120")
-    except ValueError:
-        timeout = 120
-    # Bound the assembled artifact+transcript context. Default suits a
-    # modern 128K-context model; operators on a smaller-context chat
-    # model can shrink it. Assembly + the default live in fix_chat.
-    from dportsv3.agent import fix_chat  # noqa: PLC0415
-    try:
-        context_cap = int(
-            os.environ.get("DP_HARNESS_CHAT_CONTEXT_CAP", "")
-            or fix_chat.DEFAULT_CONTEXT_CAP
-        )
-    except ValueError:
-        context_cap = fix_chat.DEFAULT_CONTEXT_CAP
     return {
         "model": model,
-        "api_key": _clean("DP_HARNESS_CHAT_API_KEY"),
-        "api_base": _clean("DP_HARNESS_CHAT_API_BASE"),
-        "custom_llm_provider": _clean("DP_HARNESS_CHAT_PROVIDER"),
-        "timeout": timeout,
-        "context_cap": max(8 * 1024, context_cap),
+        "api_key": settings.read_secret("llm.chat.api_key_file"),
+        "api_base": settings.get_opt("llm.chat.api_base"),
+        "custom_llm_provider": settings.get_opt("llm.chat.provider"),
+        "timeout": int(settings.get("llm.chat.timeout")),
+        # Bound the assembled artifact+transcript context. The default
+        # suits a modern 128K-context model; a smaller-context chat model
+        # wants this turned down. Assembly lives in fix_chat.
+        "context_cap": max(8 * 1024, int(settings.get("llm.chat.context_cap"))),
     }
 
 

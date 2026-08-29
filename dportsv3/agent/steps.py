@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from dportsv3 import settings
+
 from .lifecycle import JobEvent
 from .step import Step, StepCtx, StepOutcome, StepReadiness
 
@@ -227,7 +229,7 @@ class TriageStep:
     name: str = "triage"
 
     def precheck(self, ctx: StepCtx) -> StepReadiness:
-        model = os.environ.get("DP_HARNESS_TRIAGE_MODEL")
+        model = settings.get_opt("llm.triage.model")
         if not model:
             return StepReadiness(
                 status="fail",
@@ -256,12 +258,13 @@ class TriageStep:
         bundle_dir = ctx.bundle_dir
         bundle_id = ctx.bundle_id or job.get("bundle_id")
 
-        # Tunables (env-resolved per call — same as legacy).
-        api_base = os.environ.get("DP_HARNESS_TRIAGE_API_BASE") or None
-        api_key = os.environ.get("DP_HARNESS_TRIAGE_API_KEY") or None
-        custom_llm_provider = os.environ.get("DP_HARNESS_TRIAGE_PROVIDER") or None
-        timeout = int(os.environ.get("DP_HARNESS_TIMEOUT", "120"))
-        max_snippet_rounds = int(os.environ.get("DP_HARNESS_MAX_SNIPPET_ROUNDS", "5"))
+        # Tunables, resolved per call so a `config` edit lands on the next
+        # job rather than the next restart.
+        api_base = settings.get_opt("llm.triage.api_base")
+        api_key = settings.read_secret("llm.triage.api_key_file")
+        custom_llm_provider = settings.get_opt("llm.triage.provider")
+        timeout = int(settings.get("llm.triage.timeout"))
+        max_snippet_rounds = int(settings.get("runner.max_snippet_rounds"))
 
         # Materialize the bundle if it arrived via artifact-store
         # (no on-disk dir). Stash tempdir in state so record() can
@@ -436,19 +439,17 @@ class TriageStep:
             return _err(f"policy load failed: {exc}", services, job_path,
                         JobEvent.TRIAGE_FAIL)
 
-        max_attempts = int(os.environ.get("DP_HARNESS_MAX_PATCH_ATTEMPTS", "3"))
-        window_hours = int(os.environ.get("DP_HARNESS_ATTEMPT_WINDOW_HOURS", "2"))
-        bundle_backstop = int(os.environ.get("DP_HARNESS_BUNDLE_BACKSTOP", "10"))
-        signature_stickiness = int(
-            os.environ.get("DP_HARNESS_SIGNATURE_STICKINESS", "3")
-        )
+        max_attempts = int(settings.get("runner.max_patch_attempts"))
+        window_hours = int(settings.get("runner.attempt_window_hours"))
+        bundle_backstop = int(settings.get("runner.bundle_backstop"))
+        signature_stickiness = int(settings.get("runner.signature_stickiness"))
         target_value = job.get("target", "") or ""
         history = services.load_port_history(target_value, origin, window_hours)
 
         # env + is_slave were resolved above (before the convert-defer).
         env_health = None
         if runner_env_name:
-            health_ttl = int(os.environ.get("DP_HARNESS_HEALTH_CACHE_SECONDS", "60"))
+            health_ttl = int(settings.get("runner.health_cache_seconds"))
             try:
                 env_health = services.probe_health_cached(runner_env_name, health_ttl)
             except Exception:
@@ -614,16 +615,24 @@ class TriageStep:
 # Values: "none" (off), "low", "high", "max", or unset for the
 # provider default.
 def _reasoning_for(role: str) -> str | None:
-    """Thinking-mode setting for ``role`` ("triage" or "patch")."""
-    value = os.environ.get(f"DP_HARNESS_{role.upper()}_REASONING")
-    if value is None:
-        # Triage classifies a failure against a fixed schema; the patch
-        # loop reasons about code. Default the cheap one off and leave
-        # the expensive one low rather than off, so a regression in
-        # patch quality is a smaller step to walk back.
-        return {"triage": "none", "patch": "low"}.get(role)
-    value = value.strip()
-    return value or None
+    """Thinking-mode setting for ``role`` ("triage" or "patch").
+
+    The defaults live in the settings table: triage classifies a failure
+    against a fixed schema and does not need to think, while the patch
+    loop reasons about code and gets "low" rather than off, so a
+    regression in patch quality is a smaller step to walk back.
+    """
+    path = f"llm.{role}.reasoning"
+    if not settings.schema().has(path):
+        return None
+    # An override set to an EMPTY value asks for the provider's own
+    # default, which is distinct from unsetting it (that gives ours).
+    # The schema reads empty as unset, so this one case is read
+    # directly from the environment.
+    override = os.environ.get(f"DP_HARNESS_{role.upper()}_REASONING")
+    if override is not None and not override.strip():
+        return None
+    return settings.get_opt(path)
 
 
 def _try_write_proposed_fix(
@@ -777,17 +786,18 @@ class PatchAttemptStep:
     name: str = "patch"
 
     def precheck(self, ctx: StepCtx) -> StepReadiness:
-        # Model resolution — DP_HARNESS_PATCH_MODEL takes precedence;
-        # fall back to DP_HARNESS_TRIAGE_MODEL with a warning so the
-        # operator knows patch quality may be lower.
+        # Model resolution — llm.patch.model takes precedence; fall back
+        # to llm.triage.model with a warning so the operator knows patch
+        # quality may be lower.
         services: PatchServices = ctx.state["services"]
-        model = os.environ.get("DP_HARNESS_PATCH_MODEL")
+        model = settings.get_opt("llm.patch.model")
         if not model:
-            model = os.environ.get("DP_HARNESS_TRIAGE_MODEL")
+            model = settings.get_opt("llm.triage.model")
             if not model:
                 return StepReadiness(
                     status="fail",
-                    reason="neither DP_HARNESS_PATCH_MODEL nor DP_HARNESS_TRIAGE_MODEL set",
+                    reason="neither llm.patch.model nor llm.triage.model is set "
+                           "in polytropos.toml",
                 )
             services.log(
                 ctx.queue_root, "WARN",
@@ -811,10 +821,15 @@ class PatchAttemptStep:
 
         # Policy + tier resolution.
         from dportsv3.agent import policy as harness_policy  # noqa: PLC0415
-        policy_path = ctx.state.get("policy_path")
-        if not policy_path:
+        # None is the normal value now: the policy tables live in the
+        # settings, and a path is only present when an operator named an
+        # explicit agentic-policy.json. So the guard is "was this key set
+        # at all", not "is it truthy" — the latter turned the ordinary
+        # case into a refused job.
+        if "policy_path" not in ctx.state:
             return StepReadiness(status="fail",
                                  reason="policy_path missing from ctx.state")
+        policy_path = ctx.state["policy_path"]
         try:
             pol = harness_policy.load_policy(policy_path)
         except Exception as exc:
@@ -881,17 +896,15 @@ class PatchAttemptStep:
         tier = ctx.state["tier"]
         bundle_id = ctx.bundle_id or job.get("bundle_id")
 
-        # Companion vars with triage-fallback chain.
-        api_base = (os.environ.get("DP_HARNESS_PATCH_API_BASE")
-                    or os.environ.get("DP_HARNESS_TRIAGE_API_BASE")
-                    or None)
-        api_key = (os.environ.get("DP_HARNESS_PATCH_API_KEY")
-                   or os.environ.get("DP_HARNESS_TRIAGE_API_KEY")
-                   or None)
-        custom_llm_provider = (os.environ.get("DP_HARNESS_PATCH_PROVIDER")
-                               or os.environ.get("DP_HARNESS_TRIAGE_PROVIDER")
-                               or None)
-        timeout = int(os.environ.get("DP_HARNESS_PATCH_TIMEOUT", "600"))
+        # Companion settings, each falling back to triage's when unset —
+        # the common case is one provider serving both roles.
+        api_base = (settings.get_opt("llm.patch.api_base")
+                    or settings.get_opt("llm.triage.api_base"))
+        api_key = (settings.read_secret("llm.patch.api_key_file")
+                   or settings.read_secret("llm.triage.api_key_file"))
+        custom_llm_provider = (settings.get_opt("llm.patch.provider")
+                               or settings.get_opt("llm.triage.provider"))
+        timeout = int(settings.get("llm.patch.timeout"))
 
         services.activity_log(
             queue_root, "api_call_start",

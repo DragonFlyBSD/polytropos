@@ -19,14 +19,20 @@ def test_tracker_missing_action_returns_1(capsys: pytest.CaptureFixture[str]) ->
     assert "Missing tracker action" in out.err
 
 
-def test_tracker_start_build_requires_server_url(
+def test_tracker_start_build_falls_back_to_the_single_knob(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """With nothing configured the CLI targets the same default the
+    runner does, rather than refusing. It used to be the one caller that
+    demanded an explicit URL, which meant the same unset deployment
+    behaved differently depending on which entry point you used."""
+    from dportsv3.common.endpoints import DEFAULT_TRACKER_URL
+
     code = main(["tracker", "start-build", "--target", "@main", "--type", "release"])
     out = capsys.readouterr()
 
-    assert code == 1
-    assert "Tracker server URL required" in out.err
+    assert code == 1, "nothing is listening, so it still fails"
+    assert DEFAULT_TRACKER_URL in out.err or "Connection refused" in out.err
 
 
 def test_tracker_start_build_success_path(
@@ -254,11 +260,11 @@ def test_tracker_get_bundle_uses_env_var_server_when_omitted(
     assert captured["server"] == "http://from-env:9999"
 
 
-def test_tracker_get_bundle_errors_without_server(capsys):
+def test_tracker_get_bundle_uses_the_default_server(capsys):
     code = main(["tracker", "get-bundle", "b-1"])
     err = capsys.readouterr().err
-    assert code == 1
-    assert "Tracker server URL required" in err
+    assert code == 1, "nothing is listening on the default"
+    assert "Tracker connection failed" in err
 
 
 def test_tracker_get_bundle_with_jobs_flag(monkeypatch, capsys):

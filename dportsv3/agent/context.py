@@ -49,15 +49,14 @@ from typing import Callable, Protocol, runtime_checkable
 # the failing log + a snippet of plist. Patch agent has the ``get_file``
 # tool to fetch the full content when it actually needs it; triage has
 # snippet rounds. Either way, the unbounded inline was wasteful.
-# Override via DP_HARNESS_CONTEXT_FILE_CAP (chars). Floored at 2048 —
-# below that the head+tail split has no room for meaningful context
-# around the truncation marker. Smaller values are clamped silently.
+# Set with runner.context_file_cap (chars). Floored at 2048 — below that
+# the head+tail split has no room for meaningful context around the
+# truncation marker. Smaller values are clamped silently.
 def _default_file_cap() -> int:
+    from dportsv3 import settings  # noqa: PLC0415
     try:
-        return max(2048, int(os.environ.get(
-            "DP_HARNESS_CONTEXT_FILE_CAP", "32768",
-        )))
-    except (TypeError, ValueError):
+        return max(2048, int(settings.get("runner.context_file_cap")))
+    except (TypeError, ValueError, settings.ConfigError):
         return 32768
 
 
@@ -67,10 +66,9 @@ def _truncate_head_tail(text: str, cap: int) -> str:
     the elided range. Head and tail get half the cap each (so the
     rendered output stays inside the cap modulo the marker line).
 
-    ``cap=0`` means "resolve from DP_HARNESS_CONTEXT_FILE_CAP at call
-    time" — this is the default for the section-level field so the
-    env var can be set after module import (e.g. by tests, or by
-    a runtime override).
+    ``cap=0`` means "resolve runner.context_file_cap at call time" —
+    the default for the section-level field, so the setting is read when
+    the text is rendered rather than when this module is imported.
     """
     if cap == 0:
         cap = _default_file_cap()

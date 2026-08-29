@@ -142,9 +142,9 @@ def test_dump_writes_gzipped_jsonl(monkeypatch):
     assert parsed[-1]["role"] == "assistant"
 
 
-def test_dump_caps_tool_content(monkeypatch):
+def test_dump_caps_tool_content(set_setting, monkeypatch):
     monkeypatch.setenv("DP_HARNESS_DUMP_SESSION", "1")
-    monkeypatch.setenv("DP_HARNESS_DUMP_SESSION_CAP", "2048")
+    set_setting("runner.dump_session_cap", int("2048"))
     saved = {}
 
     def fake_put(bundle_id, relpath, data, kind):

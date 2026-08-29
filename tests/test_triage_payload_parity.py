@@ -314,7 +314,7 @@ def test_snippet_round_includes_feedback_and_content(tmp_path, monkeypatch):
     assert actual.index("## Snippet Feedback") < actual.index("## Port Files")
 
 
-def test_large_pkg_plist_is_capped(tmp_path, monkeypatch):
+def test_large_pkg_plist_is_capped(set_setting, tmp_path, monkeypatch):
     """A big pkg-plist gets head+tail truncated instead of inlined
     whole. Without the cap, triage on python311-class ports lands at
     250K+ token prompts.
@@ -323,7 +323,7 @@ def test_large_pkg_plist_is_capped(tmp_path, monkeypatch):
     hard cap that runs before the section sees the file, so the
     head/tail boundary lands on the real content.
     """
-    monkeypatch.setenv("DP_HARNESS_CONTEXT_FILE_CAP", "4096")
+    set_setting("runner.context_file_cap", int("4096"))
     bdir = tmp_path / "bundle-large"
     _write(bdir / "logs" / "errors.txt", "boom\n")
     _write(bdir / "port" / "Makefile", "PORTNAME=big\n")
@@ -341,10 +341,10 @@ def test_large_pkg_plist_is_capped(tmp_path, monkeypatch):
     assert len(actual) < 8_000, f"expected capped, got {len(actual)} chars"
 
 
-def test_file_cap_env_var_large_disables_truncation(tmp_path, monkeypatch):
+def test_file_cap_env_var_large_disables_truncation(set_setting, tmp_path, monkeypatch):
     """A very large cap behaves like the legacy unbounded inline —
     useful for one-off bundles that need the full plist."""
-    monkeypatch.setenv("DP_HARNESS_CONTEXT_FILE_CAP", "10000000")
+    set_setting("runner.context_file_cap", int("10000000"))
     bdir = tmp_path / "bundle-uncapped"
     _write(bdir / "logs" / "errors.txt", "boom\n")
     _write(bdir / "port" / "Makefile", "PORTNAME=big\n")

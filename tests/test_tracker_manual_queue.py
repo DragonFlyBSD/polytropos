@@ -114,11 +114,11 @@ def seeded_state_db(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(seeded_state_db: Path, tmp_path: Path, monkeypatch) -> TestClient:
+def client(set_setting, seeded_state_db: Path, tmp_path: Path, monkeypatch) -> TestClient:
     # artifact_root only matters for blob-backend artifacts; the
     # handoff seeded above uses fs backend with an absolute fs_path
     # so artifact_root never gets consulted.
-    monkeypatch.setenv("DPORTSV3_ARTIFACT_ROOT", str(tmp_path))
+    set_setting("paths.artifact_root", str(tmp_path))
     app = create_app(seeded_state_db)
     with TestClient(app) as c:
         yield c

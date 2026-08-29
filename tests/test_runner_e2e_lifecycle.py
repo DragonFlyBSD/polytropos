@@ -72,7 +72,7 @@ class _StubPatchResult:
 
 
 @pytest.fixture
-def queue_env(tmp_path, monkeypatch):
+def queue_env(set_setting, tmp_path, monkeypatch):
     """A fully-wired throwaway queue + state.db + runner module state.
 
     Yields a dict with the queue_root, the open state-db connection,
@@ -119,8 +119,8 @@ def queue_env(tmp_path, monkeypatch):
                         lambda *a, **kw: [], raising=False)
 
     # Required env vars; values don't matter because we stub the LLM call.
-    monkeypatch.setenv("DP_HARNESS_TRIAGE_MODEL", "test/stub-triage")
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "test/stub-patch")
+    set_setting("llm.triage.model", "test/stub-triage")
+    set_setting("llm.patch.model", "test/stub-patch")
     monkeypatch.setattr(runner, "_CLI_ENV_DEFAULT", "test-env")
 
     yield {"queue_root": queue_root, "conn": conn, "db_path": db_path}

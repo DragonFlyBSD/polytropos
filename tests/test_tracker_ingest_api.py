@@ -25,8 +25,8 @@ def evidence_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def client(evidence_root: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("DPORTSV3_ARTIFACT_ROOT", str(evidence_root))
+def client(set_setting, evidence_root: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    set_setting("paths.artifact_root", str(evidence_root))
     evidence_root.mkdir(parents=True, exist_ok=True)
     app = create_app(evidence_root / "state.db")
     with TestClient(app) as test_client:

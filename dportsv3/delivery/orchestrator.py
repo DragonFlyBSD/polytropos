@@ -18,6 +18,7 @@ GitHub / GitLab specifics; concrete providers land in 11d-3 / 11d-4.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import sqlite3
@@ -31,7 +32,13 @@ from . import (
     ReviewProvider,
     ReviewRequestResult,
 )
-from .config import DeliveryConfig, load_delivery_config
+from .config import (
+    DeliveryConfig,
+    config_from_settings,
+    load_delivery_config,
+)
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -60,54 +67,74 @@ def resolve_config(
     target: str | None = None,
     env: dict[str, str] | None = None,
 ) -> DeliveryConfig | None:
-    """Locate + load delivery.toml from environment.
+    """Where delivery gets its configuration, and whether it has any.
 
-    Search order, and there are only two entries:
-      1. ``$DPORTSV3_DELIVERY_CONFIG`` — explicit path override.
-      2. ``$DPORTSV3_CONFIG_DIR/delivery.toml`` — the operator's file.
+    Order:
+      1. ``$DPORTSV3_DELIVERY_CONFIG`` — an explicit file path.
+      2. ``$DPORTSV3_CONFIG_DIR/delivery.toml`` — the standalone file,
+         still read where one exists so an install that predates the
+         settings file keeps delivering.
+      3. ``[delivery]`` in the settings file.
 
-    Anything else means delivery is not configured, and this returns
-    None (delivery disabled). Raises ``DeliveryConfigError`` only for a
-    file that EXISTS but is malformed, so a host that never opted into
-    delivery keeps accepting bundles.
+    Returns None when none of those names a provider, which the Accept
+    path renders as ``skip_reason=no_config``. ``DeliveryConfigError`` is
+    raised only for a configuration that exists and is wrong — a host
+    that never opted in keeps accepting bundles.
 
-    **No ``.sample`` tier and no bundled tier, deliberately.** This is
-    where ``paths.config_file`` and this function part company, and the
-    difference is not an oversight:
-
-    ``agentic-policy.json.sample`` is a usable default — a tier table
-    and a classification map that are correct for any host. Falling
-    back to it is right. A delivery config is the opposite: it names
-    one specific upstream repo, one specific local clone directory and
-    one specific credential. No bundled value can be correct for a host
-    nobody has configured, so there is nothing safe to fall back to.
-
-    Treating the bundled sample as a live default is what this function
-    used to do, and it was worse than a missing feature. With
-    ``$DPORTSV3_CONFIG_DIR`` unset — which is every packaged install,
-    because neither rc script sets it — the sample resolved, loaded,
-    and named ``type = "github"`` against the real upstream repo with a
-    ``clone_dir`` that does not exist on any host. The token lookup then
-    failed, so every single bundle Accept reported ``create_failed``
-    instead of taking the ``no_config`` skip a few lines below it, and
-    ``delivery_sync`` swallowed the same error and quietly stopped
-    reconciling merges.
-
-    The sample keeps its job as a template an operator copies. It is
-    just never loaded on their behalf.
+    **Nothing falls back to a bundled sample, deliberately.** This is
+    where the delivery config parts company with ``paths.config_file``,
+    and the difference is not an oversight: an ``agentic-policy`` sample
+    is a usable default for any host, while a delivery config names one
+    upstream repo, one local clone and one credential. Treating the
+    shipped sample as live is what this used to do, and with no config
+    dir set — every packaged install — it resolved a github provider
+    pointed at the real upstream repo, failed its token lookup, and
+    turned every single Accept into ``create_failed``.
     """
     env = env if env is not None else dict(os.environ)
+
     explicit = env.get("DPORTSV3_DELIVERY_CONFIG", "").strip()
     if explicit:
         path = Path(explicit)
-    else:
-        config_dir = env.get("DPORTSV3_CONFIG_DIR", "").strip()
-        if not config_dir:
+        if not path.is_file():
             return None
-        path = Path(config_dir) / "delivery.toml"
-    if not path.is_file():
+        return load_delivery_config(path, target=target, env=env)
+
+    config_dir = env.get("DPORTSV3_CONFIG_DIR", "").strip()
+    if config_dir:
+        legacy = Path(config_dir) / "delivery.toml"
+        if legacy.is_file():
+            _warn_legacy_delivery_file(legacy)
+            return load_delivery_config(legacy, target=target, env=env)
+
+    # The settings file. An empty delivery.type is the shipped default
+    # and means off, so it is answered here rather than by letting the
+    # validator raise about a missing required field.
+    from dportsv3 import settings  # noqa: PLC0415
+    if not settings.get_str("delivery.type"):
         return None
-    return load_delivery_config(path, target=target, env=env)
+    return config_from_settings(target=target, env=env)
+
+
+_legacy_warned = False
+
+
+def _warn_legacy_delivery_file(path: Path) -> None:
+    """Say once that a standalone delivery.toml is being read.
+
+    Not an error and not deprecated-and-broken: it still works, and it
+    wins over the settings so an operator who has one keeps exactly the
+    behaviour they had. But two files that can both configure delivery is
+    the thing this change exists to end, so the log says which one won.
+    """
+    global _legacy_warned
+    if _legacy_warned:
+        return
+    _legacy_warned = True
+    _LOG.warning(
+        "%s is being used; its settings take precedence over [delivery] "
+        "in polytropos.toml. `dportsv3 config migrate` folds it in.", path,
+    )
 
 
 def build_provider(cfg: DeliveryConfig) -> ReviewProvider:

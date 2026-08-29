@@ -77,9 +77,9 @@ def seeded(evidence_root: Path) -> Path:
 
 
 @pytest.fixture()
-def client(seeded: Path, evidence_root: Path,
+def client(set_setting, seeded: Path, evidence_root: Path,
            monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("DPORTSV3_ARTIFACT_ROOT", str(evidence_root))
+    set_setting("paths.artifact_root", str(evidence_root))
     app = create_app(seeded)
     with TestClient(app) as test_client:
         yield test_client

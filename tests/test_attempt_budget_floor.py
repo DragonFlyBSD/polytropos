@@ -46,26 +46,26 @@ def test_the_measured_case_is_refused() -> None:
     assert 8_446 < attempt_loop._min_attempt_budget(120_000)
 
 
-def test_the_floor_is_overridable(monkeypatch) -> None:
-    monkeypatch.setenv("DP_HARNESS_MIN_ATTEMPT_BUDGET_FRACTION", "0.5")
+def test_the_floor_is_overridable(set_setting, monkeypatch) -> None:
+    set_setting("runner.min_attempt_budget_fraction", float("0.5"))
     assert attempt_loop._min_attempt_budget(120_000) == 60_000
 
 
 @pytest.mark.parametrize("bad", ["", "abc", "not-a-number"])
-def test_a_malformed_override_falls_back(monkeypatch, bad) -> None:
+def test_a_malformed_override_falls_back(set_setting, monkeypatch, bad) -> None:
     """A typo in an operator's env must not disable the gate or crash
     a running patch loop."""
-    monkeypatch.setenv("DP_HARNESS_MIN_ATTEMPT_BUDGET_FRACTION", bad)
+    set_setting("runner.min_attempt_budget_fraction", bad)
     assert attempt_loop._min_attempt_budget(120_000) == 30_000
 
 
 @pytest.mark.parametrize("value,expected", [("-1", 0), ("2.0", 120_000)])
-def test_an_out_of_range_override_is_clamped(
+def test_an_out_of_range_override_is_clamped(set_setting, 
     monkeypatch, value, expected
 ) -> None:
     """0 disables the gate, 1.0 allows only a full budget. Anything
     outside that is meaningless rather than an error."""
-    monkeypatch.setenv("DP_HARNESS_MIN_ATTEMPT_BUDGET_FRACTION", value)
+    set_setting("runner.min_attempt_budget_fraction", value)
     assert attempt_loop._min_attempt_budget(120_000) == expected
 
 

@@ -56,7 +56,7 @@ def _bootstrap_to_triaging(conn, jid):
         lifecycle_apply(conn, jid, ev, detail={"bundle_id": "b-1"})
 
 
-def test_triage_failure_writes_handoff_and_sets_resolution(
+def test_triage_failure_writes_handoff_and_sets_resolution(set_setting, 
     tmp_path: Path, monkeypatch, state_db,
 ):
     _seed_bundle(state_db)
@@ -75,7 +75,7 @@ def test_triage_failure_writes_handoff_and_sets_resolution(
     # A model must be configured so the step passes its readiness
     # precheck and reaches the LLM call (the precheck-fail path is a
     # separate orchestrator-halt branch, out of scope here).
-    monkeypatch.setenv("DP_HARNESS_TRIAGE_MODEL", "test/model")
+    set_setting("llm.triage.model", "test/model")
 
     # Force the triage LLM call to raise → TriageStep._err → failed
     # outcome → orchestrator fires TRIAGE_FAIL (bundle_id injected).

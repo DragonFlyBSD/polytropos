@@ -58,12 +58,12 @@ def _no_artifact_store(monkeypatch):
 # --- minimal -----------------------------------------------------------------
 
 
-def test_minimal_patch_parity(tmp_path, monkeypatch):
+def test_minimal_patch_parity(set_setting, tmp_path, monkeypatch):
     """The minimal patch payload: Automation Context + Build Errors +
     Port Files header + Makefile + the multi-line patch footer."""
     bdir = _minimal_bundle(tmp_path)
-    monkeypatch.setenv("DP_HARNESS_ATTEMPT_WINDOW_HOURS", "2")
-    monkeypatch.setenv("DP_HARNESS_MAX_PATCH_ATTEMPTS", "3")
+    set_setting("runner.attempt_window_hours", int("2"))
+    set_setting("runner.max_patch_attempts", int("3"))
     job = {
         "origin": "devel/foo",
         "iteration": "1",

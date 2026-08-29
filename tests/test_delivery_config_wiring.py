@@ -107,8 +107,9 @@ def test_the_docstring_matches_the_code() -> None:
     implement, which is how the bundled fallback stayed unnoticed."""
     doc = " ".join((resolve_config.__doc__ or "").split())
     assert "<repo-root>/config/delivery.toml" not in doc
-    assert "only two entries" in doc
-    assert "deliberately" in doc, "the asymmetry has to be stated, not implied"
+    assert "Nothing falls back to a bundled sample, deliberately" in doc, (
+        "the asymmetry with paths.config_file has to be stated, not implied"
+    )
 
 
 # --- the services can find their config dir ---------------------------------

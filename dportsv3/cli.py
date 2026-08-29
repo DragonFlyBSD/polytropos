@@ -696,6 +696,41 @@ def _register_agent_queue_runner_parser(
 def _register_deploy_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the deploy command (rc.d scripts + service account)."""
     p = subparsers.add_parser(
+        "config", help="Show, check and migrate the settings")
+    sub = p.add_subparsers(dest="config_action")
+
+    show = sub.add_parser(
+        "show", help="Every setting, its value, and where the value came from")
+    show.add_argument(
+        "--changed", action="store_true",
+        help="Only settings that are not at their default")
+
+    get = sub.add_parser(
+        "get", help="Print one value, bare, for a script to capture")
+    get.add_argument("setting", help="Dotted path, e.g. paths.queue_root")
+
+    sub.add_parser(
+        "check", help="Validate the settings file without starting anything")
+
+    sub.add_parser(
+        "sample", help="Print a commented settings file, generated from the "
+                       "table the code reads")
+
+    migrate = sub.add_parser(
+        "migrate",
+        help="Fold polytropos.conf, harness.env and chat.env into "
+             "polytropos.toml. Leaves the originals in place.")
+    migrate.add_argument(
+        "--conf", default=None,
+        help="polytropos.conf to read (default: /usr/local/etc/polytropos.conf)")
+    migrate.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing polytropos.toml")
+    migrate.add_argument(
+        "--dry-run", action="store_true",
+        help="Print what would be written and change nothing")
+
+    p = subparsers.add_parser(
         "deploy", help="Install the services onto this host (DragonFly)")
     sub = p.add_subparsers(dest="deploy_action")
 
@@ -783,6 +818,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "env-health":
         return cmd_env_health(args)
 
+    if args.command == "config":
+        from dportsv3.commands.config import cmd_config
+        return cmd_config(args)
     if args.command == "deploy":
         from dportsv3.commands.deploy import cmd_deploy
         return cmd_deploy(args)

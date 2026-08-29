@@ -87,9 +87,8 @@ def create_app(db_path: str | Path) -> Any:
     app.state.db_path = str(db_path)
     # Resolves /api/bundles/<id>/artifacts/<relpath> for the 'blob'
     # backend. Defaults match artifact-store's --logs-root default.
-    app.state.artifact_root = Path(
-        os.environ.get("DPORTSV3_ARTIFACT_ROOT", "/build/synth/logs/evidence")
-    )
+    from dportsv3 import settings  # noqa: PLC0415
+    app.state.artifact_root = Path(settings.get("paths.artifact_root"))
     templates_dir = Path(__file__).with_name("templates")
     static_dir = Path(__file__).with_name("static")
     templates: Any = Jinja2Templates(directory=str(templates_dir))

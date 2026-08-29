@@ -81,9 +81,9 @@ MIN_ATTEMPT_BUDGET_FRACTION = 0.25
 def _min_attempt_budget(budget: int) -> int:
     """Billable tokens a retry must have available to be worth starting."""
     try:
-        frac = float(os.environ.get("DP_HARNESS_MIN_ATTEMPT_BUDGET_FRACTION",
-                                    MIN_ATTEMPT_BUDGET_FRACTION))
-    except ValueError:
+        from dportsv3 import settings  # noqa: PLC0415
+        frac = float(settings.get("runner.min_attempt_budget_fraction"))
+    except Exception:  # noqa: BLE001 — a bad value must not stop a retry
         frac = MIN_ATTEMPT_BUDGET_FRACTION
     frac = min(max(frac, 0.0), 1.0)
     return int(budget * frac)

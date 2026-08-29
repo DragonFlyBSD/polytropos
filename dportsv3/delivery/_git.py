@@ -40,9 +40,12 @@ from . import DeliveryError
 # A hung remote on `git push` would otherwise block the Accept
 # request thread indefinitely. Overridable via the env var for
 # operators on slow networks / huge histories.
-_GIT_DEFAULT_TIMEOUT = float(
-    os.environ.get("DPORTSV3_GIT_TIMEOUT", "60.0")
-)
+def _default_timeout() -> float:
+    """Read per call, not at import: a module constant would freeze the
+    value at whatever the settings file said the first time anything
+    imported this module."""
+    from dportsv3 import settings  # noqa: PLC0415
+    return float(settings.get("delivery.git_timeout"))
 
 
 __all__ = [
@@ -112,14 +115,14 @@ def _run(
     putting them in ``args`` — argv is visible in ``ps`` and leaks
     into the timeout message below.
 
-    A timeout (default ``$DPORTSV3_GIT_TIMEOUT`` or 60s) bounds the
+    A timeout (``delivery.git_timeout``, 60s by default) bounds the
     subprocess so a hung remote can't block the request thread.
     On timeout, raises ``GitError`` with a clear message rather
     than propagating subprocess.TimeoutExpired (callers don't
     know about subprocess internals).
     """
     effective_timeout = (
-        timeout if timeout is not None else _GIT_DEFAULT_TIMEOUT
+        timeout if timeout is not None else _default_timeout()
     )
     run_env = {**os.environ, **env_extra} if env_extra else None
     try:
@@ -133,7 +136,7 @@ def _run(
     except subprocess.TimeoutExpired as exc:
         raise GitError(
             f"{' '.join(args[:3])}… timed out after "
-            f"{effective_timeout}s (set $DPORTSV3_GIT_TIMEOUT "
+            f"{effective_timeout}s (raise delivery.git_timeout "
             f"if the remote is legitimately slow)"
         ) from exc
 

@@ -99,7 +99,8 @@ def run(
     triage.md after each LLM round so snippet-extractor can parse requests.
     """
     if max_snippet_rounds is None:
-        max_snippet_rounds = int(os.environ.get("DP_HARNESS_MAX_SNIPPET_ROUNDS", "5"))
+        from dportsv3 import settings  # noqa: PLC0415
+        max_snippet_rounds = int(settings.get("runner.max_snippet_rounds"))
 
     messages: list[dict] = [
         {"role": "system", "content": prompts.TRIAGE_SYSTEM},

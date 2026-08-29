@@ -89,7 +89,8 @@ class Response:
 #: TEMPORARY, with the module docstring: once litellm >= 1.93.2 is
 #: installable this knob and the SDK path both go away.
 def _backend() -> str:
-    return os.environ.get("DP_HARNESS_LLM_BACKEND", "auto").strip().lower()
+    from dportsv3 import settings  # noqa: PLC0415 — avoids an import cycle
+    return settings.get_str("llm.backend").lower()
 
 
 #: Providers that speak the OpenAI wire format end to end, so the SDK can

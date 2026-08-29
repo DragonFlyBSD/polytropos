@@ -59,7 +59,7 @@ class _StubPatchResult:
 
 
 @pytest.fixture
-def queue_env(tmp_path, monkeypatch):
+def queue_env(set_setting, tmp_path, monkeypatch):
     """Same shape as test_runner_e2e_lifecycle but with patch-flow
     stubs wired in."""
     queue_root = tmp_path / "queue"
@@ -132,8 +132,8 @@ def queue_env(tmp_path, monkeypatch):
         ),
     )
 
-    monkeypatch.setenv("DP_HARNESS_TRIAGE_MODEL", "stub-triage")
-    monkeypatch.setenv("DP_HARNESS_PATCH_MODEL", "stub-patch")
+    set_setting("llm.triage.model", "stub-triage")
+    set_setting("llm.patch.model", "stub-patch")
     monkeypatch.setattr(runner, "_CLI_ENV_DEFAULT", "test-env")
 
     yield {"queue_root": queue_root, "conn": conn, "tmp_path": tmp_path}

@@ -135,9 +135,12 @@ def resolve_delta_root(explicit: Path | str | None = None) -> Path:
     if explicit is not None:
         root, source = Path(explicit), "--delta-root"
     else:
-        env_value = os.environ.get("DPORTS_DELTA_ROOT", "").strip()
-        if env_value:
-            root, source = Path(env_value), "$DPORTS_DELTA_ROOT"
+        from dportsv3 import settings  # noqa: PLC0415 — settings imports us
+        configured = settings.resolve("paths.delta_root")
+        if configured.value is not None:
+            root = Path(configured.value)
+            source = ("$DPORTS_DELTA_ROOT" if configured.source.startswith("$")
+                      else "paths.delta_root")
         else:
             root, source = Path.cwd(), "the current directory"
 

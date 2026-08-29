@@ -261,13 +261,13 @@ def register(app, ctx):
         (v1 is ephemeral). Returns ``{ok, reply, session_relpath,
         artifacts_included, session_truncated, usage}``.
 
-        Gated by ``DP_HARNESS_CHAT_MODEL``: 503 when unset.
+        Gated by ``llm.chat.model``: 503 when it is empty.
         """
         cfg = _chat_llm_config()
         if cfg is None:
             raise HTTPException(
                 status_code=503,
-                detail="chat is disabled: set DP_HARNESS_CHAT_MODEL on the "
+                detail="chat is disabled: set llm.chat.model in polytropos.toml on the "
                        "tracker process to enable fix-review chat",
             )
 

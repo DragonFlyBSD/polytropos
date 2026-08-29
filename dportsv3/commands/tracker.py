@@ -100,9 +100,10 @@ def _resolve_state_db_path(args: Namespace) -> Path:
     """
     if args.db is not None:
         return Path(args.db)
-    env_db = os.environ.get("DPORTSV3_STATE_DB")
-    if env_db:
-        return Path(env_db)
+    from dportsv3 import settings  # noqa: PLC0415
+    configured = settings.resolve("paths.state_db")
+    if configured.overridden:
+        return Path(configured.value)
     return Path.cwd() / "state.db"
 
 
@@ -553,12 +554,17 @@ def _format_job(j: dict[str, Any]) -> list[str]:
 
 
 def _resolve_server_url(args: Namespace) -> str:
-    server = getattr(args, "server", None) or os.environ.get("DPORTSV3_TRACKER_URL")
-    if server:
-        return str(server)
-    raise RuntimeError(
-        "Tracker server URL required: use --server or DPORTSV3_TRACKER_URL"
-    )
+    """Where these subcommands send their requests.
+
+    ``--server`` wins, and everything else defers to ``endpoints``. That
+    module is the single knob for the tracker address (poly-fij.2), and
+    this used to be a second reader of the same value with different
+    rules: it had no default and raised "server URL required" where the
+    runner quietly used loopback. Two readers, two behaviours, one
+    setting — which is the shape this change exists to remove.
+    """
+    from dportsv3.common.endpoints import tracker_url  # noqa: PLC0415
+    return str(getattr(args, "server", None) or tracker_url())
 
 
 def _format_status_rows(rows: list[dict[str, Any]]) -> list[str]:

@@ -1,7 +1,9 @@
 """Trust-tier + budget policy.
 
-Loads ``config/agentic-policy.json`` and maps a triage
-``(classification, confidence)`` pair to a tier with budget.
+Maps a triage ``(classification, confidence)`` pair to a tier with a
+budget. The tables come from ``[policy]`` in the settings file; an
+explicit ``agentic-policy.json`` is still honoured when one is named,
+which is how an operator tries an alternative policy for a single run.
 """
 
 from __future__ import annotations
@@ -31,20 +33,43 @@ class Policy:
     confidence_floor: dict[str, str]
 
 
-def load_policy(path: Path | str) -> Policy:
+def load_policy(path: Path | str | None) -> Policy:
+    """Read a policy from a JSON file, or from the settings when None.
+
+    Both sources produce the same three tables, so this is one shape with
+    two readers rather than two policies. The JSON path stays because a
+    file is the convenient thing to hand around when comparing policies —
+    it is a whole policy in one argument, which a settings file is not.
+    """
+    if path is None:
+        from dportsv3 import settings  # noqa: PLC0415
+        return _from_tables(
+            settings.get("policy.tiers"),
+            settings.get("policy.classification_to_tier"),
+            settings.get("policy.confidence_floor"),
+        )
     raw = json.loads(Path(path).read_text())
+    return _from_tables(
+        raw.get("tiers", {}),
+        raw.get("classification_to_tier", {}),
+        raw.get("confidence_floor", {}),
+    )
+
+
+def _from_tables(tiers_raw: dict, classification_to_tier: dict,
+                 confidence_floor: dict) -> Policy:
     tiers = {
         name: Tier(
             name=name,
             max_iterations=int(spec.get("max_iterations", 0)),
             max_tokens=int(spec.get("max_tokens", 0)),
         )
-        for name, spec in raw.get("tiers", {}).items()
+        for name, spec in (tiers_raw or {}).items()
     }
     return Policy(
         tiers=tiers,
-        classification_to_tier=dict(raw.get("classification_to_tier", {})),
-        confidence_floor=dict(raw.get("confidence_floor", {})),
+        classification_to_tier=dict(classification_to_tier or {}),
+        confidence_floor=dict(confidence_floor or {}),
     )
 
 

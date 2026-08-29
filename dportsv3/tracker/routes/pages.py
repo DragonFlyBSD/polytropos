@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dportsv3 import settings
 from dportsv3.tracker import (
     delivery_sync,
     fix_state,
@@ -350,7 +351,7 @@ def register(app, ctx):
             "verify_default_env": verify_default_env,
         }
         # Fix-review chat: only offer the panel when the tracker has a
-        # chat model configured (DP_HARNESS_CHAT_MODEL) AND this bundle
+        # chat model configured (llm.chat.model) AND this bundle
         # carries a session dump to seed it. Both must hold or the panel
         # is hidden — no dead UI.
         chat_session_relpath = _pick_default_session_relpath(bundle)
@@ -540,8 +541,8 @@ def register(app, ctx):
                     conn,
                     target=job.get("target"),
                     origin=job.get("origin"),
-                    window_hours=int(os.environ.get("DP_HARNESS_ATTEMPT_WINDOW_HOURS", "2")),
-                    max_attempts=int(os.environ.get("DP_HARNESS_MAX_PATCH_ATTEMPTS", "3")),
+                    window_hours=int(settings.get("runner.attempt_window_hours")),
+                    max_attempts=int(settings.get("runner.max_patch_attempts")),
                 ) if job is not None else None
             )
             token_usage = (

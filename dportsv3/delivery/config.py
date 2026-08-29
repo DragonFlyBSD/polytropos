@@ -112,6 +112,63 @@ def load_delivery_config(
         raise DeliveryConfigError(
             f"delivery.toml is not valid TOML: {exc}"
         ) from exc
+    return config_from_document(raw, target=target, env=env)
+
+
+def config_from_settings(
+    *,
+    target: str | None = None,
+    env: dict[str, str] | None = None,
+) -> DeliveryConfig:
+    """Build a config from the ``[delivery]`` section of the settings.
+
+    Assembles the same document shape the file loader parses and hands it
+    to the same validator, rather than growing a second set of required-
+    field checks that would drift from the first. The token is resolved
+    through ``settings.read_secret`` so the ``token_file`` setting and the
+    environment override behave identically here and there.
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+
+    provider: dict[str, object] = {
+        "type": settings.get_str("delivery.type"),
+        "base_branch": settings.get_str("delivery.base_branch"),
+        "draft": bool(settings.get("delivery.draft")),
+        "labels": list(settings.get("delivery.labels")),
+        "branch_template": settings.get_str("delivery.branch_template"),
+        "committer_name": settings.get_str("delivery.committer_name"),
+        "committer_email": settings.get_str("delivery.committer_email"),
+    }
+    for key, path in (("repo", "delivery.repo"),
+                      ("clone_dir", "delivery.clone_dir"),
+                      ("outbox", "delivery.outbox")):
+        value = str(settings.get(path) or "")
+        if value:
+            provider[key] = value
+    document: dict[str, object] = {"provider": provider}
+    targets = settings.get("delivery.target") or {}
+    if targets:
+        document["target"] = targets
+    return config_from_document(
+        document, target=target, env=env,
+        token=settings.read_secret("delivery.token_file", env=env),
+    )
+
+
+def config_from_document(
+    raw: dict,
+    *,
+    target: str | None = None,
+    env: dict[str, str] | None = None,
+    token: str | None = None,
+) -> DeliveryConfig:
+    """Validate one delivery document, however it was assembled.
+
+    ``token`` short-circuits the file/env lookup for callers that have
+    already resolved it — which is every caller coming from the settings,
+    where the credential is named by a ``*_file`` setting.
+    """
+    env = env if env is not None else dict(os.environ)
 
     provider_block = raw.get("provider")
     if not isinstance(provider_block, dict):
@@ -174,9 +231,8 @@ def load_delivery_config(
 
     # Token: env var first, then file fallback. Local-patch never
     # needs one.
-    token: str | None = None
     if provider_type != "local-patch":
-        token = _resolve_token(env)
+        token = token or _resolve_token(env)
         if not token:
             raise DeliveryConfigError(
                 f"delivery.toml: provider type {provider_type!r} "

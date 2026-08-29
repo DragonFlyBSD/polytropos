@@ -46,16 +46,22 @@ def enabled() -> bool:
     """Check the gate without other side effects. Callers can use
     this to skip building the closure entirely when the dump is
     disabled — saves a few cycles on the hot path."""
-    return os.environ.get("DP_HARNESS_DUMP_SESSION", "").strip().lower() in _TRUTHY
+    from dportsv3 import settings  # noqa: PLC0415
+    try:
+        return bool(settings.get("runner.dump_session"))
+    except settings.ConfigError as exc:
+        # This is a hot path and a debug switch. A value we cannot read
+        # means off, but never silently: a typo here would otherwise look
+        # exactly like a dump that was never requested.
+        log.warning("runner.dump_session is unreadable, treating as off: %s", exc)
+        return False
 
 
 def _content_cap() -> int:
-    raw = os.environ.get("DP_HARNESS_DUMP_SESSION_CAP", "")
-    if not raw:
-        return _DEFAULT_TOOL_CONTENT_CAP
+    from dportsv3 import settings  # noqa: PLC0415
     try:
-        return max(1024, int(raw))
-    except ValueError:
+        return max(1024, int(settings.get("runner.dump_session_cap")))
+    except (settings.ConfigError, TypeError, ValueError):
         return _DEFAULT_TOOL_CONTENT_CAP
 
 

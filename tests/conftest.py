@@ -73,3 +73,50 @@ def ingest_server(tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=15)
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings():
+    """Drop the process-wide settings between tests.
+
+    The schema is loaded once and cached, which is right for a service
+    and wrong for a suite where each test points $DPORTSV3_CONFIG_DIR
+    somewhere else. Resetting on both sides means a test that never
+    touches settings still starts from the shipped defaults.
+    """
+    from dportsv3 import settings
+    settings.reset()
+    yield
+    settings.reset()
+
+
+@pytest.fixture
+def set_setting(tmp_path, monkeypatch):
+    """Write settings into a throwaway config dir.
+
+    Replaces the ``monkeypatch.setenv("DP_HARNESS_...")`` idiom: those
+    variables are gone, and a test that wants a non-default value now
+    says which setting it means. Accumulates, so several calls build one
+    file.
+    """
+    import tomli_w
+
+    from dportsv3 import settings as settings_mod
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("DPORTSV3_CONFIG_DIR", str(config_dir))
+    document: dict = {}
+
+    def _set(path: str, value) -> Path:
+        node = document
+        parts = path.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+        target = config_dir / settings_mod.CONFIG_FILENAME
+        target.write_bytes(tomli_w.dumps(document).encode())
+        settings_mod.reset()
+        return target
+
+    return _set

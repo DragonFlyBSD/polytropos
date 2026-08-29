@@ -22,11 +22,11 @@ def test_runner_main_is_callable():
     assert callable(main)
 
 
-def test_runner_state_db_path_honors_env(monkeypatch, tmp_path):
+def test_runner_state_db_path_honors_env(set_setting, monkeypatch, tmp_path):
     from dportsv3.agent.runner import get_state_db_path
 
     db_path = tmp_path / "custom-state.db"
-    monkeypatch.setenv("DPORTSV3_STATE_DB", str(db_path))
+    set_setting("paths.state_db", str(db_path))
 
     assert get_state_db_path(Path("/build/synth/logs/evidence/queue")) == db_path
 
@@ -77,7 +77,7 @@ def test_step_outcome_events_populated_by_steps():
     assert PatchAttemptStep().name == "patch"
 
 
-def test_init_state_db_creates_missing_file(tmp_path, monkeypatch):
+def test_init_state_db_creates_missing_file(set_setting, tmp_path, monkeypatch):
     """If state.db doesn't exist, the runner must create + schema-init
     it instead of silently disabling writes. Otherwise a first-time
     runner on a clean host emits activity to runner.log while the
@@ -86,7 +86,7 @@ def test_init_state_db_creates_missing_file(tmp_path, monkeypatch):
 
     db_path = tmp_path / "fresh-state.db"
     assert not db_path.exists()
-    monkeypatch.setenv("DPORTSV3_STATE_DB", str(db_path))
+    set_setting("paths.state_db", str(db_path))
     monkeypatch.setattr(runner, "_state_db_conn", None, raising=False)
 
     conn = runner.init_state_db(queue_root=tmp_path / "queue")
@@ -103,7 +103,7 @@ def test_init_state_db_creates_missing_file(tmp_path, monkeypatch):
         assert needed in tables, f"missing table {needed!r}"
 
 
-def test_init_state_db_opens_existing_file(tmp_path, monkeypatch):
+def test_init_state_db_opens_existing_file(set_setting, tmp_path, monkeypatch):
     """Existing DB must not be re-initialized destructively. Pre-seed
     a row, run init_state_db, confirm the row is still there."""
     from dportsv3.agent import runner
@@ -120,7 +120,7 @@ def test_init_state_db_opens_existing_file(tmp_path, monkeypatch):
     seed.commit()
     seed.close()
 
-    monkeypatch.setenv("DPORTSV3_STATE_DB", str(db_path))
+    set_setting("paths.state_db", str(db_path))
     monkeypatch.setattr(runner, "_state_db_conn", None, raising=False)
     conn = runner.init_state_db(queue_root=tmp_path / "queue")
     assert conn is not None
@@ -130,7 +130,7 @@ def test_init_state_db_opens_existing_file(tmp_path, monkeypatch):
     assert row is not None
 
 
-def test_init_state_db_returns_none_when_parent_dir_missing(
+def test_init_state_db_returns_none_when_parent_dir_missing(set_setting, 
     tmp_path, monkeypatch,
 ):
     """Real misconfig (parent dir doesn't exist) should not silently
@@ -138,7 +138,7 @@ def test_init_state_db_returns_none_when_parent_dir_missing(
     from dportsv3.agent import runner
 
     bad = tmp_path / "nope" / "really-nope" / "state.db"
-    monkeypatch.setenv("DPORTSV3_STATE_DB", str(bad))
+    set_setting("paths.state_db", str(bad))
     monkeypatch.setattr(runner, "_state_db_conn", None, raising=False)
 
     conn = runner.init_state_db(queue_root=tmp_path / "queue")
