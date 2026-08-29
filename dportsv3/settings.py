@@ -67,6 +67,12 @@ _LOG = logging.getLogger(__name__)
 #: The operator's file, inside ``$DPORTSV3_CONFIG_DIR``.
 CONFIG_FILENAME = "polytropos.toml"
 
+#: HOME for the service account, and the root the installer creates. The
+#: installer owns creating it; the settings table owns it because
+#: delivery.clone_dir defaults to a directory inside it and the two must
+#: not drift into separate copies of the same path.
+SERVICE_HOME = Path("/var/db/polytropos")
+
 #: Where secret files live, relative to the config dir. One value per
 #: file: a TOML syntax error cannot then take out the whole credential
 #: set, rotation is a single write, and the mode can follow each
@@ -341,11 +347,17 @@ SETTINGS: list[Setting] = [
     Setting("delivery.repo", "str", "",
             "'owner/name'. Required for everything but local-patch."),
     Setting(
-        "delivery.clone_dir", "path", None,
+        "delivery.clone_dir", "path", SERVICE_HOME / "DeltaPorts",
         "The local DeltaPorts checkout the tracker pushes from. Must be a\n"
         "clean git working tree on base_branch, writable by the account\n"
         "running the TRACKER, with an origin it may push to. Checked at\n"
-        "startup rather than at the first Accept.",
+        "startup rather than at the first Accept.\n"
+        "\n"
+        "The default sits in the service account's home because that is\n"
+        "the one directory the installer already creates and already\n"
+        "chowns to that account — which is this setting's hard\n"
+        "requirement, since delivery resets and commits in the tree and\n"
+        "the tracker is not root. Nothing clones it for you.",
     ),
     Setting("delivery.outbox", "path", None,
             "Where local-patch writes diffs. Required for that type only."),

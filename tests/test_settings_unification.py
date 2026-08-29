@@ -718,3 +718,42 @@ def test_the_db_flag_still_wins(set_setting, tmp_path) -> None:
     set_setting("paths.state_db", "/from/settings.db")
     got = tracker_cmd._resolve_state_db_path(Namespace(db=tmp_path / "x.db"))
     assert got == tmp_path / "x.db"
+
+
+# --- poly-82j: clone_dir has a default, and one copy of the path ------------
+
+def test_clone_dir_defaults_inside_the_service_home() -> None:
+    """Every other path setting derives from a root. This one used to
+    default to None, so each operator invented a path — and the error
+    they got named nothing at all."""
+    from dportsv3 import settings
+
+    assert settings.get("delivery.clone_dir") == (
+        settings.SERVICE_HOME / "DeltaPorts"
+    )
+
+
+def test_the_installer_and_the_settings_share_one_service_home() -> None:
+    """The installer creates and chowns it; the settings table defaults a
+    path inside it. Two literals would be two paths that drift."""
+    from dportsv3 import settings
+    from dportsv3.commands import deploy
+
+    assert deploy.SERVICE_HOME is settings.SERVICE_HOME
+
+
+def test_the_sample_never_renders_a_none_default_as_the_word_none() -> None:
+    """`outbox = "None"` was shipped. Uncommenting it gives a directory
+    literally named None; _coerce reads "" back as None, so the empty
+    string is the honest rendering and the one that round-trips."""
+    from dportsv3 import settings
+
+    assert '"None"' not in settings.sample_text()
+
+
+def test_the_sample_has_no_trailing_whitespace() -> None:
+    from dportsv3 import settings
+
+    offenders = [line for line in settings.sample_text().splitlines()
+                 if line != line.rstrip()]
+    assert not offenders, offenders

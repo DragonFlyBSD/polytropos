@@ -35,7 +35,7 @@ from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
 
-from dportsv3 import paths
+from dportsv3 import paths, settings
 
 #: Copied to ``<prefix>/etc/rc.d`` and made executable.
 RC_SCRIPTS = ("polytropos_tracker", "polytropos_runner")
@@ -79,7 +79,11 @@ DISTRIBUTIONS = (("dev-env", "the dev-env manager"),
 #: HOME for the service account. `daemon -u` lowers the uid but leaves HOME
 #: as it found it, so the two unprivileged services would otherwise run with
 #: HOME=/root. It has to exist and be theirs.
-SERVICE_HOME = Path("/var/db/polytropos")
+#:
+#: Declared in the settings table rather than here: delivery.clone_dir
+#: defaults to a directory inside it, so a second copy of the literal
+#: would be a path that drifts.
+SERVICE_HOME = settings.SERVICE_HOME
 
 
 @dataclass(frozen=True)
@@ -334,7 +338,6 @@ def _migrate_legacy_config(prefix: Path, group: str, log) -> None:
     if not settings_values and not secrets:
         return
 
-    from dportsv3 import settings  # noqa: PLC0415
 
     for path, secret in secrets.items():
         name = Path(str(_SECRET_FILES[path])).name

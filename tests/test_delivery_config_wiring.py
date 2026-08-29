@@ -501,3 +501,41 @@ def test_the_handler_writes_to_a_line_buffered_stream() -> None:
         log.handlers[:] = saved[0]
         log.setLevel(saved[1])
         log.propagate = saved[2]
+
+
+# --- poly-82j: a default clone_dir has to explain itself --------------------
+
+def test_a_missing_clone_dir_that_is_only_the_default_says_so(tmp_path) -> None:
+    """Giving clone_dir a default stops the first Accept failing on an
+    unset path, but it also means an operator who set delivery.type and
+    nothing else gets an error naming a directory they have never seen.
+    The report has to say "you did not set this" and what to run."""
+    findings = preflight._check_clone_dir(
+        str(tmp_path / "absent"), "master", "polytropos", from_default=True)
+    assert [f.level for f in findings] == ["error"]
+    detail = findings[0].detail
+    assert "delivery.clone_dir is not set" in detail
+    assert "nothing clones it for you" in detail
+    assert "git clone" in detail and "chown" in detail, (
+        "an error an operator can act on names the commands"
+    )
+
+
+def test_a_clone_dir_the_operator_chose_gets_the_plain_message(tmp_path) -> None:
+    findings = preflight._check_clone_dir(
+        str(tmp_path / "absent"), "master", "polytropos", from_default=False)
+    assert [f.level for f in findings] == ["error"]
+    assert "delivery.clone_dir is not set" not in findings[0].detail
+
+
+def test_default_detection_follows_the_setting(set_setting, tmp_path) -> None:
+    from dportsv3 import settings
+
+    shipped = str(settings.get("delivery.clone_dir"))
+    assert preflight._clone_dir_is_default(shipped) is True
+    assert preflight._clone_dir_is_default(str(tmp_path)) is False
+
+    set_setting("delivery.clone_dir", str(tmp_path))
+    assert preflight._clone_dir_is_default(str(tmp_path)) is False, (
+        "a path the operator wrote is not the default, even if it is absent"
+    )

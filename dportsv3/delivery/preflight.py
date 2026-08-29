@@ -107,8 +107,30 @@ def check(*, target: str | None = None,
     # Network providers. The loader has already refused a config with no
     # token and no repo, so reaching here means both are present.
     out.extend(_check_token_mode(config_dir))
-    out.extend(_check_clone_dir(cfg.clone_dir, cfg.base_branch, who))
+    out.extend(_check_clone_dir(cfg.clone_dir, cfg.base_branch, who,
+                                from_default=_clone_dir_is_default(
+                                    cfg.clone_dir)))
     return out
+
+
+def _clone_dir_is_default(clone_dir: str | None) -> bool:
+    """True when nobody chose this path and it is the shipped default.
+
+    Worth telling apart. Giving ``delivery.clone_dir`` a default means
+    the first Accept no longer fails on an unset path — but it also
+    means an operator who sets ``delivery.type`` and nothing else gets
+    an error naming a directory they have never seen. Saying "you did
+    not set this, here is where it points, here is what to run" turns
+    that from a puzzle into an instruction.
+    """
+    try:
+        from dportsv3 import settings  # noqa: PLC0415
+        resolved = settings.resolve("delivery.clone_dir")
+    except Exception:  # noqa: BLE001 — startup must not die here
+        return False
+    if resolved.overridden or resolved.value is None:
+        return False
+    return str(resolved.value) == str(clone_dir)
 
 
 def _token_candidates(config_dir: str) -> list[Path]:
@@ -198,12 +220,20 @@ def _check_outbox(outbox: str | None, who: str) -> list[Finding]:
 
 
 def _check_clone_dir(clone_dir: str | None, base_branch: str,
-                     who: str) -> list[Finding]:
+                     who: str, *, from_default: bool = False) -> list[Finding]:
     if not clone_dir:
         return [Finding("error", "provider.clone_dir is unset")]
 
     p = Path(clone_dir)
     if not p.is_dir():
+        if from_default:
+            return [Finding(
+                "error",
+                f"delivery.clone_dir is not set, so it defaults to {p}, "
+                f"which does not exist — nothing clones it for you. Either "
+                f"set delivery.clone_dir, or create it: git clone "
+                f"<repo url> {p} && chown -R {who} {p}",
+            )]
         return [Finding(
             "error",
             f"clone_dir {p} does not exist; point provider.clone_dir at a "

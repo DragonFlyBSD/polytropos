@@ -310,6 +310,12 @@ def _walk(data: Any, prefix: str = "") -> list[str]:
 # --- rendering the sample ---------------------------------------------------
 
 def _toml_value(setting: Setting, value: Any) -> str:
+    if value is None:
+        # A None default means UNSET. Rendering it as the *string*
+        # "None" would hand an operator who uncomments the line a path
+        # named None — and _coerce reads "" back as None, so the empty
+        # string is both honest and round-trips.
+        return '""'
     if setting.kind == "bool":
         return "true" if value else "false"
     if setting.kind in ("int", "float"):
@@ -359,7 +365,8 @@ def render_sample(
             if blurb:
                 out.extend(f"# {line}" for line in blurb.strip().splitlines())
         for line in setting.help.strip().splitlines():
-            out.append(f"# {line}")
+            # rstrip so a blank line in a help string is "#", not "# ".
+            out.append(f"# {line}".rstrip())
         if setting.env:
             out.append(f"# Override for one run with ${setting.env}.")
         out.append(f"#{setting.key} = {_toml_value(setting, setting.default)}")

@@ -43,7 +43,7 @@
 # The DeltaPorts checkout. Empty means 'use the current directory',
 # which is checked for a ports/ or special/ subdirectory before use.
 # Override for one run with $DPORTS_DELTA_ROOT.
-#delta_root = "None"
+#delta_root = ""
 
 
 [tracker]
@@ -59,7 +59,7 @@
 
 # How the runner reaches the tracker. Keep in step with the two
 # settings above.
-# 
+#
 # This one keeps an environment override because it has to cross
 # into a chroot: artifact_store_client runs from the dsynth hooks
 # inside a build environment, where dportsv3 is not importable and
@@ -221,7 +221,7 @@
 # below. Empty uses them. Mostly a way to try an alternative policy
 # for one run without editing this file.
 # Override for one run with $DP_HARNESS_POLICY.
-#file = "None"
+#file = ""
 
 # Iteration and token budget per tier. MANUAL is empty: it never
 # runs the agent.
@@ -239,7 +239,7 @@
 # github | gitlab | gitea | local-patch. EMPTY MEANS DELIVERY IS
 # OFF, and that is the shipped default: Accept stays a pure
 # tracker-side action and logs skip_reason=no_config.
-# 
+#
 # Start with local-patch. It writes the diff to delivery.outbox
 # instead of pushing, which proves the whole Accept path with no
 # credentials and no network.
@@ -252,10 +252,16 @@
 # clean git working tree on base_branch, writable by the account
 # running the TRACKER, with an origin it may push to. Checked at
 # startup rather than at the first Accept.
-#clone_dir = "None"
+#
+# The default sits in the service account's home because that is
+# the one directory the installer already creates and already
+# chowns to that account — which is this setting's hard
+# requirement, since delivery resets and commits in the tree and
+# the tracker is not root. Nothing clones it for you.
+#clone_dir = "/var/db/polytropos/DeltaPorts"
 
 # Where local-patch writes diffs. Required for that type only.
-#outbox = "None"
+#outbox = ""
 
 # The branch the pull request targets upstream.
 #base_branch = "master"
@@ -283,7 +289,7 @@
 # Per-target overrides, keyed by the bundle's target exactly,
 # leading '@' included. Any field omitted falls back to the
 # settings above:
-# 
+#
 #     [delivery.target."@2026Q2"]
 #     base_branch = "2026Q2"
 #     repo = "owner/ports-2026Q2"
