@@ -467,10 +467,7 @@ done. To bring the stack up, add to /etc/rc.conf:
     polytropos_tracker_enable="YES"
     polytropos_runner_enable="YES"
 
-then put real credentials in {etc_p}/harness.env and
-start the services.
-
-Everything is configured in one place now:
+Everything is configured in one place:
 
     {etc_p}/polytropos.toml
 
@@ -491,5 +488,7 @@ service reads it — the runner is root, the tracker is not:
 
 Delivery is off until delivery.type is set. Start with "local-patch",
 which writes the diff to delivery.outbox instead of pushing, then switch
-to "github" once you have seen a patch land there.""")
+to "github" once you have seen a patch land there.
+
+Then start the services.""")
     return 0

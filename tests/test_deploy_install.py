@@ -406,3 +406,15 @@ def test_a_missing_sample_with_no_destination_is_still_an_error(tmp_path) -> Non
             plan(tmp_path, exists=True, prefix=prefix)
     finally:
         dep.OPERATOR_FILES = saved
+
+
+def test_the_post_install_message_names_the_current_layout(capsys) -> None:
+    """It told operators to put credentials in harness.env for a release
+    after the installer stopped placing that file — the kind of stale
+    instruction that sends someone to edit a file nothing reads."""
+    import inspect
+
+    source = inspect.getsource(dep.cmd_deploy)
+    assert "harness.env" not in source
+    assert "polytropos.toml" in source
+    assert "config show" in source
