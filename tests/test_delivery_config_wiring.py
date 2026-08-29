@@ -361,3 +361,60 @@ def test_an_unconfigured_host_logs_nothing_at_all(
         assert sync._resolve_merge_probe(None) is None
 
     assert not caplog.records
+
+
+# --- the findings have to actually reach the log ----------------------------
+
+def test_the_package_logger_gets_a_handler_at_serve_time() -> None:
+    """Measured on hardware: the preflight ran at startup and produced
+    nothing. uvicorn attaches handlers to its own loggers and leaves the
+    root bare, so every INFO record this package emits was dropped — which
+    also swallowed the delivery-outcome lines bundle_actions documents as
+    'one activity row + one daemon log line per outcome'."""
+    from dportsv3.commands import tracker as tracker_cmd
+
+    log = logging.getLogger("dportsv3")
+    saved_handlers, saved_level, saved_prop = (
+        list(log.handlers), log.level, log.propagate,
+    )
+    try:
+        log.handlers.clear()
+        tracker_cmd._configure_app_logging()
+        assert log.handlers, "nothing would be written anywhere"
+        assert log.isEnabledFor(logging.INFO)
+        assert log.propagate is False, (
+            "handled here and propagating would double every line"
+        )
+    finally:
+        log.handlers[:] = saved_handlers
+        log.setLevel(saved_level)
+        log.propagate = saved_prop
+
+
+def test_configuring_the_logger_twice_does_not_double_it() -> None:
+    from dportsv3.commands import tracker as tracker_cmd
+
+    log = logging.getLogger("dportsv3")
+    saved_handlers, saved_level, saved_prop = (
+        list(log.handlers), log.level, log.propagate,
+    )
+    try:
+        log.handlers.clear()
+        tracker_cmd._configure_app_logging()
+        tracker_cmd._configure_app_logging()
+        assert len(log.handlers) == 1
+    finally:
+        log.handlers[:] = saved_handlers
+        log.setLevel(saved_level)
+        log.propagate = saved_prop
+
+
+def test_serve_configures_logging_before_the_app_starts() -> None:
+    """create_app registers the startup hook that runs the preflight, so
+    configuring afterwards would still lose the first messages."""
+    import inspect
+
+    from dportsv3.commands import tracker as tracker_cmd
+
+    src = inspect.getsource(tracker_cmd._cmd_serve)
+    assert src.index("_configure_app_logging()") < src.index("create_app(db_path)")

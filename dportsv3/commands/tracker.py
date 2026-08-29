@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import importlib
@@ -105,6 +106,36 @@ def _resolve_state_db_path(args: Namespace) -> Path:
     return Path.cwd() / "state.db"
 
 
+def _configure_app_logging(level: int = logging.INFO) -> None:
+    """Give this package's loggers somewhere to write.
+
+    uvicorn's default logging config attaches handlers to the ``uvicorn*``
+    loggers and leaves the root logger bare, so every record this package
+    emits propagates to a root with no handler and is discarded — and
+    because third-party loggers default to WARNING, the level filter drops
+    them before that anyway.
+
+    The effect was not theoretical. ``bundle_actions`` documents its
+    delivery visibility as "one activity row + one daemon log line per
+    outcome"; the row was written and the line went nowhere. The same
+    silence swallowed merge detection and the startup delivery preflight.
+
+    The format matches uvicorn's own so a reader of ``tracker.log`` sees
+    one stream rather than two. Idempotent, and it takes stdout because
+    that is what ``daemon(8)`` redirects into the log file.
+    """
+    log = logging.getLogger("dportsv3")
+    if log.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    log.addHandler(handler)
+    log.setLevel(level)
+    # Ours are handled here; letting them propagate as well would double
+    # every line the moment anything configures the root logger.
+    log.propagate = False
+
+
 def _cmd_serve(args: Namespace) -> int:
     uvicorn_spec = importlib_util.find_spec("uvicorn")
     if uvicorn_spec is None:
@@ -117,6 +148,7 @@ def _cmd_serve(args: Namespace) -> int:
 
     from dportsv3.tracker.server import create_app
 
+    _configure_app_logging()
     db_path = _resolve_state_db_path(args)
     app = create_app(db_path)
     # getattr, not args.bind: _cmd_serve is also reachable with a
