@@ -111,6 +111,36 @@ def check(*, target: str | None = None,
     return out
 
 
+def _token_candidates(config_dir: str) -> list[Path]:
+    """Every place a delivery token can actually be, in precedence order.
+
+    Two, because two loaders are live. ``delivery.token_file`` is where
+    the settings put it (``secrets/delivery.token`` by default); the
+    legacy ``delivery.toml`` path still reads ``<config dir>/delivery.token``.
+
+    ``config_dir`` comes from the caller's env rather than
+    ``settings.secret_path``, which reads the real process environment —
+    ``check`` takes an ``env`` argument and has to honour it.
+    """
+    out: list[Path] = []
+    try:
+        from dportsv3 import settings  # noqa: PLC0415
+        declared = settings.get("delivery.token_file")
+    except Exception:  # noqa: BLE001 — startup must not die here
+        declared = None
+    if declared is not None:
+        p = Path(declared)
+        if p.is_absolute():
+            out.append(p)
+        elif config_dir:
+            out.append(Path(config_dir) / p)
+    if config_dir:
+        legacy = Path(config_dir) / "delivery.token"
+        if legacy not in out:
+            out.append(legacy)
+    return out
+
+
 def _check_token_mode(config_dir: str) -> list[Finding]:
     """The token is a forge credential sitting in a config directory.
 
@@ -118,23 +148,32 @@ def _check_token_mode(config_dir: str) -> list[Finding]:
     wrong one, so say what is actually on disk. Absent is not a fault here:
     the config loaded, so the token came from somewhere — the env var, or
     an explicitly-named path.
+
+    This used to rebuild ``<config dir>/delivery.token`` itself, which
+    stopped being the token's home when the settings file replaced
+    ``delivery.toml``. The effect was silent: the check stat'd a file
+    nobody writes any more, found nothing, and returned no finding at
+    all — so a world-readable credential at the documented path drew no
+    warning. Ask the setting instead.
     """
-    if not config_dir:
-        return []
-    token = Path(config_dir) / "delivery.token"
-    try:
-        if not token.is_file():
-            return []
-        mode = token.stat().st_mode & 0o777
-    except OSError as exc:
-        return [Finding("warn", f"could not stat {token}: {exc}")]
-    if mode & 0o007:
-        return [Finding(
-            "warn",
-            f"{token} is world-readable (mode {mode:04o}); it is a forge "
-            f"credential — 0640 root:<service group> is enough",
-        )]
-    return [Finding("ok", f"{token} mode is {mode:04o}")]
+    out: list[Finding] = []
+    for token in _token_candidates(config_dir):
+        try:
+            if not token.is_file():
+                continue
+            mode = token.stat().st_mode & 0o777
+        except OSError as exc:
+            out.append(Finding("warn", f"could not stat {token}: {exc}"))
+            continue
+        if mode & 0o007:
+            out.append(Finding(
+                "warn",
+                f"{token} is world-readable (mode {mode:04o}); it is a forge "
+                f"credential — 0640 root:<service group> is enough",
+            ))
+        else:
+            out.append(Finding("ok", f"{token} mode is {mode:04o}"))
+    return out
 
 
 def _check_outbox(outbox: str | None, who: str) -> list[Finding]:

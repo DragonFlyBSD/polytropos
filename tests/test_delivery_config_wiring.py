@@ -230,6 +230,65 @@ def test_preflight_accepts_a_correctly_moded_token(tmp_path) -> None:
     assert not any("world-readable" in f.detail for f in findings)
 
 
+def test_preflight_checks_the_token_the_settings_actually_name(tmp_path) -> None:
+    """poly-bv4. The check used to rebuild <config dir>/delivery.token by
+    hand, so once delivery.token_file moved the credential into secrets/
+    the mode check stat'd a file nobody writes and reported nothing at
+    all. Confirmed on hardware before the fix: a token in place, and not
+    one token line in the preflight."""
+    _write_toml(tmp_path, _GITHUB.format(clone=tmp_path / "clone"))
+    (tmp_path / "clone" / ".git").mkdir(parents=True)
+    token = tmp_path / "secrets" / "delivery.token"
+    token.parent.mkdir()
+    token.write_text("ghp_x")
+    token.chmod(0o644)
+
+    # The token itself comes from the env here: what is under test is
+    # whether the mode check looks at the file the settings name, not
+    # where the loader sourced the credential from.
+    findings = preflight.check(env={
+        "DPORTSV3_CONFIG_DIR": str(tmp_path),
+        "DPORTSV3_DELIVERY_TOKEN": "t",
+    })
+    warns = [f for f in findings if f.level == "warn"]
+    assert any("world-readable" in f.detail for f in warns), findings
+    assert any(str(token) in f.detail for f in warns), (
+        "the warning has to name the file the operator actually wrote"
+    )
+
+
+def test_preflight_accepts_a_correctly_moded_token_in_secrets(tmp_path) -> None:
+    _write_toml(tmp_path, _GITHUB.format(clone=tmp_path / "clone"))
+    (tmp_path / "clone" / ".git").mkdir(parents=True)
+    token = tmp_path / "secrets" / "delivery.token"
+    token.parent.mkdir()
+    token.write_text("ghp_x")
+    token.chmod(0o640)
+
+    findings = preflight.check(env={
+        "DPORTSV3_CONFIG_DIR": str(tmp_path),
+        "DPORTSV3_DELIVERY_TOKEN": "t",
+    })
+    assert not any("world-readable" in f.detail for f in findings)
+    assert any(str(token) in f.detail and f.level == "ok" for f in findings), (
+        "a token that is fine still gets a line, so the report proves it looked"
+    )
+
+
+def test_preflight_still_checks_the_legacy_token_location(tmp_path) -> None:
+    """The legacy delivery.toml loader still reads this path, so dropping
+    it from the check would trade one blind spot for another."""
+    _write_toml(tmp_path, _GITHUB.format(clone=tmp_path / "clone"))
+    (tmp_path / "clone" / ".git").mkdir(parents=True)
+    token = tmp_path / "delivery.token"
+    token.write_text("ghp_x")
+    token.chmod(0o666)
+
+    findings = preflight.check(env={"DPORTSV3_CONFIG_DIR": str(tmp_path)})
+    assert any("world-readable" in f.detail and str(token) in f.detail
+               for f in findings), findings
+
+
 def test_preflight_names_a_missing_clone_dir_and_the_account(tmp_path) -> None:
     _write_toml(tmp_path, _GITHUB.format(clone=tmp_path / "absent"))
     findings = preflight.check(env={
