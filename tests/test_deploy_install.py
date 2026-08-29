@@ -165,8 +165,12 @@ def test_apply_installs_the_files_with_the_right_modes(tmp_path) -> None:
 
     conf = prefix / "etc" / "polytropos.conf"
     assert conf.stat().st_mode & 0o777 == 0o644
-    secret = prefix / "etc" / "polytropos" / "harness.env"
-    assert secret.stat().st_mode & 0o777 == 0o600, "API keys must not be readable"
+    toml = prefix / "etc" / "polytropos" / "polytropos.toml"
+    assert toml.stat().st_mode & 0o777 == 0o644, (
+        "the settings file holds no credentials, so it is readable"
+    )
+    secrets = prefix / "etc" / "polytropos" / "secrets"
+    assert secrets.is_dir(), "credentials need somewhere to live"
 
 
 def test_apply_is_idempotent(tmp_path) -> None:

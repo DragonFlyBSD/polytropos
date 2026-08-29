@@ -93,7 +93,7 @@ def test_the_store_client_stays_stdlib_only():
     assert not outside, f"non-stdlib imports: {outside}"
 
 
-def test_nothing_is_mounted_onto_the_tool_checkout(monkeypatch, tmp_path):
+def test_nothing_is_mounted_onto_the_tool_checkout(set_setting, monkeypatch, tmp_path):
     """Regression guard. Bind-mounting anything at TOOL_DIR hides the
     checkout, and the failure is indirect: `dportsv3 --version` returns
     rc=127 from inside the env because the thing now at that path is a
@@ -102,7 +102,7 @@ def test_nothing_is_mounted_onto_the_tool_checkout(monkeypatch, tmp_path):
     from dports_dev_env.config import load_config
     from dports_dev_env.layout import TOOL_RELATIVE
 
-    monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
+    set_setting("dev_env.cache_root", str(tmp_path / "cache"))
     monkeypatch.setattr(runtime, "check_mount_target_length", lambda t: None)
     mounted: list[Path] = []
     monkeypatch.setattr(runtime, "mount_null",

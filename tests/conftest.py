@@ -84,10 +84,15 @@ def _reset_settings():
     somewhere else. Resetting on both sides means a test that never
     touches settings still starts from the shipped defaults.
     """
+    from dports_dev_env import config as dev_env_config
     from dportsv3 import settings
+    # Two schemas, one file: the generator's and the dev-env's. Both cache,
+    # so both have to be dropped or a test inherits the previous one's.
     settings.reset()
+    dev_env_config.reset_schema()
     yield
     settings.reset()
+    dev_env_config.reset_schema()
 
 
 @pytest.fixture
@@ -101,6 +106,7 @@ def set_setting(tmp_path, monkeypatch):
     """
     import tomli_w
 
+    from dports_dev_env import config as dev_env_config
     from dportsv3 import settings as settings_mod
 
     config_dir = tmp_path / "config"
@@ -117,6 +123,7 @@ def set_setting(tmp_path, monkeypatch):
         target = config_dir / settings_mod.CONFIG_FILENAME
         target.write_bytes(tomli_w.dumps(document).encode())
         settings_mod.reset()
+        dev_env_config.reset_schema()
         return target
 
     return _set

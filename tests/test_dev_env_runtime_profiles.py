@@ -25,14 +25,14 @@ def test_unknown_runtime_profile_fails(monkeypatch):
         load_runtime_profile()
 
 
-def test_runtime_profile_participates_in_base_id(monkeypatch, tmp_path):
+def test_runtime_profile_participates_in_base_id(set_setting, monkeypatch, tmp_path):
     from dataclasses import replace
 
     from dports_dev_env.base import BaseArchive, provisioned_base_id
     from dports_dev_env.config import load_config
     from dports_dev_env.runtime_profiles import RuntimeProfile
 
-    monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
+    set_setting("dev_env.cache_root", str(tmp_path / "cache"))
     config = load_config()
     archive = BaseArchive("world.tar.gz", tmp_path / "world.tar.gz", "abc123")
 

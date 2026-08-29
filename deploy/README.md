@@ -40,19 +40,49 @@ Group inheritance only applies to *new* files, so the install has to
 
     /usr/local/etc/rc.d/polytropos_tracker
     /usr/local/etc/rc.d/polytropos_runner
-    /usr/local/etc/polytropos.conf                 shared, world-readable
-    /usr/local/etc/polytropos/harness.env          root:wheel 0600
-    /usr/local/etc/polytropos/chat.env             root:polytropos 0640
-    /usr/local/etc/polytropos/delivery.toml.sample root:polytropos 0640
+    /usr/local/etc/polytropos.conf                 rc only, world-readable
+    /usr/local/etc/polytropos/polytropos.toml      every setting
+    /usr/local/etc/polytropos/secrets/             one file per credential
 
-`/usr/local/etc/polytropos/` is also `$DPORTSV3_CONFIG_DIR`: both services
-export it from `polytropos_config_dir`, and it is the only way anything in
-the Python packages finds a config file — nothing searches for a
+`/usr/local/etc/polytropos/` is `$DPORTSV3_CONFIG_DIR`: both services
+export it from `polytropos_config_dir`, and it is the only way anything
+in the Python packages finds a config file — nothing searches for a
 surrounding directory.
 
-Precedence for every knob, highest first: `/etc/rc.conf`, then
+Precedence for the rc knobs, highest first: `/etc/rc.conf`, then
 `polytropos.conf`, then the script's own default. That works because all
 three levels use `: ${var="value"}`, which assigns only when unset.
+
+## Two files, and why the split is where it is
+
+`polytropos.conf` holds what rc needs *before any Python runs*: which
+command to exec, which account to drop to, where to write logs.
+`polytropos.toml` holds everything the tool reads for itself.
+
+It used to be otherwise, and the shape is worth recording because it is
+the thing this layout fixes. `polytropos.conf` declared
+`polytropos_state_db`; the rc script translated it into
+`$DPORTSV3_STATE_DB`; the Python read that. Same for the artifact root,
+the tracker URL, the bind address, the port and the default dev-env —
+one setting with two names in two formats, kept in step by hand. Two more
+shell files, `harness.env` and `chat.env`, existed *only* so `export`
+could carry values into `os.environ`, because that was the one channel a
+setting had into the code. Underneath sat 69 environment variables, 39 of
+which the code read and no sample or script mentioned anywhere.
+
+The rc scripts now source no credential file and translate no variable.
+Their child environment carries three things, none of them configuration:
+`HOME` (because `daemon -u` does not set it), `DPORTSV3_NO_BOOTSTRAP`
+(which tells the wrapper this is a service), and `DPORTSV3_CONFIG_DIR`
+(which names the settings file and so cannot live inside it).
+
+    dportsv3 config show      every value, and where it came from
+    dportsv3 config check     validate without starting anything
+    dportsv3 config migrate   fold an old .conf/.env install into the toml
+
+The runner's prestart asks `dportsv3 config get paths.queue_root` rather
+than keeping a second copy of that path in a shell variable. One exec at
+service start, and no way for the two to disagree.
 
 ## No repository required
 
@@ -82,39 +112,45 @@ one is a developer action. See `poly-abr.11`.
 
 ## Credentials
 
-Two files, because two different services call an LLM and they run as
-different users:
+One value per file under `/usr/local/etc/polytropos/secrets/`, named by a
+`*_file` setting. A TOML syntax error then cannot take out the whole
+credential set, rotation is a single write, and the mode follows
+whichever service reads it — which is the part that matters, because the
+two services run as different users:
 
-* `harness.env` — triage and patch keys, read by the runner (root only).
-* `chat.env` — the tracker's fix-chat panel, read by `polytropos`.
-  Entirely optional: leave it out and `DP_HARNESS_CHAT_MODEL` stays
-  unset, which disables the endpoint (503) and hides the UI panel.
+    secrets/triage.key      0600 root                the runner is root
+    secrets/patch.key       0600 root
+    secrets/chat.key        0640 root:polytropos     the tracker is not
+    secrets/delivery.token  0640 root:polytropos
 
-Neither belongs in `polytropos.conf` or `rc.conf` — both are
+Nothing is in `polytropos.conf` or `polytropos.toml`: both are
 world-readable.
+
+`deploy install` migrates an existing `harness.env` / `chat.env` on the
+way past, because the same upgrade stops the rc scripts sourcing them —
+skip that and the runner comes back up with no API keys and every job
+fails. The originals are left where they are.
 
 ## Delivery
 
-Off until you turn it on. `deploy install` places a template, not a live
-config, because a `delivery.toml` that exists is a `delivery.toml` that
-loads — and no shipped value could name the right repo, clone and
-credential for your host. Until you copy it, Accept stays a pure
-tracker-side action and logs `skip_reason=no_config`.
+Off until `delivery.type` is set in `polytropos.toml`. Until then Accept
+stays a pure tracker-side action and logs `skip_reason=no_config`.
 
-    cp /usr/local/etc/polytropos/delivery.toml.sample \
-       /usr/local/etc/polytropos/delivery.toml
+Start with `local-patch`, which writes the diff to `delivery.outbox`
+instead of pushing anywhere: that proves the whole Accept path with no
+credentials and no network. Switch to `github` once a patch has landed in
+the outbox.
 
-The template starts at `type = "local-patch"`, which writes the diff to a
-directory instead of pushing anywhere. That proves the whole Accept path
-with no credentials and no network; switch to `github` once you have seen
-a patch land in the outbox.
+For a forge provider, `secrets/delivery.token` is `root:polytropos 0640`
+— **not** `0400 root`. Delivery runs inside the *tracker*, which drops to
+the unprivileged account, so a root-only token is unreadable by the only
+process that wants it, and `delivery.clone_dir` has to be writable by
+that same account. The tracker checks all of this when it starts and logs
+what is wrong, rather than waiting for the first Accept to find out.
 
-For a forge provider, `delivery.token` is `root:polytropos 0640` — **not**
-`0400 root`. Delivery runs inside the *tracker*, which drops to the
-unprivileged account, so a root-only token is unreadable by the only
-process that wants it, and `provider.clone_dir` has to be writable by that
-same account. The tracker checks all of this when it starts and logs what
-is wrong, rather than waiting for the first Accept to find out.
+A standalone `delivery.toml` in the config directory is still read where
+one exists, and still wins, so an install that predates the settings file
+keeps delivering. The log says which file won.
 
 ## Logs and rotation
 

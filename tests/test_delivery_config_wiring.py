@@ -59,15 +59,13 @@ def test_no_config_dir_means_delivery_is_off(tmp_path) -> None:
     assert resolve_config(env={}) is None
 
 
-def test_the_bundled_sample_is_never_loaded(tmp_path) -> None:
-    """It exists, it parses, and it names a real repo — so the only thing
-    keeping it out of a delivery is that nothing looks at it."""
-    sample = paths.BUNDLED_CONFIG_DIR / "delivery.toml.sample"
-    assert sample.is_file(), "the template must still ship"
+def test_no_standalone_delivery_template_ships(tmp_path) -> None:
+    """There is one settings file, so there is one place delivery is
+    described. A second template would only steer operators back onto the
+    legacy standalone file that the loader still reads for compatibility."""
+    assert not (paths.BUNDLED_CONFIG_DIR / "delivery.toml.sample").exists()
+    assert not (DEPLOY_SRC / "delivery.toml.sample").exists()
     assert resolve_config(env={}) is None
-    assert resolve_config(env={"DPORTSV3_CONFIG_DIR": str(sample.parent)}) is None, (
-        "a directory holding only the .sample is still an unconfigured host"
-    )
 
 
 def test_a_config_dir_without_delivery_toml_is_off(tmp_path) -> None:
@@ -129,40 +127,43 @@ def test_the_shared_conf_declares_the_knob() -> None:
 
 # --- the installer puts the template where the services look ----------------
 
-def test_deploy_installs_the_delivery_template() -> None:
+def test_deploy_installs_the_settings_file() -> None:
     entry = next(
-        (f for f in dep.OPERATOR_FILES if "delivery" in f[0]), None,
+        (f for f in dep.OPERATOR_FILES if f[0] == "polytropos.toml.sample"), None,
     )
-    assert entry is not None, "deploy install must place the delivery template"
-    sample, dest, mode, group_owned = entry
-    assert (DEPLOY_SRC / sample).is_file()
-    assert dest.endswith(".sample"), (
-        "installing it under the live name would enable delivery on a host "
-        "nobody configured — the file existing is what makes it load"
+    assert entry is not None, "deploy install must place the settings file"
+    _sample, dest, mode, _grouped = entry
+    assert dest == "polytropos/polytropos.toml", (
+        "installed live, not as a .sample: every setting is commented out, "
+        "so the file existing changes no behaviour"
     )
-    assert mode == 0o640
-    assert group_owned, "the tracker delivers, and it does not run as root"
+    assert mode == 0o644, "it holds no credentials"
 
 
-def test_the_installed_template_is_not_the_live_name() -> None:
-    """Belt and braces on the one that matters: no OPERATOR_FILES entry may
-    land a file at a path resolve_config would read."""
+def test_no_operator_file_lands_a_live_delivery_config() -> None:
+    """The file existing is what makes delivery load, so nothing the
+    installer writes may be one."""
     live = {f[1] for f in dep.OPERATOR_FILES}
     assert "polytropos/delivery.toml" not in live
 
 
-def test_the_deploy_template_parses_and_is_inert(tmp_path) -> None:
-    """A template that does not load is useless; one that needs a token to
-    load is a worse first run. local-patch gives an operator a working
-    delivery with no credentials."""
-    from dportsv3.delivery.config import load_delivery_config
+def test_the_shipped_sample_is_generated_from_the_table() -> None:
+    """Hand-maintained samples drift: that is how 39 settings ended up
+    readable by the code and named in no file anyone shipped."""
+    shipped = (DEPLOY_SRC / "polytropos.toml.sample").read_text()
+    from dportsv3 import settings as settings_mod
+    assert shipped == settings_mod.sample_text(), (
+        "regenerate with `dportsv3 config sample > deploy/polytropos.toml.sample`"
+    )
 
-    dst = tmp_path / "delivery.toml"
-    dst.write_text((DEPLOY_SRC / "delivery.toml.sample").read_text())
-    cfg = load_delivery_config(dst, env={})
-    assert cfg.provider_type == "local-patch"
-    assert cfg.outbox, "local-patch is only useful with somewhere to write"
-    assert cfg.token is None, "the smoke-test provider must need no credential"
+
+def test_the_shipped_sample_leaves_delivery_off(tmp_path) -> None:
+    """Installed under its live name, so its contents are the behaviour a
+    fresh host gets. Every line must be commented."""
+    dst = tmp_path / "polytropos.toml"
+    dst.write_text((DEPLOY_SRC / "polytropos.toml.sample").read_text())
+    monkey = {"DPORTSV3_CONFIG_DIR": str(tmp_path)}
+    assert resolve_config(env=monkey) is None
 
 
 # --- the token's mode follows its reader ------------------------------------

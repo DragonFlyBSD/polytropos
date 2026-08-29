@@ -11,7 +11,11 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
-# Local config copies (only the .sample files are tracked)
+# Local config (generated from dportsv3/settings.py; never committed)
+config/polytropos.toml
+config/secrets/
+# The layout that preceded the one settings file. Still read where an
+# install has them, so still ignored.
 config/agentic-policy.json
 config/delivery.toml
 config/delivery.token

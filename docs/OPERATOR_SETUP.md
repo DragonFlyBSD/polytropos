@@ -138,14 +138,32 @@ ARTIFACT_ROOT=$LOGS_ROOT/evidence
 QUEUE_ROOT=$LOGS_ROOT/evidence/queue   # where hooks write .job files
 ```
 
-LLM credentials — pick a provider for each phase:
+LLM configuration — pick a provider for each phase. In a checkout,
+`bin/dportsv3` points `$DPORTSV3_CONFIG_DIR` at `config/`, so this lives
+in `config/polytropos.toml`:
 
 ```sh
-export DP_HARNESS_TRIAGE_MODEL=deepseek/deepseek-v4-flash
-export DP_HARNESS_TRIAGE_API_KEY=...
-export DP_HARNESS_PATCH_MODEL=anthropic/claude-sonnet-4
-export DP_HARNESS_PATCH_API_KEY=...
+dportsv3 config sample > config/polytropos.toml
+$EDITOR config/polytropos.toml     # llm.triage.model, llm.patch.model
 ```
+
+```toml
+[llm.triage]
+model = "deepseek/deepseek-v4-flash"
+
+[llm.patch]
+model = "anthropic/claude-sonnet-4"
+```
+
+Keys are files, not settings, so the mode can follow the reader:
+
+```sh
+mkdir -p config/secrets
+install -m 0600 /dev/null config/secrets/triage.key   # then edit it
+install -m 0600 /dev/null config/secrets/patch.key
+```
+
+`dportsv3 config show` prints every value and where it came from.
 
 For DeepSeek thinking-mode the harness keeps `reasoning_content` on
 all turns — works out of the box, no extra config.
@@ -162,16 +180,41 @@ sudo bin/dportsv3 deploy install --dry-run   # shows every step, changes nothing
 sudo bin/dportsv3 deploy install
 ```
 
-That creates the `polytropos` account, installs three rc.d scripts, a
-shared config, two credential stubs and a newsyslog entry, creates the
-queue directories, and hands `$LOGS_ROOT` to the service account.
+That creates the `polytropos` account, installs the two rc.d scripts,
+`polytropos.conf`, the settings file, a `secrets/` directory and a
+newsyslog entry, creates the queue directories, and hands `$LOGS_ROOT`
+to the service account.
 
 It installs the software too: a venv at `/usr/local/lib/polytropos` with
 both distributions in it, linked into `/usr/local/bin`. The services run
 from there rather than from your checkout. Re-run it after a pull to
 upgrade, then restart the services.
 
-Put real credentials in `/usr/local/etc/polytropos/harness.env`, then:
+Configuration is one file, `/usr/local/etc/polytropos/polytropos.toml`.
+Every setting in it is commented out and shows its default, so uncomment
+only what you mean to change. At minimum, name a model:
+
+```sh
+sudo $EDITOR /usr/local/etc/polytropos/polytropos.toml   # llm.triage.model
+sudo install -m 0600 /dev/null /usr/local/etc/polytropos/secrets/triage.key
+sudo $EDITOR /usr/local/etc/polytropos/secrets/triage.key
+```
+
+Credentials are one per file under `secrets/`, never in the settings
+file, so the mode can follow whichever service reads it — the runner is
+root, the tracker is not. Then check it and start:
+
+```sh
+dportsv3 config check    # validates without starting anything
+dportsv3 config show     # every value, and where it came from
+```
+
+Upgrading an install that still has `harness.env` / `chat.env`?
+`deploy install` migrates them on the way past, and
+`dportsv3 config migrate` does it on demand. The originals are left
+alone.
+
+Then:
 
 ```sh
 # /etc/rc.conf
@@ -189,17 +232,17 @@ and fails every job. `deploy/README.md` has the full reference.
 
 ### In two shells (development)
 
+Paths come from `config/polytropos.toml` too — `paths.state_db`,
+`paths.artifact_root`, `paths.queue_root` — so both commands are bare.
+The flags still exist to override one for a single run.
+
 ```sh
 # Shell A — tracker: UI, read API, SSE, and the /v1/ ingest surface
 # the hooks and the runner write bundles, blobs and state through
-DPORTSV3_STATE_DB=$STATE_DB \
-DPORTSV3_ARTIFACT_ROOT=$ARTIFACT_ROOT \
-  bin/dportsv3 tracker serve --port 8080 --bind 0.0.0.0
+bin/dportsv3 tracker serve
 
 # Shell B — queue runner (claims jobs, runs triage/patch)
-DPORTSV3_STATE_DB=$STATE_DB \
-DPORTSV3_TRACKER_URL=http://127.0.0.1:8080 \
-  bin/dportsv3 agent-queue-runner --queue-root $QUEUE_ROOT
+bin/dportsv3 agent-queue-runner
 ```
 
 Order doesn't matter; each is idempotent on schema init. Open
@@ -312,7 +355,7 @@ see *Common stumbles*.
 | Runner is up but claims nothing | No dev-env resolved. Select one in the tracker UI, or set `polytropos_runner_dev_env`. It holds rather than running with the dsynth gate unanswerable. |
 | Runner paused, health broken | `bin/dportsv3 env-health <env>` reports the failing check and the fix. |
 | Every job fails at a chroot step | `polytropos_dev_env_cmd` is wrong or its venv is stale. |
-| Tracker 503s on the chat panel | No `DP_HARNESS_CHAT_MODEL`. That file is optional; the rest works without it. |
+| Tracker 503s on the chat panel | `llm.chat.model` is empty. The panel is optional; the rest works without it. |
 
 ## Common stumbles
 
@@ -320,8 +363,8 @@ see *Common stumbles*.
 |---|---|
 | `dportsv3` says "missing DragonFly packages" | install the `pkg install` list from §1 |
 | Hooks don't fire on failure | `bin/dportsv3 dev-env hooks-status myenv` for stale/missing; confirm the env's `/etc/dsynth/dportsv3-hooks.conf` is being sourced by the dsynth profile inside the chroot |
-| Tracker 500s on artifact stream | `DPORTSV3_ARTIFACT_ROOT` does not name the evidence dir the hooks wrote into |
-| Triage 401s | provider key wrong, or `DP_HARNESS_TRIAGE_API_BASE` needs to be set for non-default endpoints |
+| Tracker 500s on artifact stream | `paths.artifact_root` does not name the evidence dir the hooks wrote into |
+| Triage 401s | wrong key in `secrets/triage.key`, or `llm.triage.api_base` needs setting for a non-default endpoint |
 | Patch loop stops with `budget-exhausted` | check trust tier classification in `analysis/triage.md`; consider bumping the tier in `config/agentic-policy.json` |
 | Runner sees no jobs after a failure | check `bundles` row exists in `state.db` (hook side); check classification didn't resolve to MANUAL |
 

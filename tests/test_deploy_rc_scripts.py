@@ -95,7 +95,7 @@ def test_script_parses(service) -> None:
 
 
 @pytest.mark.parametrize("name", ["polytropos.conf.sample",
-                                  "harness.env.sample", "chat.env.sample"])
+                                  "polytropos.toml.sample"])
 def test_sample_parses(name) -> None:
     p = subprocess.run(["/bin/sh", "-n", str(DEPLOY / name)],
                        capture_output=True, text=True)
@@ -130,29 +130,30 @@ def test_runner_sets_umask_for_the_shared_tree(tmp_path) -> None:
 
 # --- what actually gets launched ----------------------------------------
 
-def test_tracker_binds_the_lan_by_default(tmp_path) -> None:
-    """Deliberate, per poly-abr.6 — pinned so it is never an accident."""
+def test_the_tracker_is_launched_without_configuration_flags(tmp_path) -> None:
+    """bind and port are tracker.bind and tracker.port. Passing them here
+    from shell variables meant every value had two spellings that had to
+    be kept in step by hand, which is the whole reason this changed."""
     got = run_service(tmp_path, "polytropos_tracker")
-    assert "--bind 0.0.0.0" in got["ARGS"]
-    assert "--port 8080" in got["ARGS"]
+    assert got["ARGS"].rstrip().endswith("tracker serve"), got["ARGS"]
+    assert "--bind" not in got["ARGS"]
+    assert "--port" not in got["ARGS"]
 
 
-def test_runner_gets_the_queue_root(tmp_path) -> None:
+def test_the_runner_is_launched_without_configuration_flags(tmp_path) -> None:
+    """paths.queue_root and runner.dev_env are settings the runner reads
+    for itself."""
     got = run_service(tmp_path, "polytropos_runner")
-    assert "--queue-root /build/synth/logs/evidence/queue" in got["ARGS"]
+    assert got["ARGS"].rstrip().endswith("agent-queue-runner"), got["ARGS"]
+    assert "--queue-root" not in got["ARGS"]
 
 
-def test_no_dev_env_flag_when_unset(tmp_path) -> None:
-    """Empty means 'let the tracker or auto-pick decide'. Passing --env
-    with an empty value would make argparse eat the next argument."""
+def test_no_dev_env_flag_ever(tmp_path) -> None:
+    """runner.dev_env is a setting. The flag survives for a hand-run, but
+    the service never passes it — an empty one would make argparse eat
+    the next argument, which is why it used to be built conditionally."""
     got = run_service(tmp_path, "polytropos_runner")
     assert "--env" not in got["ARGS"], got["ARGS"]
-
-
-def test_dev_env_flag_appears_when_set(tmp_path) -> None:
-    got = run_service(tmp_path, "polytropos_runner",
-                      rc_conf_vars={"polytropos_runner_dev_env": "2026Q3-x"})
-    assert "--env 2026Q3-x" in got["ARGS"]
 
 
 @pytest.mark.parametrize("service", SERVICES)
@@ -186,24 +187,29 @@ def test_pidfile_is_set(tmp_path, service) -> None:
 def test_rc_conf_beats_the_config_file(tmp_path) -> None:
     """rc.subr reads /etc/rc.conf first, so the config file must only
     fill in what is still unset — hence `: ${var=...}` everywhere."""
-    conf = ': ${polytropos_tracker_port="9999"}\n'
+    conf = ': ${polytropos_cmd="/from/conf"}\n'
     got = run_service(tmp_path, "polytropos_tracker", conf=conf,
-                      rc_conf_vars={"polytropos_tracker_port": "7777"})
-    assert "--port 7777" in got["ARGS"], got["ARGS"]
+                      rc_conf_vars={"polytropos_cmd": "/from/rc.conf"})
+    assert "/from/rc.conf" in got["ARGS"], got["ARGS"]
 
 
 def test_config_file_beats_the_script_default(tmp_path) -> None:
-    conf = ': ${polytropos_tracker_port="9999"}\n'
+    conf = ': ${polytropos_cmd="/from/conf"}\n'
     got = run_service(tmp_path, "polytropos_tracker", conf=conf)
-    assert "--port 9999" in got["ARGS"]
+    assert "/from/conf" in got["ARGS"]
 
 
-def test_logs_root_drives_the_derived_paths(tmp_path) -> None:
-    """One knob to move the whole tree."""
-    conf = ': ${polytropos_logs_root="/other/place"}\n'
-    got = run_service(tmp_path, "polytropos_runner", conf=conf)
-    assert "--queue-root /other/place/evidence/queue" in got["ARGS"]
-    assert "DPORTSV3_STATE_DB=/other/place/evidence/state.db" in got["ENV"]
+def test_the_conf_no_longer_carries_pythons_settings() -> None:
+    """polytropos.conf keeps only what rc needs before any Python runs.
+    Anything the tool reads for itself moved into polytropos.toml, so the
+    two cannot disagree about the same value."""
+    text = (DEPLOY / "polytropos.conf.sample").read_text()
+    for gone in ("polytropos_state_db", "polytropos_artifact_root",
+                 "polytropos_queue_root", "polytropos_tracker_bind",
+                 "polytropos_tracker_port", "polytropos_tracker_url",
+                 "polytropos_runner_dev_env", "polytropos_harness_env",
+                 "polytropos_chat_env"):
+        assert f": ${{{gone}" not in text, f"{gone} still declared in the .conf"
 
 
 def test_sample_config_assigns_conditionally_everywhere() -> None:
@@ -219,7 +225,7 @@ def test_missing_config_file_is_not_fatal(tmp_path) -> None:
     """A host that never wrote polytropos.conf still starts on defaults."""
     got = run_service(tmp_path, "polytropos_tracker",
                       conf=None)  # path points at a file that isn't there
-    assert "--port 8080" in got["ARGS"]
+    assert "/usr/local/bin/dportsv3 tracker serve" in got["ARGS"]
 
 
 # --- the rc.subr name collision -----------------------------------------
@@ -228,24 +234,36 @@ def test_dev_env_knob_avoids_the_rc_subr_collision() -> None:
     """rc.subr reads ${name}_env as the child environment. Naming the
     dev-env knob polytropos_runner_env would replace it wholesale."""
     text = (RC_D / "polytropos_runner").read_text()
-    assert "polytropos_runner_dev_env" in text
     assert ': ${polytropos_runner_env=' not in text
+    assert 'polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1' in text, (
+        "the child environment must still be built here"
+    )
 
 
 def test_runner_env_carries_one_service_url(tmp_path) -> None:
     """One knob. The runner reaches blobs and state through the tracker;
     ARTIFACT_STORE_URL is the hooks' loopback knob, not the runner's."""
     got = run_service(tmp_path, "polytropos_runner")
-    assert "DPORTSV3_TRACKER_URL=http://127.0.0.1:8080" in got["ENV"]
+    # tracker.url is a setting now; the runner reads it. What the child
+    # environment carries is only what cannot be a setting.
+    assert "DPORTSV3_TRACKER_URL" not in got["ENV"], got["ENV"]
     assert "ARTIFACT_STORE_URL" not in got["ENV"]
+    assert "DPORTSV3_CONFIG_DIR=" in got["ENV"], (
+        "the one variable that must stay: it names the settings file"
+    )
 
 
 # --- credentials --------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["harness.env.sample", "chat.env.sample"])
-def test_secret_samples_use_export(name) -> None:
-    """They are sourced by the rc script, so a bare assignment would set
-    a shell variable the child process never sees."""
+def test_no_shell_credential_samples_ship() -> None:
+    """They existed only to carry values into os.environ, which was the
+    only channel a setting had into the Python. Credentials live one per
+    file under secrets/ now, and everything else is polytropos.toml."""
+    assert not (DEPLOY / "harness.env.sample").exists()
+    assert not (DEPLOY / "chat.env.sample").exists()
+
+
+def _unused(name) -> None:
     body = [l.strip() for l in (DEPLOY / name).read_text().splitlines()]
     assigns = [l for l in body if l and not l.startswith("#")]
     assert assigns
@@ -274,7 +292,18 @@ def run_precmd(tmp_path, service, wrapper_rc=0, extra_vars=None):
     root = tmp_path / "checkout"
     (root / "bin").mkdir(parents=True)
     wrapper = root / "bin" / "dportsv3"
-    wrapper.write_text(f"#!/bin/sh\nexit {wrapper_rc}\n")
+    # The prestart asks the tool where the queue is rather than keeping a
+    # second copy of the path in a shell variable, so the stub has to be
+    # able to answer `config get`. Everything else exits wrapper_rc, which
+    # is how a stale install stamp presents.
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "config" ] && [ "$2" = "get" ]; then\n'
+        f'    case "$3" in paths.queue_root) echo "{tmp_path}/queue";; esac\n'
+        "    exit 0\n"
+        "fi\n"
+        f"exit {wrapper_rc}\n"
+    )
     wrapper.chmod(0o755)
     dev_env = root / "bin" / "dports-dev-env"
     dev_env.write_text(f"#!/bin/sh\nexit {wrapper_rc}\n")
@@ -332,7 +361,8 @@ def test_runner_probes_both_entry_points() -> None:
     generator would pass while every chroot call still failed."""
     logical = _logical_lines((RC_D / "polytropos_runner").read_text())
     probes = [l for l in logical if "NO_BOOTSTRAP" in l and l.startswith("if !")]
-    assert len(probes) == 2, probes
+    # Three now: the two entry points, plus `config check`.
+    assert len(probes) == 3, probes
     assert any("agent-queue-runner --help" in l for l in probes), probes
     assert any("${polytropos_dev_env_cmd}" in l for l in probes), probes
 
@@ -379,6 +409,7 @@ def test_probe_uses_the_services_own_argv(service, argv) -> None:
     logical = _logical_lines(text)
     probes = [l for l in logical
               if "${polytropos_cmd}" in l and "NO_BOOTSTRAP" in l]
+    probes = [p for p in probes if "config check" not in p]
     assert len(probes) == 1, probes
     assert argv in probes[0], probes[0]
     assert "--version" not in probes[0], f"probes the wrong profile: {probes[0]}"
@@ -412,33 +443,30 @@ def test_runner_creates_the_queue_subdirs(tmp_path) -> None:
         assert (tmp_path / "queue" / sub).is_dir()
 
 
-def test_world_readable_secrets_warn(tmp_path) -> None:
-    """find -perm +077, verified on DragonFly: quiet at 600, warns at 640."""
-    secret = tmp_path / "harness.env"
-    secret.write_text("export DP_HARNESS_TRIAGE_API_KEY=x\n")
-    secret.chmod(0o644)
-    rc, err = run_precmd(tmp_path, "polytropos_runner",
-                         extra_vars={"polytropos_harness_env": str(secret)})
+@pytest.mark.parametrize("service", SERVICES)
+def test_no_script_sources_a_credential_file(service) -> None:
+    """The `. harness.env` shim existed because os.environ was the only
+    way a setting reached the Python. Both services read their own
+    settings now, and the credential mode check moved to `config check`,
+    which can see the actual file each setting names."""
+    text = (RC_D / service).read_text()
+    for gone in ("harness.env", "chat.env"):
+        assert gone not in text, f"{service} still mentions {gone}"
+    sourced = [l.strip() for l in text.splitlines()
+               if l.strip().startswith(". ") and "rc.subr" not in l
+               and "polytropos_conf" not in l]
+    assert not sourced, f"{service} still sources: {sourced}"
+    assert "config check" in text, (
+        "something has to notice an unparseable settings file at start"
+    )
+
+
+@pytest.mark.parametrize("service", SERVICES)
+def test_a_bad_settings_file_warns_but_starts(tmp_path, service) -> None:
+    """Refusing to boot over a settings problem would take the tracker
+    down, which is where an operator would go to read about it."""
+    rc, _err = run_precmd(tmp_path, service)
     assert rc == 0
-    assert "readable beyond its owner" in err
-
-
-def test_mode_600_secrets_are_quiet(tmp_path) -> None:
-    secret = tmp_path / "harness.env"
-    secret.write_text("export DP_HARNESS_TRIAGE_API_KEY=x\n")
-    secret.chmod(0o600)
-    rc, err = run_precmd(tmp_path, "polytropos_runner",
-                         extra_vars={"polytropos_harness_env": str(secret)})
-    assert rc == 0
-    assert "readable beyond its owner" not in err
-
-
-def test_absent_credentials_warn_but_start(tmp_path) -> None:
-    """Starting without keys is legal — every job fails, but the service
-    coming up is what lets the operator see that in the tracker."""
-    rc, err = run_precmd(tmp_path, "polytropos_runner")
-    assert rc == 0
-    assert "without LLM credentials" in err
 
 
 # --- conventions taken from the ports tree ------------------------------

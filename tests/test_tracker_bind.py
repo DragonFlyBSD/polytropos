@@ -36,9 +36,14 @@ def _serve(argv):
 # --- the flag exists and carries the value through ----------------------
 
 def test_default_is_unchanged(fake_uvicorn, tmp_path) -> None:
-    """Adding the flag must not quietly move an operator off the LAN."""
+    """Adding the flag must not quietly move an operator off the LAN.
+
+    The flag itself now defaults to None so that tracker.bind can answer;
+    a literal default here would outrank the setting and there would be
+    no way to tell a flag from a fallback. What must not change is where
+    an unconfigured install ends up listening."""
     args = _serve(["--db", str(tmp_path / "state.db")])
-    assert args.bind == "0.0.0.0"
+    assert args.bind is None and args.port is None
     tracker_cmd._cmd_serve(args)
     assert fake_uvicorn == [{"host": "0.0.0.0", "port": 8080}]
 

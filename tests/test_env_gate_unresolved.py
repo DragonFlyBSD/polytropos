@@ -16,10 +16,10 @@ from dportsv3.agent import runner as runner_mod
 
 
 @pytest.fixture
-def envs_dir(tmp_path, monkeypatch):
+def envs_dir(set_setting, tmp_path, monkeypatch):
     d = tmp_path / "envs"
     d.mkdir()
-    monkeypatch.setenv("DPORTS_DEV_ENVS_DIR", str(d))
+    set_setting("dev_env.envs_dir", str(d))
     return d
 
 
@@ -43,7 +43,7 @@ def test_permission_error_names_the_fix(envs_dir, monkeypatch) -> None:
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-000 dirs")
-def test_an_unreachable_store_is_a_permission_error(tmp_path, monkeypatch) -> None:
+def test_an_unreachable_store_is_a_permission_error(set_setting, tmp_path, monkeypatch) -> None:
     """Denied one level up, not on the store itself.
 
     Path.is_dir() ignores ENOENT/ENOTDIR/EBADF/ELOOP but not EACCES, so
@@ -53,7 +53,7 @@ def test_an_unreachable_store_is_a_permission_error(tmp_path, monkeypatch) -> No
     """
     priv = tmp_path / "priv"
     (priv / "envs").mkdir(parents=True)
-    monkeypatch.setenv("DPORTS_DEV_ENVS_DIR", str(priv / "envs"))
+    set_setting("dev_env.envs_dir", str(priv / "envs"))
     os.chmod(priv, 0o000)
     try:
         names, err = er.list_available_envs_detailed()
@@ -63,9 +63,9 @@ def test_an_unreachable_store_is_a_permission_error(tmp_path, monkeypatch) -> No
     assert err and "root" in err
 
 
-def test_missing_dir_is_the_ordinary_empty(tmp_path, monkeypatch) -> None:
+def test_missing_dir_is_the_ordinary_empty(set_setting, tmp_path, monkeypatch) -> None:
     """Absent != unreadable: 'create an env' is the right advice here."""
-    monkeypatch.setenv("DPORTS_DEV_ENVS_DIR", str(tmp_path / "nope"))
+    set_setting("dev_env.envs_dir", str(tmp_path / "nope"))
     assert er.list_available_envs_detailed() == ((), None)
 
 

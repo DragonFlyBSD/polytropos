@@ -55,12 +55,12 @@ def make_tool_checkout(path: Path) -> Path:
     return path
 
 
-def make_builder(tmp_path, monkeypatch, *, delta_root: Path, tool_root: Path, allow_dirty: bool = False):
+def make_builder(set_setting, tmp_path, monkeypatch, *, delta_root: Path, tool_root: Path, allow_dirty: bool = False):
     from dports_dev_env.builder import CreateOptions, EnvironmentBuilder
     from dports_dev_env.config import load_config
     from dports_dev_env.store import EnvironmentStore
 
-    monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
+    set_setting("dev_env.cache_root", str(tmp_path / "cache"))
     config = load_config()
     options = CreateOptions(
         name="env1",
@@ -86,16 +86,16 @@ def stub_host_commands(monkeypatch) -> None:
     monkeypatch.setattr(builder.shutil, "which", lambda name: f"/usr/bin/{name}")
 
 
-def test_validate_accepts_the_two_trees(tmp_path, monkeypatch):
+def test_validate_accepts_the_two_trees(set_setting, tmp_path, monkeypatch):
     ports = make_ports_tree(tmp_path / "DeltaPorts")
     tool = make_tool_checkout(tmp_path / "polytropos")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     stub_host_commands(monkeypatch)
 
     builder.validate()
 
 
-def test_validate_rejects_the_two_trees_swapped(tmp_path, monkeypatch):
+def test_validate_rejects_the_two_trees_swapped(set_setting, tmp_path, monkeypatch):
     """The old check asked whether --delta-root held a `dportsv3` file, which
     was true only while the tool lived inside the ports checkout — so it
     rejected every real ports tree once it moved out."""
@@ -103,14 +103,14 @@ def test_validate_rejects_the_two_trees_swapped(tmp_path, monkeypatch):
 
     ports = make_ports_tree(tmp_path / "DeltaPorts")
     tool = make_tool_checkout(tmp_path / "polytropos")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=tool, tool_root=ports)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=tool, tool_root=ports)
     stub_host_commands(monkeypatch)
 
     with pytest.raises(UsageError, match="--delta-root.*ports/ nor a special/"):
         builder.validate()
 
 
-def test_validate_rejects_a_tool_root_without_the_wrapper(tmp_path, monkeypatch):
+def test_validate_rejects_a_tool_root_without_the_wrapper(set_setting, tmp_path, monkeypatch):
     """bin/dportsv3, not ./dportsv3 — at the tool repo root that name is the
     Python package directory."""
     from dports_dev_env.errors import UsageError
@@ -121,14 +121,14 @@ def test_validate_rejects_a_tool_root_without_the_wrapper(tmp_path, monkeypatch)
     (tool / "dportsv3").mkdir()
     git(tool, "add", "-A")
     git(tool, "commit", "-qm", "package dir, no wrapper")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     stub_host_commands(monkeypatch)
 
     with pytest.raises(UsageError, match="--tool-root.*bin/dportsv3"):
         builder.validate()
 
 
-def test_validate_rejects_a_dirty_checkout_unless_allowed(tmp_path, monkeypatch):
+def test_validate_rejects_a_dirty_checkout_unless_allowed(set_setting, tmp_path, monkeypatch):
     from dports_dev_env.errors import UsageError
 
     ports = make_ports_tree(tmp_path / "DeltaPorts")
@@ -136,19 +136,19 @@ def test_validate_rejects_a_dirty_checkout_unless_allowed(tmp_path, monkeypatch)
     (tool / "pyproject.toml").write_text('[project]\nname = "edited"\n')
     stub_host_commands(monkeypatch)
 
-    strict = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    strict = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     with pytest.raises(UsageError, match="refusing to create env from a dirty"):
         strict.validate()
 
-    lenient = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool, allow_dirty=True)
+    lenient = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool, allow_dirty=True)
     lenient.validate()
 
 
-def test_tool_branch_follows_the_host_checkout(tmp_path, monkeypatch):
+def test_tool_branch_follows_the_host_checkout(set_setting, tmp_path, monkeypatch):
     ports = make_ports_tree(tmp_path / "DeltaPorts")
     tool = make_tool_checkout(tmp_path / "polytropos")
     git(tool, "switch", "-qc", "x5-work")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     stub_host_commands(monkeypatch)
 
     builder.validate()
@@ -157,13 +157,13 @@ def test_tool_branch_follows_the_host_checkout(tmp_path, monkeypatch):
     assert builder.initial_state(provisioned_base_id="b").repos.tool_branch == "x5-work"
 
 
-def test_a_created_env_can_be_read_back(tmp_path, monkeypatch):
+def test_a_created_env_can_be_read_back(set_setting, tmp_path, monkeypatch):
     """initial_state() hardcoded schema=1, so every env was unreadable the
     moment it was saved. create() never re-reads its own state, so it reported
     success and the next command failed."""
     ports = make_ports_tree(tmp_path / "DeltaPorts")
     tool = make_tool_checkout(tmp_path / "polytropos")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     stub_host_commands(monkeypatch)
     builder.validate()
 
@@ -172,7 +172,7 @@ def test_a_created_env_can_be_read_back(tmp_path, monkeypatch):
     assert builder.store.load("env1").source.tool_root == str(tool)
 
 
-def test_detached_tool_head_fails_before_the_env_dir_exists(tmp_path, monkeypatch):
+def test_detached_tool_head_fails_before_the_env_dir_exists(set_setting, tmp_path, monkeypatch):
     """Resolving the branch inside initial_state() would raise after
     env_dir.mkdir() and outside the try that records a failed env, leaving an
     orphan directory holding the name."""
@@ -181,7 +181,7 @@ def test_detached_tool_head_fails_before_the_env_dir_exists(tmp_path, monkeypatc
     ports = make_ports_tree(tmp_path / "DeltaPorts")
     tool = make_tool_checkout(tmp_path / "polytropos")
     git(tool, "checkout", "-q", "--detach")
-    builder = make_builder(tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
+    builder = make_builder(set_setting, tmp_path, monkeypatch, delta_root=ports, tool_root=tool)
     stub_host_commands(monkeypatch)
 
     with pytest.raises(UsageError, match="detached HEAD"):
@@ -265,18 +265,18 @@ def seed_env_projects(root_dir: Path, *, generator: str, dev_env: str) -> None:
     (tool / "dev-env" / "pyproject.toml").write_text(dev_env)
 
 
-def venv_cache(tmp_path, monkeypatch):
+def venv_cache(set_setting, tmp_path, monkeypatch):
     from dports_dev_env.config import load_config
     from dports_dev_env.venv import GeneratorVenvCache
 
-    monkeypatch.setenv("DPORTS_DEV_CACHE_ROOT", str(tmp_path / "cache"))
+    set_setting("dev_env.cache_root", str(tmp_path / "cache"))
     return GeneratorVenvCache(load_config())
 
 
-def test_venv_key_covers_the_dev_env_project_too(tmp_path, monkeypatch):
+def test_venv_key_covers_the_dev_env_project_too(set_setting, tmp_path, monkeypatch):
     """bin/dportsv3 installs dev-env into the generator venv, so keying on the
     generator pyproject alone hands back a stale venv when dev-env's deps move."""
-    cache = venv_cache(tmp_path, monkeypatch)
+    cache = venv_cache(set_setting, tmp_path, monkeypatch)
     root = tmp_path / "root"
 
     seed_env_projects(root, generator="a", dev_env="b")
@@ -292,9 +292,9 @@ def test_venv_key_covers_the_dev_env_project_too(tmp_path, monkeypatch):
     assert cache.pyproject_hash(root) == baseline
 
 
-def test_venv_key_distinguishes_a_dependency_moving_between_projects(tmp_path, monkeypatch):
+def test_venv_key_distinguishes_a_dependency_moving_between_projects(set_setting, tmp_path, monkeypatch):
     """Same combined bytes, different project — the path is hashed in too."""
-    cache = venv_cache(tmp_path, monkeypatch)
+    cache = venv_cache(set_setting, tmp_path, monkeypatch)
     root = tmp_path / "root"
 
     seed_env_projects(root, generator="dep", dev_env="")
@@ -304,11 +304,11 @@ def test_venv_key_distinguishes_a_dependency_moving_between_projects(tmp_path, m
     assert cache.pyproject_hash(root) != moved_to_generator
 
 
-def test_venv_key_reports_a_missing_project(tmp_path, monkeypatch):
+def test_venv_key_reports_a_missing_project(set_setting, tmp_path, monkeypatch):
     from dports_dev_env.errors import ProvisionError
     from dports_dev_env.layout import TOOL_RELATIVE
 
-    cache = venv_cache(tmp_path, monkeypatch)
+    cache = venv_cache(set_setting, tmp_path, monkeypatch)
     root = tmp_path / "root"
     seed_env_projects(root, generator="a", dev_env="b")
     (root / TOOL_RELATIVE / "dev-env" / "pyproject.toml").unlink()

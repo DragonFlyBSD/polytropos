@@ -158,6 +158,13 @@ SETTINGS: list[Setting] = [
     Setting("runner.activity_log_max", "int", 5000,
             "Rows kept in the activity log. The floor is 50."),
     Setting(
+        "runner.stale_queued_max_age_seconds", "int", 3600,
+        "How old a QUEUED row whose .job file has vanished must be\n"
+        "before it is reaped. Catches a row recording a path this runner\n"
+        "never scans, which otherwise blocks every later job for that\n"
+        "origin indefinitely.",
+    ),
+    Setting(
         "runner.dump_session", "bool", False,
         "Write the full LLM session for each attempt as a bundle artifact.\n"
         "Large, and the single most useful thing to have when an attempt\n"
@@ -173,6 +180,29 @@ SETTINGS: list[Setting] = [
         "prompts where the classifier needed a log and a snippet; the\n"
         "patch agent has get_file for the rest. The floor is 2048, below\n"
         "which the head+tail split has no room around the marker.",
+    ),
+
+    Setting(
+        "runner.confirm_green_threshold", "int", 2,
+        "Consecutive green confirm builds before an issue resolves. A\n"
+        "single green can come from an unrelated transient, so one is not\n"
+        "enough to close an issue. The floor is 1.",
+    ),
+    Setting(
+        "runner.confirm_max_failures", "int", 3,
+        "Confirm builds that produce NO verdict — dev-env gone, nothing\n"
+        "to replay — before the issue goes back to a human with a\n"
+        "handoff explaining why the build never ran. The floor is 1.",
+    ),
+    Setting(
+        "runner.confirm_backoff_seconds", "int", 60,
+        "Wait after the first verdictless confirm attempt, doubling each\n"
+        "time. The floor is 1.",
+    ),
+    Setting(
+        "runner.confirm_backoff_max_seconds", "int", 3600,
+        "Ceiling on that wait, so a passing outage is not mistaken for a\n"
+        "permanent one. The floor is 1.",
     ),
 
     # ------------------------------------------------------------------ llm

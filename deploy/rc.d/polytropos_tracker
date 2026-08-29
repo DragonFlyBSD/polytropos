@@ -22,10 +22,12 @@
 # polytropos_cmd            (str)   The dportsv3 command to run.
 # polytropos_tracker_bind   (str)   Listen address. Default 0.0.0.0.
 # polytropos_tracker_port   (str)   Listen port. Default 8080.
-# polytropos_chat_env       (str)   Credentials for the fix-chat panel.
-#                                   Absent means chat is disabled.
-# polytropos_config_dir     (str)   Where delivery.toml, delivery.token and
-#                                   agentic-policy.json live.
+# polytropos_config_dir     (str)   Where polytropos.toml and secrets/ live.
+#                                   Everything else the tracker needs is IN
+#                                   polytropos.toml — bind address, port,
+#                                   database, artifact root, chat model and
+#                                   delivery. `dportsv3 config show` prints
+#                                   the lot with its provenance.
 #
 
 . /etc/rc.subr
@@ -50,15 +52,9 @@ load_rc_config $name
 PATH="${polytropos_path}"
 export PATH
 : ${polytropos_user:="polytropos"}
-: ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_home:="/var/db/polytropos"}
 : ${polytropos_log_dir:="/var/log/polytropos"}
-: ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
-: ${polytropos_artifact_root:="${polytropos_logs_root}/evidence"}
-: ${polytropos_chat_env:="/usr/local/etc/polytropos/chat.env"}
 : ${polytropos_config_dir:="/usr/local/etc/polytropos"}
-: ${polytropos_tracker_bind:="0.0.0.0"}
-: ${polytropos_tracker_port:="8080"}
 
 # $pidfile is the SUPERVISOR's, and has to be. rc.subr matches the pid it
 # finds there against $procname, which defaults to $command — that is
@@ -86,16 +82,23 @@ logfile="${polytropos_log_dir}/tracker.log"
 # which it cannot read. www/grist-core exports HOME for the same
 # reason. Anything using Path.home() or a ~/.cache would fail in a
 # way that points nowhere near this file.
+# Three variables, and each is here for a reason that is not "config":
+# HOME because `daemon -u` does not set it, NO_BOOTSTRAP because it tells
+# the wrapper this is a service rather than a developer, and CONFIG_DIR
+# because it names the settings file and so cannot live inside it.
+#
+# The database path, artifact root, bind address and port used to be here
+# too, translated from polytropos.conf into environment variables one by
+# one. They are settings now: the tracker reads them itself, and there is
+# no second spelling of any of them to keep in step.
 polytropos_tracker_env="HOME=${polytropos_home} DPORTSV3_NO_BOOTSTRAP=1 \
-DPORTSV3_CONFIG_DIR=${polytropos_config_dir} \
-DPORTSV3_STATE_DB=${polytropos_state_db} \
-DPORTSV3_ARTIFACT_ROOT=${polytropos_artifact_root}"
+DPORTSV3_CONFIG_DIR=${polytropos_config_dir}"
 
 command="/usr/sbin/daemon"
+# No --bind/--port: they are tracker.bind and tracker.port in the
+# settings. The flags still exist for an operator running this by hand.
 command_args="-c -f -o ${logfile} -p ${child_pidfile} -P ${pidfile} -t ${name} -u ${polytropos_user} \
-    ${polytropos_cmd} tracker serve \
-    --bind ${polytropos_tracker_bind} \
-    --port ${polytropos_tracker_port}"
+    ${polytropos_cmd} tracker serve"
 
 start_precmd="polytropos_tracker_prestart"
 
@@ -126,13 +129,18 @@ polytropos_tracker_prestart()
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_log_dir}" || return 1
 	install -d -o "${polytropos_user}" -m 0755 "${polytropos_home}" || return 1
 
-	# The fix-chat panel calls an LLM from inside the tracker, so this
-	# service needs credentials too — a separate file from the runner's,
-	# because this one runs as ${polytropos_user} and must be able to
-	# read it. Absent is a supported state: DP_HARNESS_CHAT_MODEL unset
-	# disables the feature (503 on the endpoint, panel hidden).
-	if [ -r "${polytropos_chat_env}" ]; then
-		. "${polytropos_chat_env}"
+	# Nothing is sourced here any more. This script used to read a shell
+	# file of shell exports, because os.environ was
+	# the only channel a setting had into the Python. The tracker reads
+	# its own settings file now, so the shim is gone; the fix-chat panel
+	# is configured by llm.chat.model and stays disabled while that is
+	# empty.
+	#
+	# Report a settings file that will not parse, rather than starting a
+	# service that will fail at its first request.
+	if ! DPORTSV3_NO_BOOTSTRAP=1 DPORTSV3_CONFIG_DIR="${polytropos_config_dir}" \
+	    "${polytropos_cmd}" config check >/dev/null 2>&1; then
+		warn "settings in ${polytropos_config_dir} did not validate; run: ${polytropos_cmd} config check"
 	fi
 }
 

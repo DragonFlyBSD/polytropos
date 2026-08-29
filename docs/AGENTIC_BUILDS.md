@@ -102,42 +102,46 @@ operator actions and must not read the same.
 
 ## Environment
 
-Required by the runner:
+Everything is one file, `$DPORTSV3_CONFIG_DIR/polytropos.toml`:
 
-| Var | Meaning | Example |
-|---|---|---|
-| `DPORTSV3_STATE_DB` | Path to state.db (shared with the runner) | `/build/synth/logs/evidence/state.db` |
-| `DPORTSV3_TRACKER_URL` | Base URL for runner→tracker lookups (bundles, ports) | `http://127.0.0.1:8080` (default) |
-| `ARTIFACT_STORE_URL` | Base URL the dsynth hooks post to. Always loopback | `http://127.0.0.1:8080` (default) |
-| `DP_HARNESS_TRIAGE_MODEL` | LiteLLM model string for triage | `openai/gpt-5-nano` |
-| `DP_HARNESS_PATCH_MODEL` | LiteLLM model string for patch | `anthropic/claude-sonnet-4` |
-| `DP_HARNESS_TRIAGE_API_KEY` / `_BASE` | Provider key + optional custom endpoint | — |
-| `DP_HARNESS_PATCH_API_KEY` / `_BASE` | Same for patch | — |
+```toml
+[llm.triage]
+model = "deepseek/deepseek-v4-flash"      # cheap; called on every failure
+api_key_file = "secrets/triage.key"       # a file, so the mode follows the reader
 
-Confirm-build tuning (all optional, defaults shown):
+[llm.patch]
+model = "anthropic/claude-sonnet-4"       # the expensive one
+api_key_file = "secrets/patch.key"
+```
+
+`dportsv3 config show` prints every value and where it came from;
+`dportsv3 config sample` prints a commented starting point.
+
+`ARTIFACT_STORE_URL` stays an environment variable and is not a setting:
+it is what the dsynth hooks post to, from inside a chroot where the
+settings file is not reachable. It is loopback permanently and on
+purpose.
+
+Confirm-build tuning, in the same file (all optional, defaults shown):
 
 | Var | Meaning | Default |
 |---|---|---|
-| `DP_CONFIRM_GREEN_THRESHOLD` | Consecutive green builds before an issue resolves | 2 |
-| `DP_CONFIRM_MAX_FAILURES` | Attempts that produce no verdict before the issue goes to a human | 3 |
-| `DP_CONFIRM_BACKOFF_SECONDS` | Wait after the first such failure, doubling each time | 60 |
-| `DP_CONFIRM_BACKOFF_MAX_SECONDS` | Ceiling on that wait | 3600 |
+| `runner.confirm_green_threshold` | Consecutive green builds before an issue resolves | 2 |
+| `runner.confirm_max_failures` | Attempts that produce no verdict before the issue goes to a human | 3 |
+| `runner.confirm_backoff_seconds` | Wait after the first such failure, doubling each time | 60 |
+| `runner.confirm_backoff_max_seconds` | Ceiling on that wait | 3600 |
 
 A confirm build that cannot run — dev-env gone, nothing to replay, the queue
 unwritable, the verdict write losing its lock race — is retried rather than
 abandoned, but not immediately: the waits grow, so a passing outage is not
-mistaken for a permanent one. After `DP_CONFIRM_MAX_FAILURES` such attempts
+mistaken for a permanent one. After `runner.confirm_max_failures` such attempts
 the issue is reopened and goes back to the worklist, with
 `analysis/manual_handoff.md` explaining why the build never ran. Any build
 that does produce a verdict, green or red, clears both the tally and the
 wait.
 
-Required by the tracker:
-
-| Var | Meaning |
-|---|---|
-| `DPORTSV3_STATE_DB` | State DB path (defaults to `$PWD/state.db`) |
-| `DPORTSV3_ARTIFACT_ROOT` | Evidence dir for blob streaming (defaults to `/build/synth/logs/evidence`) |
+Required by the tracker: nothing beyond the same file.
+`paths.state_db` and `paths.artifact_root` are settings.
 
 Required by the hooks (set in `/etc/dsynth/hooks.conf` or wherever your
 dsynth profile sources environment from):
@@ -231,9 +235,9 @@ per-target events live.
 | Symptom | Check |
 |---|---|
 | Runner sees no bundles | Hook output (`dsynth` logs); `state.db` `bundles` table |
-| Triage 401s | `DP_HARNESS_TRIAGE_API_KEY` and `_API_BASE` |
+| Triage 401s | `secrets/triage.key` and `llm.triage.api_base` |
 | Patch loop stalls | Tracker `/agentic/jobs/{id}` → state=inflight + last_error |
-| Artifact 404 | `DPORTSV3_ARTIFACT_ROOT` names the evidence dir the tracker reads *and writes* |
+| Artifact 404 | `paths.artifact_root` names the evidence dir the tracker reads *and writes* |
 | Hook can't reach tracker | `DPORTSV3_TRACKER_URL` from the dsynth env; some chroot setups need a bind-mount or 127.0.0.1 only |
 
 For deeper triage of the agent runtime itself, see `docs/TESTING_E2E.md`

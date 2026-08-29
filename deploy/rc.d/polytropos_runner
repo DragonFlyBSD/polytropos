@@ -25,11 +25,11 @@
 # polytropos_cmd             (str)  The dportsv3 command to run.
 # polytropos_dev_env_cmd     (str)  The dports-dev-env command it uses to
 #                                   reach a chroot.
-# polytropos_queue_root      (str)  Where the hooks write .job files.
-# polytropos_runner_dev_env  (str)  Default dev-env name. Empty means
-#                                   "let the tracker or auto-pick decide".
-# polytropos_harness_env     (str)  File holding the LLM credentials.
-# polytropos_config_dir      (str)  Where agentic-policy.json lives.
+# polytropos_config_dir      (str)  Where polytropos.toml and secrets/ live.
+#                                   Everything else this service needs is IN
+#                                   polytropos.toml — the queue root, the
+#                                   models, the attempt limits, the policy.
+#                                   `dportsv3 config show` prints the lot.
 #
 
 . /etc/rc.subr
@@ -54,14 +54,8 @@ load_rc_config $name
 PATH="${polytropos_path}"
 export PATH
 : ${polytropos_dev_env_cmd:="/usr/local/bin/dports-dev-env"}
-: ${polytropos_logs_root:="/build/synth/logs"}
 : ${polytropos_log_dir:="/var/log/polytropos"}
-: ${polytropos_state_db:="${polytropos_logs_root}/evidence/state.db"}
-: ${polytropos_queue_root:="${polytropos_logs_root}/evidence/queue"}
-: ${polytropos_tracker_url:="http://127.0.0.1:8080"}
-: ${polytropos_harness_env:="/usr/local/etc/polytropos/harness.env"}
 : ${polytropos_config_dir:="/usr/local/etc/polytropos"}
-: ${polytropos_runner_dev_env:=""}
 
 # $pidfile is the SUPERVISOR's, and has to be. rc.subr matches the pid it
 # finds there against $procname, which defaults to $command — that is
@@ -84,18 +78,15 @@ pidfile="/var/run/${name}.pid"
 child_pidfile="/var/run/${name}.child.pid"
 logfile="${polytropos_log_dir}/runner.log"
 
-# NOTE: ${name}_env is rc.subr's own knob for the child environment, which
-# is why the dev-env name above is polytropos_runner_dev_env and not
-# polytropos_runner_env. Setting the latter here would silently replace
-# this.
+# NOTE: ${name}_env is rc.subr's own knob for the child environment.
+#
+# Two variables, and neither is configuration: NO_BOOTSTRAP tells the
+# wrapper this is a service rather than a developer, and CONFIG_DIR names
+# the settings file and so cannot live inside it. The state database, the
+# tracker URL and the default dev-env used to be here too, translated
+# from polytropos.conf one variable at a time; they are settings now.
 polytropos_runner_env="DPORTSV3_NO_BOOTSTRAP=1 \
-DPORTSV3_CONFIG_DIR=${polytropos_config_dir} \
-DPORTSV3_STATE_DB=${polytropos_state_db} \
-DPORTSV3_TRACKER_URL=${polytropos_tracker_url}"
-
-_dev_env_flag=""
-[ -n "${polytropos_runner_dev_env}" ] && \
-	_dev_env_flag="--env ${polytropos_runner_dev_env}"
+DPORTSV3_CONFIG_DIR=${polytropos_config_dir}"
 
 # No `daemon -r`, deliberately, and not for lack of precedent: ports such
 # as net-mgmt/bosun and net-mgmt/telegraf run `daemon -fcr -P ...` and
@@ -109,9 +100,10 @@ _dev_env_flag=""
 # supervisor would simply restart it. The ports above use -P for exactly
 # this reason.
 command="/usr/sbin/daemon"
+# No --queue-root and no --env: paths.queue_root and runner.dev_env are
+# settings. Both flags still exist for an operator running this by hand.
 command_args="-c -f -o ${logfile} -p ${child_pidfile} -P ${pidfile} -t ${name} \
-    ${polytropos_cmd} agent-queue-runner \
-    --queue-root ${polytropos_queue_root} ${_dev_env_flag}"
+    ${polytropos_cmd} agent-queue-runner"
 
 start_precmd="polytropos_runner_prestart"
 
@@ -140,21 +132,31 @@ polytropos_runner_prestart()
 		err 1 "${polytropos_dev_env_cmd} does not run; set polytropos_dev_env_cmd — try: ${polytropos_dev_env_cmd} --help"
 	fi
 
-	# The queue root is where the dsynth hooks drop .job files. The
-	# runner requires the four subdirectories to exist and exits 1
+	# Ask the tool where the queue is rather than keeping a second copy
+	# of the path in polytropos.conf. One exec at service start, and no
+	# way for the two to disagree — which they would, silently, the first
+	# time someone changed paths.queue_root and not the shell variable.
+	_queue_root=$(DPORTSV3_NO_BOOTSTRAP=1 \
+	    DPORTSV3_CONFIG_DIR="${polytropos_config_dir}" \
+	    "${polytropos_cmd}" config get paths.queue_root 2>/dev/null)
+	if [ -z "${_queue_root}" ]; then
+		err 1 "could not read paths.queue_root; try: ${polytropos_cmd} config check"
+	fi
+
+	# The runner requires the four subdirectories to exist and exits 1
 	# naming the missing one, so create them rather than fail at start.
 	for _d in pending inflight done failed; do
-		install -d -m 0775 "${polytropos_queue_root}/${_d}" || return 1
+		install -d -m 0775 "${_queue_root}/${_d}" || return 1
 	done
 	install -d -m 0755 "${polytropos_log_dir}" || return 1
 
-	if [ -r "${polytropos_harness_env}" ]; then
-		if [ -n "$(find "${polytropos_harness_env}" -perm +077 2>/dev/null)" ]; then
-			warn "${polytropos_harness_env} is readable beyond its owner; it holds API keys (chmod 600)"
-		fi
-		. "${polytropos_harness_env}"
-	else
-		warn "no ${polytropos_harness_env}; the runner will start without LLM credentials and every job will fail"
+	# Nothing is sourced here any more. This used to read a shell file of
+	# shell exports, because os.environ was the only channel
+	# a setting had into the Python. Credentials live one per file under
+	# secrets/ now, and the runner reads them itself.
+	if ! DPORTSV3_NO_BOOTSTRAP=1 DPORTSV3_CONFIG_DIR="${polytropos_config_dir}" \
+	    "${polytropos_cmd}" config check >/dev/null 2>&1; then
+		warn "settings in ${polytropos_config_dir} did not validate; run: ${polytropos_cmd} config check"
 	fi
 
 	# Exported here rather than through ${name}_env, which rc.subr

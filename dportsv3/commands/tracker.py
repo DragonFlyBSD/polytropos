@@ -159,8 +159,13 @@ def _cmd_serve(args: Namespace) -> int:
     app = create_app(db_path)
     # getattr, not args.bind: _cmd_serve is also reachable with a
     # hand-built Namespace, and an older one has no bind attribute.
-    bind = getattr(args, "bind", None) or DEFAULT_BIND
-    uvicorn.run(app, host=bind, port=int(args.port))
+    from dportsv3 import settings  # noqa: PLC0415
+    # The flags still exist for someone running this by hand; unset, the
+    # settings decide. The rc script used to pass both from shell
+    # variables that were a second spelling of the same two values.
+    bind = getattr(args, "bind", None) or settings.get_str("tracker.bind")
+    port = getattr(args, "port", None) or settings.get("tracker.port")
+    uvicorn.run(app, host=bind or DEFAULT_BIND, port=int(port))
     return 0
 
 

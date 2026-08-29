@@ -37,6 +37,26 @@ packages; site-owned inputs (the live config dir, the ports tree) are named via
 package — that coupling is what made this repo hard to separate, and the
 resolver raises rather than degrading silently when something is missing.
 
+## Settings: declare it, don't read the environment
+
+Every configurable value is one entry in `dportsv3/settings.py` (or, for the
+dev-env's own, `dev-env/dports_dev_env/config.py`). Read it with
+`settings.get("section.key")`. The generated sample, `config show`'s
+provenance column and the unknown-key warning all derive from that table, so
+a setting the code reads and no file mentions cannot be written.
+
+**Do not add an environment variable.** A value earns one only if it cannot be
+known when the config file is written — a per-run debug switch, a credential a
+secret store injects, something that has to cross into a chroot. If it earns
+one, declare it as `env=` on the setting so the reader finds it next to what it
+overrides. `tests/test_settings_unification.py` fails the build otherwise: it
+scans for any `DP_`/`DPORTS_` name appearing as a bare literal anywhere in
+either package.
+
+Credentials are never settings. Each is a file named by a `*_file` setting, so
+its mode can follow whichever service reads it — the runner is root, the
+tracker is not.
+
 ## Beads: look it up, don't recall it
 
 Look bead IDs up (`bd list`, `bd search`) before citing one — never write an ID

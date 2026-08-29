@@ -86,12 +86,12 @@ CREATE TABLE IF NOT EXISTS issues (
     green_head_run_id               INTEGER,
     -- A4: consecutive green confirm builds so far. A single green is
     -- provisional (build flakiness: network, toolchain); the issue only
-    -- resolves once this reaches DP_CONFIRM_GREEN_THRESHOLD. Reset to 0 on
+    -- resolves once this reaches runner.confirm_green_threshold. Reset to 0 on
     -- a red verdict and on resolve.
     confirm_green_count             INTEGER NOT NULL DEFAULT 0,
     -- Consecutive confirm builds that could not RUN (env gone, no diff to
     -- replay, tracker unreachable) — as opposed to ran-and-failed, which is a
-    -- red verdict. Bounded by DP_CONFIRM_MAX_FAILURES so a permanently
+    -- red verdict. Bounded by runner.confirm_max_failures so a permanently
     -- unbuildable fix stops retrying and goes to a human instead of parking
     -- the issue in `resolving` forever. Reset on any produced verdict.
     confirm_failure_count           INTEGER NOT NULL DEFAULT 0,

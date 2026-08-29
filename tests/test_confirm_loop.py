@@ -365,8 +365,8 @@ def test_red_after_a_provisional_green_reopens_and_resets(conn):
     assert r["confirm_green_count"] == 0
 
 
-def test_threshold_of_one_resolves_on_the_first_green(conn, monkeypatch):
-    monkeypatch.setenv("DP_CONFIRM_GREEN_THRESHOLD", "1")
+def test_threshold_of_one_resolves_on_the_first_green(set_setting, conn, monkeypatch):
+    set_setting("runner.confirm_green_threshold", 1)
     add_build_run(conn, 3)
     add_issue(conn, state="resolving", requested=1, building=1)
     runner._record_confirm_verdict(
@@ -480,22 +480,22 @@ def test_a_produced_verdict_resets_the_failure_tally(conn):
 # --- C4: pacing the retries ------------------------------------------------
 
 
-def test_backoff_grows_with_the_tally(monkeypatch):
+def test_backoff_grows_with_the_tally(set_setting, monkeypatch):
     """The bound says how many attempts; this says how far apart. Without it
     a fast failure ('no dev-env', a failed branch checkout) burned the whole
     budget on consecutive loop passes — seconds — and handed a transient
     outage to a human."""
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "60")
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_MAX_SECONDS", "3600")
+    set_setting("runner.confirm_backoff_seconds", 60)
+    set_setting("runner.confirm_backoff_max_seconds", 3600)
     assert [runner._confirm_backoff_seconds(n) for n in (1, 2, 3, 4)] == \
         [60, 120, 240, 480]
 
 
-def test_backoff_is_capped(monkeypatch):
-    """A raised DP_CONFIRM_MAX_FAILURES must not push the last retry past the
+def test_backoff_is_capped(set_setting, monkeypatch):
+    """A raised runner.confirm_max_failures must not push the last retry past the
     point an operator would still be waiting for it."""
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "60")
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_MAX_SECONDS", "300")
+    set_setting("runner.confirm_backoff_seconds", 60)
+    set_setting("runner.confirm_backoff_max_seconds", 300)
     assert runner._confirm_backoff_seconds(20) == 300
 
 
@@ -504,8 +504,8 @@ def test_no_failures_means_no_delay():
     assert runner._next_eligible_at(0) is None
 
 
-def test_the_knobs_survive_a_typo(monkeypatch):
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", "soon")
+def test_the_knobs_survive_a_typo(set_setting, monkeypatch):
+    set_setting("runner.confirm_backoff_seconds", "soon")
     assert runner._confirm_backoff_seconds(1) == 60
 
 
@@ -559,13 +559,13 @@ def test_pacing_does_not_hold_back_a_healthy_issue(conn):
 
 
 @pytest.mark.parametrize("value", ["0", "-1"])
-def test_a_knob_cannot_be_set_to_disable_itself(monkeypatch, value):
+def test_a_knob_cannot_be_set_to_disable_itself(set_setting, monkeypatch, value):
     """The clamp is the point of these knobs having a shared reader: zero
     failures allowed means give up on the first hiccup, and a zero backoff is
     the hot loop C4 removes. Both read as 'off' while looking configured."""
-    monkeypatch.setenv("DP_CONFIRM_MAX_FAILURES", value)
-    monkeypatch.setenv("DP_CONFIRM_BACKOFF_SECONDS", value)
-    monkeypatch.setenv("DP_CONFIRM_GREEN_THRESHOLD", value)
+    set_setting("runner.confirm_max_failures", value)
+    set_setting("runner.confirm_backoff_seconds", value)
+    set_setting("runner.confirm_green_threshold", value)
     assert runner._confirm_max_failures() == 1
     assert runner._confirm_green_threshold() == 1
     assert runner._confirm_backoff_seconds(1) >= 1

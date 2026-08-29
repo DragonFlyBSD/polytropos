@@ -1,0 +1,294 @@
+# Polytropos — the one settings file.
+#
+# Installed as <prefix>/etc/polytropos/polytropos.toml, which both
+# services read as $DPORTSV3_CONFIG_DIR. Every line below is commented
+# out and shows the built-in default: uncomment only what you mean to
+# change, so this file records your decisions rather than restating every
+# default, and an improved default reaches you instead of being pinned by
+# a copy of its old value.
+#
+# This file is world-readable. Credentials are NOT in it — each one lives
+# in its own file under secrets/, named by a *_file setting, so the mode
+# can follow whichever service reads it:
+#
+#   secrets/triage.key       0600 root                (the runner is root)
+#   secrets/patch.key        0600 root
+#   secrets/chat.key         0640 root:<service group> (the tracker is not)
+#   secrets/delivery.token   0640 root:<service group>
+#
+# `dportsv3 config show` prints every resolved value and where it came
+# from. `dportsv3 config check` validates this file without starting
+# anything.
+#
+# Generated from dportsv3/settings.py. Do not hand-edit the sample; edit
+# the table and regenerate, so the two cannot drift.
+
+
+[paths]
+# Where things live. Everything else is derived from logs_root.
+# The evidence tree. The three paths below default to positions
+# inside it, so on a stock layout this is the only one to set.
+#logs_root = "/build/synth/logs"
+
+# The tracker's database. Both services write it, which is why the
+# evidence tree belongs to the service account.
+#state_db = "/build/synth/logs/evidence/state.db"
+
+# Where bundles and their artifacts are stored.
+#artifact_root = "/build/synth/logs/evidence"
+
+# Where the dsynth hooks drop .job files for the runner to claim.
+#queue_root = "/build/synth/logs/evidence/queue"
+
+# The DeltaPorts checkout. Empty means 'use the current directory',
+# which is checked for a ports/ or special/ subdirectory before use.
+# Override for one run with $DPORTS_DELTA_ROOT.
+#delta_root = "None"
+
+
+[tracker]
+# The web UI and read API.
+# Listen address. The tracker has no authentication and its API can
+# start builds and spend LLM credit; 0.0.0.0 assumes a trusted
+# network. Use 127.0.0.1 and an ssh tunnel if that is not your
+# situation. A --bind flag overrides this.
+#bind = "0.0.0.0"
+
+# Listen port. A --port flag overrides this.
+#port = 8080
+
+# How the runner reaches the tracker. Keep in step with the two
+# settings above.
+# 
+# This one keeps an environment override because it has to cross
+# into a chroot: artifact_store_client runs from the dsynth hooks
+# inside a build environment, where dportsv3 is not importable and
+# common/endpoints.py is deliberately stdlib-only.
+# Override for one run with $DPORTSV3_TRACKER_URL.
+#url = "http://127.0.0.1:8080"
+
+
+[runner]
+# The agent queue runner: how hard it tries, and how often.
+# Default dev-env for jobs that do not name one. Empty is right on a
+# single-env host: the runner auto-picks when exactly one exists.
+# With several and nothing set it holds, rather than running with the
+# dsynth-busy gate off.
+#dev_env = ""
+
+# How many patch attempts one signature gets inside the window.
+#max_patch_attempts = 3
+
+# The window the attempt cap is counted over.
+#attempt_window_hours = 2
+
+# How many rounds of log-snippet requests triage may make.
+#max_snippet_rounds = 5
+
+# Hard ceiling on attempts per bundle, independent of the window.
+# The last line of defence against a loop that keeps resetting the
+# signature.
+#bundle_backstop = 10
+
+# Identical consecutive failures before the runner stops treating a
+# signature as worth another attempt.
+#signature_stickiness = 3
+
+# How long a dev-env health probe is trusted before re-running.
+#health_cache_seconds = 60
+
+# A retry needs this fraction of the budget still available to be
+# worth starting. Clamped to 0.0-1.0.
+#min_attempt_budget_fraction = 0.25
+
+# Rows kept in the activity log. The floor is 50.
+#activity_log_max = 5000
+
+# How old a QUEUED row whose .job file has vanished must be
+# before it is reaped. Catches a row recording a path this runner
+# never scans, which otherwise blocks every later job for that
+# origin indefinitely.
+#stale_queued_max_age_seconds = 3600
+
+# Write the full LLM session for each attempt as a bundle artifact.
+# Large, and the single most useful thing to have when an attempt
+# goes wrong.
+# Override for one run with $DP_HARNESS_DUMP_SESSION.
+#dump_session = false
+
+# Bytes kept per tool result in a session dump. The floor is 1024.
+#dump_session_cap = 16384
+
+# Characters of any one file inlined into a prompt before it is
+# truncated head-and-tail. Unbounded inlining produced 250K-token
+# prompts where the classifier needed a log and a snippet; the
+# patch agent has get_file for the rest. The floor is 2048, below
+# which the head+tail split has no room around the marker.
+#context_file_cap = 32768
+
+# Consecutive green confirm builds before an issue resolves. A
+# single green can come from an unrelated transient, so one is not
+# enough to close an issue. The floor is 1.
+#confirm_green_threshold = 2
+
+# Confirm builds that produce NO verdict — dev-env gone, nothing
+# to replay — before the issue goes back to a human with a
+# handoff explaining why the build never ran. The floor is 1.
+#confirm_max_failures = 3
+
+# Wait after the first verdictless confirm attempt, doubling each
+# time. The floor is 1.
+#confirm_backoff_seconds = 60
+
+# Ceiling on that wait, so a passing outage is not mistaken for a
+# permanent one. The floor is 1.
+#confirm_backoff_max_seconds = 3600
+
+
+[llm]
+# Model configuration, per role. Keys are NOT here — each role
+# names a file, so the mode can follow the reader.
+# 'auto' uses the openai SDK for providers that speak the OpenAI
+# wire format and litellm otherwise. 'litellm' forces the old path.
+# TEMPORARY escape hatch — see poly-r1g.
+# Override for one run with $DP_HARNESS_LLM_BACKEND.
+#backend = "auto"
+
+
+[llm.triage]
+# Called on every failure. Cheap and fast.
+# Triage is called on every failure, so it wants to be cheap.
+#model = ""
+
+# Custom endpoint. Empty uses the provider's own.
+#api_base = ""
+
+# Force a provider code path. Empty infers it from the model.
+#provider = ""
+
+# Seconds per request.
+#timeout = 120
+
+# none | low | high | max. Triage classifies against a fixed schema
+# and does not need to think. TEMPORARY — see poly-r1g.
+# Override for one run with $DP_HARNESS_TRIAGE_REASONING.
+#reasoning = "none"
+
+
+[llm.patch]
+# The expensive one. Unset fields fall back to triage.
+# The expensive one. Empty falls back to the triage model.
+#model = ""
+
+# Empty falls back to the triage endpoint.
+#api_base = ""
+
+# Empty falls back to the triage provider.
+#provider = ""
+
+# Seconds per request.
+#timeout = 600
+
+# low rather than off, so a quality regression is a smaller step to
+# walk back. TEMPORARY — see poly-r1g.
+# Override for one run with $DP_HARNESS_PATCH_REASONING.
+#reasoning = "low"
+
+
+[llm.chat]
+# The tracker's fix-chat panel. Optional.
+# The tracker's fix-chat panel. This is the feature gate: leave it
+# empty and the endpoint answers 503 and the panel stays hidden.
+#model = ""
+
+# Custom endpoint.
+#api_base = ""
+
+# Force a provider code path.
+#provider = ""
+
+# Seconds per request.
+#timeout = 120
+
+# Bound on the assembled artifact and transcript context. The
+# default suits a 128K-context model. The floor is 8192.
+#context_cap = 98304
+
+
+[policy]
+# Which triage result earns which tier and budget.
+# An agentic-policy.json to use instead of the [policy] tables
+# below. Empty uses them. Mostly a way to try an alternative policy
+# for one run without editing this file.
+# Override for one run with $DP_HARNESS_POLICY.
+#file = "None"
+
+# Iteration and token budget per tier. MANUAL is empty: it never
+# runs the agent.
+#tiers = { }
+
+# Which tier each triage classification lands in.
+#classification_to_tier = { }
+
+# Minimum triage confidence for a tier to run at all.
+#confidence_floor = { }
+
+
+[delivery]
+# What Accept does with a fix. Off unless delivery.type is set.
+# github | gitlab | gitea | local-patch. EMPTY MEANS DELIVERY IS
+# OFF, and that is the shipped default: Accept stays a pure
+# tracker-side action and logs skip_reason=no_config.
+# 
+# Start with local-patch. It writes the diff to delivery.outbox
+# instead of pushing, which proves the whole Accept path with no
+# credentials and no network.
+#type = ""
+
+# 'owner/name'. Required for everything but local-patch.
+#repo = ""
+
+# The local DeltaPorts checkout the tracker pushes from. Must be a
+# clean git working tree on base_branch, writable by the account
+# running the TRACKER, with an origin it may push to. Checked at
+# startup rather than at the first Accept.
+#clone_dir = "None"
+
+# Where local-patch writes diffs. Required for that type only.
+#outbox = "None"
+
+# The branch the pull request targets upstream.
+#base_branch = "master"
+
+# Open as a draft, so a human un-drafts after review.
+#draft = true
+
+# Applied best-effort once the request exists. A label failure never
+# fails the delivery.
+#labels = ["agentic-fix", "needs-review"]
+
+# Placeholders: {origin}, {origin_safe}, {target}, {target_safe},
+# {bundle_id}, {bundle_short}, {signature_short}. The default keys
+# on the error signature, so retries against the same root cause
+# converge on one branch and one request.
+#branch_template = "agentic/{origin_safe}-{target_safe}-{signature_short}"
+
+# Applied per invocation with `git -c`, never written to the
+# clone's git config.
+#committer_name = "Fred [bot]"
+
+# Also used for the Signed-off-by trailer.
+#committer_email = "github@dragonflybsd.org"
+
+# Per-target overrides, keyed by the bundle's target exactly,
+# leading '@' included. Any field omitted falls back to the
+# settings above:
+# 
+#     [delivery.target."@2026Q2"]
+#     base_branch = "2026Q2"
+#     repo = "owner/ports-2026Q2"
+#target = { }
+
+# Seconds before a git subprocess is abandoned. A hung remote would
+# otherwise block the Accept request thread indefinitely.
+#git_timeout = 60.0

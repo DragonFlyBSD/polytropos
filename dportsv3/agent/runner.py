@@ -6,7 +6,7 @@ subcommand calls ``main()`` directly. Tests can import and call internal
 helpers.
 
 Usage:
-    agent-queue-runner --queue-root <path> [--once] [--dry-run]
+    agent-queue-runner [--queue-root <path>] [--once] [--dry-run]
 
 Required env vars (one of triage or patch model must be set for the
 relevant job type):
@@ -1187,9 +1187,9 @@ def _confirm_green_threshold() -> int:
     issues that are not actually fixed.
 
     Same env-knob shape as the neighbouring retry caps
-    (``DP_HARNESS_MAX_PATCH_ATTEMPTS`` / ``DP_HARNESS_ATTEMPT_WINDOW_HOURS``).
+    (``runner.max_patch_attempts`` / ``runner.attempt_window_hours``).
     Set to 1 to resolve on the first green."""
-    return _env_int("DP_CONFIRM_GREEN_THRESHOLD", 2)
+    return _setting_int("runner.confirm_green_threshold", 2)
 
 
 def _bump_confirm_green_count(conn: sqlite3.Connection, issue_key: str) -> int:
@@ -1216,23 +1216,28 @@ def _reset_confirm_green_count(conn: sqlite3.Connection, issue_key: str) -> None
     )
 
 
-def _env_int(name: str, default: int) -> int:
-    """A positive integer knob from the environment.
+def _setting_int(path: str, default: int) -> int:
+    """A positive integer knob from the settings.
 
     The confirm loop's knobs all have this shape. Unparseable falls back to
     the default — an operator typo must not take the runner down — and the
     clamp keeps a zero or negative from disabling the very bound the knob
-    exists to set, which would read as configured while being off."""
+    exists to set, which would read as configured while being off.
+
+    This took a variable name rather than a literal, which is how these
+    four hid from the environment audit: the name was an argument to this
+    helper and never appeared next to ``os.environ`` anywhere."""
+    from dportsv3 import settings  # noqa: PLC0415
     try:
-        return max(1, int(os.environ.get(name, str(default))))
-    except ValueError:
+        return max(1, int(settings.get(path)))
+    except Exception:  # noqa: BLE001 — a typo must not take the runner down
         return default
 
 
 def _confirm_max_failures() -> int:
     """How many consecutive confirm builds may fail to RUN before the issue is
-    handed to a human (yt7). Same env-knob shape as the other retry caps."""
-    return _env_int("DP_CONFIRM_MAX_FAILURES", 3)
+    handed to a human (yt7). Same shape as the other retry caps."""
+    return _setting_int("runner.confirm_max_failures", 3)
 
 
 def _confirm_backoff_seconds(failures: int) -> int:
@@ -1241,7 +1246,7 @@ def _confirm_backoff_seconds(failures: int) -> int:
 
     Exponential in the tally the bound already keeps, so C4 needs no second
     counter: 1st failure waits the base, 2nd twice that, and so on, capped so
-    a raised ``DP_CONFIRM_MAX_FAILURES`` cannot push the last retry past the
+    a raised ``runner.confirm_max_failures`` cannot push the last retry past the
     point an operator would still be waiting for it.
 
     The bound alone was not enough. `no dev-env available` and a failed branch
@@ -1253,8 +1258,8 @@ def _confirm_backoff_seconds(failures: int) -> int:
     """
     if failures < 1:
         return 0
-    base = _env_int("DP_CONFIRM_BACKOFF_SECONDS", 60)
-    cap = _env_int("DP_CONFIRM_BACKOFF_MAX_SECONDS", 3600)
+    base = _setting_int("runner.confirm_backoff_seconds", 60)
+    cap = _setting_int("runner.confirm_backoff_max_seconds", 3600)
     # Shift rather than pow so a large tally cannot build a huge intermediate.
     return min(cap, base << min(failures - 1, 30))
 
@@ -1281,7 +1286,7 @@ def _record_confirm_failure(queue_root: Path, issue_key: str, *,
     Clears the in-flight marker so the level-triggered feed can retry WITHOUT
     a runner restart, counts the consecutive failure, and holds the issue back
     for a growing interval (C4) so the retries are spread rather than spent on
-    consecutive loop passes. Once ``DP_CONFIRM_MAX_FAILURES`` is reached the
+    consecutive loop passes. Once ``runner.confirm_max_failures`` is reached the
     issue is reopened to ``unresolved``, which puts it back on the worklist
     with the reason attached.
 
@@ -4685,7 +4690,7 @@ def process_job(
             # replay, tracker unreachable). Clear the in-flight marker and
             # count it, so the level-triggered feed retries WITHOUT needing a
             # runner restart, and a permanently unbuildable fix stops after
-            # DP_CONFIRM_MAX_FAILURES instead of parking the issue in
+            # runner.confirm_max_failures instead of parking the issue in
             # `resolving` forever (yt7). Proper per-key backoff is C4 — this
             # is the bound, not the pacing.
             success = False
@@ -4777,7 +4782,13 @@ def process_job(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Process dsynth failure jobs via the dportsv3.agent harness")
-    parser.add_argument("--queue-root", required=True, help="Path to queue directory")
+    parser.add_argument(
+        "--queue-root", default=None,
+        help="Path to the queue directory. Defaults to paths.queue_root, "
+             "which is what the rc.d service relies on — it used to pass "
+             "this flag from a shell variable holding a second copy of "
+             "the same path.",
+    )
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print payload without calling the LLM")
     parser.add_argument(
@@ -4795,6 +4806,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    from dportsv3 import settings  # noqa: PLC0415
+    if args.queue_root is None:
+        args.queue_root = str(settings.get("paths.queue_root"))
+    if not args.env:
+        args.env = settings.get_str("runner.dev_env") or None
 
     # Stash the CLI env on the module so handlers reach it via
     # cli_env_default() without threading it through every signature.
@@ -4885,9 +4902,8 @@ def main(argv: list[str] | None = None) -> int:
         # never scans (in-chroot paths from earlier deployments) and
         # blocks _has_active_same_origin_job indefinitely.
         try:
-            max_age = int(os.environ.get(
-                "DPORTSV3_STALE_QUEUED_MAX_AGE_SECONDS", "3600",
-            ))
+            from dportsv3 import settings  # noqa: PLC0415
+            max_age = int(settings.get("runner.stale_queued_max_age_seconds"))
             with _state_db_lock:
                 stale = lifecycle.reap_stale_queued(
                     _state_db_conn, queue_root,

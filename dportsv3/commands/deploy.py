@@ -10,9 +10,15 @@ Two kinds of file, and the difference is the whole safety story:
 * **tool-owned** — the rc.d scripts. Overwritten every time, because an
   upgrade that leaves an old script in place is worse than one that
   replaces it.
-* **operator-owned** — ``polytropos.conf`` and the credential files.
+* **operator-owned** — ``polytropos.conf`` and ``polytropos.toml``.
   Written once, from the ``.sample``, and never touched again. The same
   sample/live split ``paths.config_file`` already uses.
+
+An install that still has the old ``harness.env`` / ``chat.env`` pair is
+migrated on the way past — see :func:`_migrate_legacy_config`. Doing it
+here rather than leaving it to the operator matters because the rc
+scripts stop sourcing those files in the same upgrade: skip the step and
+the runner comes back up with no API keys and every job fails.
 
 Planning is separate from doing: :func:`plan` decides everything and
 touches nothing, so ``--dry-run`` shows exactly what ``install`` would
@@ -39,16 +45,13 @@ RC_SCRIPTS = ("polytropos_tracker", "polytropos_runner")
 #: root-only. Never overwritten once they exist.
 OPERATOR_FILES = (
     ("polytropos.conf.sample", "polytropos.conf", 0o644, False),
-    ("harness.env.sample", "polytropos/harness.env", 0o600, False),
-    ("chat.env.sample", "polytropos/chat.env", 0o640, True),
-    # Installed as the .sample, not as the live name, and that is the
-    # point: a delivery.toml that exists is a delivery.toml that loads,
-    # and no shipped value can be right for a host nobody configured.
-    # Landing the template here means the operator finds it in the
-    # config dir the services already read, one `cp` from live, while a
-    # fresh install delivers nothing. Group-owned because the tracker —
-    # which is what delivers — runs unprivileged.
-    ("delivery.toml.sample", "polytropos/delivery.toml.sample", 0o640, True),
+    # The one settings file, replacing harness.env, chat.env,
+    # delivery.toml and agentic-policy.json. Installed under its live
+    # name rather than as a .sample because every setting in it is
+    # commented out: the file existing changes nothing until an operator
+    # uncomments a line. Credentials are not in it — they live one per
+    # file under secrets/, so each mode can follow its own reader.
+    ("polytropos.toml.sample", "polytropos/polytropos.toml", 0o644, False),
     # /etc/newsyslog.conf includes this directory already. Operator-owned
     # like the rest: retention is a local policy question.
     ("newsyslog.conf.sample", "newsyslog.conf.d/polytropos.conf", 0o644, False),
@@ -176,7 +179,7 @@ def plan(
                               script))
 
     etc = prefix / "etc"
-    for sub in ("polytropos", "newsyslog.conf.d"):
+    for sub in ("polytropos", "polytropos/secrets", "newsyslog.conf.d"):
         actions.append(Action(
             "mkdir", f"{etc / sub}", etc / sub,
             skipped="already exists" if (etc / sub).is_dir() else None))
@@ -288,6 +291,68 @@ def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
             _run(["chmod", "-R", "g+w", str(logs_root)])
 
 
+def _migrate_legacy_config(prefix: Path, group: str, log) -> None:
+    """Fold an existing harness.env / chat.env into polytropos.toml.
+
+    Run as part of the install, not left to the operator, because this
+    upgrade also stops the rc scripts sourcing those files. An operator
+    who restarts before migrating would get a runner with no API keys and
+    every job failing on the first LLM call — a total outage produced by
+    a tidy-up. Non-destructive: the originals stay where they are.
+
+    Silent when there is nothing to migrate, and never fatal: a
+    half-recognised old file should not stop an install that is otherwise
+    fine.
+    """
+    import os as _os  # noqa: PLC0415
+
+    etc = prefix / "etc" / "polytropos"
+    legacy = [etc / "harness.env", etc / "chat.env"]
+    if not any(p.is_file() for p in legacy):
+        return
+
+    from dportsv3.commands import config as config_cmd  # noqa: PLC0415
+
+    values: dict[str, str] = {}
+    for source in legacy:
+        if source.is_file():
+            values.update(config_cmd.parse_shell_assignments(source.read_text()))
+    settings_values, secrets, _unmapped = config_cmd.plan_migration(values)
+    if not settings_values and not secrets:
+        return
+
+    for path, secret in secrets.items():
+        name = Path(str(_SECRET_FILES[path])).name
+        destination = etc / "secrets" / name
+        if destination.is_file():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(secret + "\n")
+        _os.chmod(destination, 0o640)
+        try:
+            shutil.chown(destination, user="root", group=group)
+        except (LookupError, PermissionError):
+            pass
+        log(f"  migrated a credential into {destination}")
+
+    target = etc / "polytropos.toml"
+    if settings_values and target.is_file() and not target.read_text().strip():
+        pass  # freshly installed sample is all comments; fall through
+    if settings_values:
+        log(f"  {len(settings_values)} setting(s) from the old .env files are "
+            f"NOT written automatically; run `dportsv3 config migrate` to "
+            f"fold them into {target}")
+
+
+#: ``secret setting -> the file it names``, read once so the installer
+#: does not have to import the settings table's defaults by hand.
+_SECRET_FILES = {
+    "llm.triage.api_key_file": "secrets/triage.key",
+    "llm.patch.api_key_file": "secrets/patch.key",
+    "llm.chat.api_key_file": "secrets/chat.key",
+}
+
+
 def missing_commands(prefix: Path) -> list[str]:
     """Which of the expected entry points are not in ``<prefix>/bin``."""
     return [c for c in EXPECTED_COMMANDS if not (prefix / "bin" / c).exists()]
@@ -350,6 +415,12 @@ def cmd_deploy(args: Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    try:
+        _migrate_legacy_config(prefix, args.group, print)
+    except Exception as exc:  # noqa: BLE001 — never fail an install over this
+        print(f"warning: could not migrate the old .env files: {exc}",
+              file=sys.stderr)
+
     absent = missing_commands(prefix)
     if absent:
         print(f"""
@@ -369,18 +440,26 @@ done. To bring the stack up, add to /etc/rc.conf:
 then put real credentials in {etc_p}/harness.env and
 start the services.
 
-Delivery is off until you turn it on, and Accept logs no_config until
-then. To enable it:
+Everything is configured in one place now:
 
-    cp {etc_p}/delivery.toml.sample {etc_p}/delivery.toml
-    $EDITOR {etc_p}/delivery.toml
+    {etc_p}/polytropos.toml
 
-For a forge provider, add the credential and hand it to the tracker's
-account — the tracker is what delivers, and it does not run as root:
+Every setting in it is commented out and shows its default. See what is
+actually in effect, and where each value came from, with:
 
-    install -m 0640 -o root -g {group} /dev/null {etc_p}/delivery.token
-    $EDITOR {etc_p}/delivery.token
+    dportsv3 config show
+    dportsv3 config check
 
-provider.clone_dir must be a git working tree writable by {user}. The
-tracker checks all of this when it starts and logs what is wrong.""")
+Credentials are NOT in that file. Each lives in its own file under
+{etc_p}/secrets/, so the mode can follow whichever
+service reads it — the runner is root, the tracker is not:
+
+    secrets/triage.key      0600 root
+    secrets/patch.key       0600 root
+    secrets/chat.key        0640 root:{group}
+    secrets/delivery.token  0640 root:{group}
+
+Delivery is off until delivery.type is set. Start with "local-patch",
+which writes the diff to delivery.outbox instead of pushing, then switch
+to "github" once you have seen a patch land there.""")
     return 0

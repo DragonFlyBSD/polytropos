@@ -78,18 +78,13 @@ then `dportsv3 dev-env status NAME` must report `ready`.
 ```
 # 1. Start tracker (UI, read endpoints, and the /v1/ ingest surface
 #    the hooks post bundles and blobs to)
-DPORTSV3_STATE_DB=/build/synth/logs/evidence/state.db \
-DPORTSV3_ARTIFACT_ROOT=/build/synth/logs/evidence \
-  dportsv3 tracker serve --port 8080 &
+# paths.state_db and paths.artifact_root come from polytropos.toml
+dportsv3 tracker serve &
 
 # 2. Start the queue runner
-DPORTSV3_STATE_DB=/build/synth/logs/evidence/state.db \
-DPORTSV3_TRACKER_URL=http://127.0.0.1:8080 \
-DP_HARNESS_TRIAGE_MODEL=... \
-DP_HARNESS_PATCH_MODEL=... \
-DP_HARNESS_TRIAGE_API_KEY=... \
-DP_HARNESS_PATCH_API_KEY=... \
-  bin/dportsv3 agent-queue-runner --queue-root /build/synth/logs/evidence/queue &
+# llm.*.model and paths.queue_root come from polytropos.toml too; the
+# keys are files under secrets/. `dportsv3 config check` validates both.
+bin/dportsv3 agent-queue-runner &
 
 # 4. Trigger a real build (the dsynth profile should source the hooks)
 dsynth -p 2026Q2 -S -y build devel/known-failing-port

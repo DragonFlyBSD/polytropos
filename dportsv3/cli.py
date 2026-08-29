@@ -503,14 +503,20 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     tracker_sub = p.add_subparsers(dest="tracker_action", metavar="ACTION")
 
     serve = tracker_sub.add_parser("serve", help="Run tracker HTTP server")
-    serve.add_argument("--port", type=int, default=8080, help="Listen port")
+    # Both default to None so the settings can answer. A literal default
+    # here would win over tracker.port / tracker.bind and there would be
+    # no way to tell a flag from a fallback.
+    serve.add_argument(
+        "--port", type=int, default=None,
+        help="Listen port (default: tracker.port, 8080)")
     serve.add_argument(
         "--bind",
-        default=tracker_default_bind_value,
-        help="Address to listen on (default: %(default)s — every "
-             "interface). The tracker has no authentication, so binding "
-             "it beyond a trusted network exposes the build and chat "
-             "endpoints to anyone who can reach the port.",
+        default=None,
+        help=f"Address to listen on (default: tracker.bind, "
+             f"{tracker_default_bind_value} — every interface). The "
+             f"tracker has no authentication, so binding it beyond a "
+             f"trusted network exposes the build and chat endpoints to "
+             f"anyone who can reach the port.",
     )
     serve.add_argument(
         "--db",
