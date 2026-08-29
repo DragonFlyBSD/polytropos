@@ -471,6 +471,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_build_runs_active
 # ADD COLUMN statements are the non-destructive path for an existing state.db
 # that predates a column — run tolerantly by init_db (a duplicate-column error
 # is caught). They keep real issue history instead of forcing a wipe.
+#
+# A column that SCHEMA indexes MUST have an entry here. init_db runs these
+# before the schema script precisely so the index has its column; without the
+# entry, CREATE INDEX aborts schema init on every pre-existing DB.
 MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE issues ADD COLUMN requested_build_generation "
     "INTEGER NOT NULL DEFAULT 0",
@@ -484,6 +488,7 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
+    "ALTER TABLE bundles ADD COLUMN issue_key TEXT",
 )
 
 # One-shot data repair for a state.db written before C3 removed `regressed`
@@ -516,16 +521,22 @@ def init_db(conn: sqlite3.Connection) -> None:
     # cross-table references (jobs.bundle_id, bundles.issue_key) are
     # plain indexed columns, not declared FKs, so they're unaffected.
     conn.execute("PRAGMA foreign_keys=ON")
+    # Migrations run BEFORE the schema script. SCHEMA builds indexes, and an
+    # index over a column that only MIGRATIONS adds (idx_bundles_issue_key)
+    # cannot be built until the column is there — running SCHEMA first aborts
+    # init on any DB predating that column. On a fresh DB every ALTER here
+    # raises "no such table" and is caught; SCHEMA then creates the columns
+    # inline anyway.
+    for stmt in MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # fresh DB (no such table), or the column is already there
     conn.executescript(SCHEMA)
     conn.executemany(
         "INSERT OR IGNORE INTO build_types(name) VALUES (?)",
         [(name,) for name in DEFAULT_BUILD_TYPES],
     )
-    for stmt in MIGRATIONS:
-        try:
-            conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass  # column already exists
     # Not wrapped in the tolerant try above: these are UPDATEs, and swallowing
     # an OperationalError here would hide a real failure rather than a
     # duplicate column.
