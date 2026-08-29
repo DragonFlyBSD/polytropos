@@ -65,6 +65,7 @@ class LocalPatchProvider:
         base_branch: str,
         title: str,
         body: str,
+        commit_body: str,       # unused for local-patch: no commit is made
         labels: list[str],
         diff_text: str,
         diff_sha256: str,

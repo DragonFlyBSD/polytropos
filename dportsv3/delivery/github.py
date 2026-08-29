@@ -92,6 +92,7 @@ class GitHubProvider:
         base_branch: str,
         title: str,
         body: str,
+        commit_body: str,
         labels: list[str],
         diff_text: str,
         diff_sha256: str,
@@ -165,7 +166,7 @@ class GitHubProvider:
         try:
             git.apply_diff(clone_dir, diff_text)
             git.commit_diff(
-                clone_dir, title=title, body=body, signoff=True,
+                clone_dir, title=title, body=commit_body, signoff=True,
                 committer_name=self.committer_name,
                 committer_email=self.committer_email,
             )

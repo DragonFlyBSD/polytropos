@@ -385,6 +385,7 @@ def _sample_args(branch: str = "agentic/devel-foo-20260527"):
         "base_branch": "master",
         "title": "devel/foo: fix dsynth build",
         "body": "Verified by verify-fix at 2026-05-27.\n",
+        "commit_body": "Plain wrapped commit body.\n",
         "labels": ["agentic-fix"],
         "diff_text": _SAMPLE_DIFF,
         "diff_sha256": sha,

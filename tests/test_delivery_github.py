@@ -123,6 +123,7 @@ def _common_args():
         "base_branch": "master",
         "title": "devel/foo: fix dsynth build",
         "body": "Verified by verify-fix.\n",
+        "commit_body": "Plain wrapped commit body.\n",
         "labels": ["agentic-fix"],
         "diff_text": "--- a/x\n+++ b/x\n",
         "diff_sha256": "0" * 64,

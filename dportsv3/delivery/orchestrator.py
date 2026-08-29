@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sqlite3
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -266,7 +267,107 @@ from dportsv3.agent.markdown import md_section as _md_section  # noqa: E402
 from dportsv3.agent.markdown import md_inline as _md_inline  # noqa: E402
 
 
+#: Commit bodies wrap here. 72 is the git convention: it leaves room
+#: for the four-space indent `git log` adds without spilling past 80
+#: columns in a terminal.
+COMMIT_WRAP_COLUMNS = 72
+
+
+def _strip_inline_markdown(text: str) -> str:
+    """Drop markdown syntax that reads as noise in a plain-text commit.
+
+    Only inline decoration is removed — backticks and bold/italic
+    markers around words that are already legible without them, so a
+    backticked LC_ALL=C becomes a plain LC_ALL=C. Structure is handled
+    by the caller, which never emits headings or bullets into a commit.
+    """
+    out = text.replace("`", "")
+    for marker in ("**", "__"):
+        out = out.replace(marker, "")
+    return out
+
+
+def _wrap_for_commit(text: str, *, width: int = COMMIT_WRAP_COLUMNS) -> str:
+    """Wrap prose to ``width``, passing verbatim blocks through intact.
+
+    Two kinds of content need different treatment and conflating them
+    loses information:
+
+    * **prose** — rewrapping is free, and unwrapped prose is the whole
+      complaint (a 1106-character line in a git commit).
+    * **verbatim** — fenced code and indented lines are quoted build
+      output or commands. Re-flowing them silently ALTERS recorded
+      output, so they are emitted unchanged even when over-long. A
+      wrapped compiler error is no longer the compiler's error.
+    """
+    out: list[str] = []
+    fenced = False
+    for para in re.split(r"\n\s*\n", (text or "").strip()):
+        if not para.strip():
+            continue
+        lines = para.splitlines()
+        # A fence anywhere in the block, or any indented line, marks the
+        # whole block verbatim: partially rewrapping it would be worse
+        # than leaving it wide.
+        has_fence = any(ln.lstrip().startswith("```") for ln in lines)
+        indented = any(ln[:1] in (" ", "\t") for ln in lines if ln.strip())
+        if has_fence or indented or fenced:
+            fenced = fenced ^ (sum(
+                1 for ln in lines if ln.lstrip().startswith("```")
+            ) % 2 == 1)
+            out.append(para)
+            continue
+        flat = " ".join(ln.strip() for ln in lines if ln.strip())
+        out.append(textwrap.fill(
+            _strip_inline_markdown(flat), width=width,
+            break_long_words=False, break_on_hyphens=False,
+        ))
+    return "\n\n".join(out)
+
+
 def format_commit_message(
+    *,
+    origin: str,
+    target: str = "",
+    patch_summary: str | None = None,
+    root_cause: str | None = None,
+) -> tuple[str, str]:
+    """Build (title, body) for the git commit — plain text, wrapped.
+
+    Deliberately NOT the PR body. A commit lands in the ports tree
+    forever and is read through ``git log``; a pull request is read
+    once in a browser. They want different things, and rendering one
+    string for both served neither: commits carried markdown headings,
+    blockquotes and unwrapped 1000-character lines.
+
+    Scope is the change itself — why the build failed and what the fix
+    does. Provenance, cost, operator identity and the bot disclosure
+    belong in the PR: the commit already records authorship in its
+    author/committer fields, so restating it in prose is redundant.
+
+    The evidence log excerpt is deliberately absent too. It is quoted
+    build output, useful to a reviewer deciding whether to land this
+    and noise to someone reading history a year later.
+    """
+    title = f"{origin}: fix build failure on DragonFly"
+
+    parts: list[str] = []
+    rc = (root_cause or "").strip()
+    if rc:
+        parts.append(_wrap_for_commit(rc))
+    summary = (patch_summary or "").strip()
+    if summary:
+        parts.append(_wrap_for_commit(summary))
+    if not parts:
+        # Degrade to something truthful rather than an empty body.
+        parts.append(_wrap_for_commit(
+            f"Automated fix for the build failure in {origin}"
+            + (f" on {target}." if target else ".")
+        ))
+    return title, "\n\n".join(parts) + "\n"
+
+
+def format_pr_body(
     *,
     origin: str,
     target: str,
@@ -281,24 +382,28 @@ def format_commit_message(
     classification: str | None = None,
     confidence: str | None = None,
     evidence: str | None = None,
-) -> tuple[str, str]:
-    """Build (title, body) for the delivered PR.
+    platform: str | None = None,
+    notes: str | None = None,
+    rebuild_status: str | None = None,
+) -> str:
+    """Build the markdown body for the review request.
 
-    Title is a concise, upstream-facing one-liner — no internal
-    target jargon (the base branch already encodes the quarterly).
-
-    Body is sectioned markdown a reviewer can read top-to-bottom,
-    telling the full story:
+    Sectioned markdown a reviewer can read top-to-bottom, telling the
+    full story:
       disclosure → Problem (what/why it failed, from triage) →
-      Fix (the agent's rationale, from patch.md) → What changed
-      (diffstat) → Verification → Provenance.
+      Fix (the agent's rationale, from patch.md) → Notes → What
+      changed (diffstat) → Verification → Provenance.
 
     The triage/patch prose is optional — sections degrade gracefully
     when the source artifacts are missing (older bundles, partial
     runs).
-    """
-    title = f"{origin}: fix build failure on DragonFly"
 
+    Nothing is lifted from ``proposed_fix.md``: its "Apply this fix"
+    section embeds a tracker URL on loopback, and its verification and
+    audit sections name in-bundle artifact paths. All three are
+    meaningless outside the tracker and the first would leak an
+    internal address into a public pull request.
+    """
     sections: list[str] = []
 
     # Bot disclosure — these are bot-authored PRs; set reviewer
@@ -322,6 +427,11 @@ def format_commit_message(
         bits.append(f"classified `{cls}`")
     if conf:
         bits.append(f"confidence `{conf}`")
+    plat = (platform or "").strip()
+    if plat:
+        # Scope, and the first thing a FreeBSD reviewer wants: whether
+        # this is a DragonFly-only concern or something shared.
+        bits.append(f"platform `{plat}`")
     head = (
         f"The build failed on `{target}`" if target
         else "The build failed"
@@ -345,6 +455,14 @@ def format_commit_message(
         summary = f"Automated fix for the build failure in `{origin}`."
     sections.append("## Fix\n\n" + summary)
 
+    # Notes — triage's own caveats. Load-bearing: this is where triage
+    # records scope ("this will recur in any dsynth environment..."),
+    # which is exactly what tells a reviewer whether a per-port fix is
+    # the right shape. Dropping it has already cost us once.
+    nts = (notes or "").strip()
+    if nts:
+        sections.append("## Notes\n\n" + nts)
+
     if diff_text:
         stat = _diffstat(diff_text)
         if stat:
@@ -356,6 +474,9 @@ def format_commit_message(
     ]
     if verified_at:
         verify_lines.append(f"Verified {verified_at}.")
+    rebuild = (rebuild_status or "").strip()
+    if rebuild:
+        verify_lines.append(f"Rebuild status: `{rebuild}`.")
     sections.append("## Verification\n\n" + "\n".join(verify_lines))
 
     prov = [f"- Operator: {operator}"]
@@ -370,8 +491,7 @@ def format_commit_message(
         prov.append("- Agent: " + " ".join(agent_parts))
     sections.append("## Provenance\n\n" + "\n".join(prov))
 
-    body = "\n\n".join(sections) + "\n"
-    return title, body
+    return "\n\n".join(sections) + "\n"
 
 
 def deliver(
@@ -414,16 +534,28 @@ def deliver(
         origin=origin, target=target, bundle_id=bundle_id,
         error_signature=error_signature,
     )
-    title, body = format_commit_message(
+    # Extracted once, rendered twice: the commit gets the change itself
+    # in plain wrapped text, the pull request gets the full narrative in
+    # markdown. Same source artifacts, different medium.
+    patch_summary = _md_section(patch_md, "Patch Summary", max_chars=1500)
+    root_cause = _md_section(triage_md, "Root Cause", max_chars=2000)
+    title, commit_body = format_commit_message(
+        origin=origin, target=target,
+        patch_summary=patch_summary, root_cause=root_cause,
+    )
+    body = format_pr_body(
         origin=origin, target=target, operator=operator,
         model=model, attempts=attempts, tokens=tokens,
         verified_at=bundle.get("verification_at"),
         diff_text=diff_text,
-        patch_summary=_md_section(patch_md, "Patch Summary", max_chars=1500),
-        root_cause=_md_section(triage_md, "Root Cause", max_chars=2000),
+        patch_summary=patch_summary,
+        root_cause=root_cause,
         classification=_md_inline(triage_md, "Classification"),
         confidence=_md_inline(triage_md, "Confidence"),
         evidence=_md_section(triage_md, "Evidence", max_chars=2500),
+        platform=_md_inline(triage_md, "Platform"),
+        notes=_md_section(triage_md, "Notes", max_chars=1500),
+        rebuild_status=_md_inline(patch_md, "Rebuild Status"),
     )
     diff_sha256 = hashlib.sha256(diff_text.encode("utf-8")).hexdigest()
 
@@ -493,6 +625,7 @@ def deliver(
             base_branch=cfg.base_branch,
             title=title,
             body=body,
+            commit_body=commit_body,
             labels=list(cfg.labels),
             diff_text=diff_text,
             diff_sha256=diff_sha256,

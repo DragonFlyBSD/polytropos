@@ -102,6 +102,7 @@ class ReviewProvider(Protocol):
         base_branch: str,
         title: str,
         body: str,
+        commit_body: str,
         labels: list[str],
         diff_text: str,
         diff_sha256: str,
