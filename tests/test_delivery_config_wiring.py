@@ -418,3 +418,24 @@ def test_serve_configures_logging_before_the_app_starts() -> None:
 
     src = inspect.getsource(tracker_cmd._cmd_serve)
     assert src.index("_configure_app_logging()") < src.index("create_app(db_path)")
+
+
+def test_the_handler_writes_to_a_line_buffered_stream() -> None:
+    """stdout is block-buffered once daemon(8) points it at a file, so a
+    startup error on an idle server would sit unflushed — the one case
+    this reporting exists for. uvicorn's own default handler uses stderr
+    for the same reason."""
+    import sys
+
+    from dportsv3.commands import tracker as tracker_cmd
+
+    log = logging.getLogger("dportsv3")
+    saved = list(log.handlers), log.level, log.propagate
+    try:
+        log.handlers.clear()
+        tracker_cmd._configure_app_logging()
+        assert log.handlers[0].stream is sys.stderr
+    finally:
+        log.handlers[:] = saved[0]
+        log.setLevel(saved[1])
+        log.propagate = saved[2]

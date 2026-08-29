@@ -121,13 +121,18 @@ def _configure_app_logging(level: int = logging.INFO) -> None:
     silence swallowed merge detection and the startup delivery preflight.
 
     The format matches uvicorn's own so a reader of ``tracker.log`` sees
-    one stream rather than two. Idempotent, and it takes stdout because
-    that is what ``daemon(8)`` redirects into the log file.
+    one stream rather than two, and it writes to stderr for the same
+    reason uvicorn's ``default`` handler does: ``daemon(8)`` redirects
+    both streams into the log file, but stdout is block-buffered once it
+    is a file rather than a tty (measured: ``line_buffering`` False on
+    stdout, True on stderr). A startup error on a server nobody is
+    hitting would sit in an unflushed buffer, which is exactly the case
+    this reporting exists for. Idempotent.
     """
     log = logging.getLogger("dportsv3")
     if log.handlers:
         return
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
     log.addHandler(handler)
     log.setLevel(level)
