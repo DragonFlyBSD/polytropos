@@ -185,9 +185,22 @@ def plan(
             skipped="already exists" if (etc / sub).is_dir() else None))
     for sample, rel, mode, group_owned in OPERATOR_FILES:
         src = deploy / sample
-        if not src.is_file():
-            raise paths.MissingInput(f"missing sample in the checkout: {src}")
         dst = etc / rel
+        if not src.is_file():
+            # An upgrade runs the INSTALLED planner against the NEW
+            # checkout, so a sample this version expects may simply not
+            # exist any more. When the destination is already in place
+            # there is nothing to do and nothing wrong — say so and move
+            # on, rather than failing the whole install with a message
+            # about a file the operator never asked for. A missing sample
+            # with no destination is still a broken checkout.
+            if dst.exists():
+                actions.append(Action(
+                    "operator_file", f"{dst}", rel,
+                    skipped=f"{sample} is no longer shipped; leaving the "
+                            f"existing file alone"))
+                continue
+            raise paths.MissingInput(f"missing sample in the checkout: {src}")
         owner = f"root:{group}" if group_owned else "root"
         actions.append(Action(
             "operator_file", f"{dst} ({oct(mode)[2:]}, {owner})", rel,

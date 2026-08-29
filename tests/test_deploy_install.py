@@ -368,3 +368,41 @@ def test_software_comes_before_the_services_that_need_it(tmp_path) -> None:
                     user_exists=lambda n: True, group_exists=lambda n: True)
     kinds = [a.kind for a in acts]
     assert kinds.index("link") < kinds.index("rc_script")
+
+
+def test_a_retired_sample_does_not_break_an_upgrade(tmp_path) -> None:
+    """An upgrade runs the INSTALLED planner against the NEW checkout, so
+    a sample this version expects may be gone from it. Removing an
+    operator file would otherwise be a breaking upgrade for everyone:
+    `deploy install` failed with 'missing sample in the checkout' naming
+    a file the operator never asked about. Measured when harness.env.sample
+    was retired."""
+    prefix = tmp_path / "usr" / "local"
+    existing = prefix / "etc" / "polytropos" / "retired.conf"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("kept\n")
+
+    retired = ("retired.sample", "polytropos/retired.conf", 0o644, False)
+    saved = dep.OPERATOR_FILES
+    dep.OPERATOR_FILES = saved + (retired,)
+    try:
+        actions = plan(tmp_path, exists=True, prefix=prefix)
+    finally:
+        dep.OPERATOR_FILES = saved
+
+    action = next(a for a in actions if a.target == "polytropos/retired.conf")
+    assert action.skipped and "no longer shipped" in action.skipped
+    assert existing.read_text() == "kept\n"
+
+
+def test_a_missing_sample_with_no_destination_is_still_an_error(tmp_path) -> None:
+    """The tolerance above must not hide a genuinely broken checkout."""
+    prefix = tmp_path / "usr" / "local"
+    retired = ("never-existed.sample", "polytropos/never.conf", 0o644, False)
+    saved = dep.OPERATOR_FILES
+    dep.OPERATOR_FILES = saved + (retired,)
+    try:
+        with pytest.raises(paths.MissingInput, match="never-existed.sample"):
+            plan(tmp_path, exists=True, prefix=prefix)
+    finally:
+        dep.OPERATOR_FILES = saved
