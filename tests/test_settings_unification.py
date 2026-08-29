@@ -679,3 +679,42 @@ def test_migration_coerces_to_the_declared_type() -> None:
     })
     assert got == {"tracker.port": 9090, "runner.dump_session": True,
                    "delivery.git_timeout": 30.0}
+
+
+def test_the_tracker_and_runner_resolve_the_same_state_db(set_setting) -> None:
+    """They read and write one file. Two resolvers that could disagree is
+    silent corruption, so both go through paths.state_db."""
+    from argparse import Namespace
+
+    from dportsv3.agent import runner
+    from dportsv3.commands import tracker as tracker_cmd
+
+    set_setting("paths.state_db", "/somewhere/state.db")
+    from_tracker = tracker_cmd._resolve_state_db_path(Namespace(db=None))
+    from_runner = runner.get_state_db_path(Path("/unused/queue"))
+    assert str(from_tracker) == str(from_runner) == "/somewhere/state.db"
+
+
+def test_a_default_state_db_is_an_answer_not_an_absence(set_setting) -> None:
+    """Measured on hardware: treating the default as "unset" sent the
+    tracker to $PWD/state.db, and a service's cwd is / — it exited at
+    startup with `unable to open database file`. The fallback made sense
+    while the path arrived by environment variable and had no default."""
+    from argparse import Namespace
+
+    from dportsv3.commands import tracker as tracker_cmd
+
+    set_setting("llm.patch.model", "x")  # a settings file with no paths block
+    resolved = tracker_cmd._resolve_state_db_path(Namespace(db=None))
+    assert str(resolved) == "/build/synth/logs/evidence/state.db"
+    assert "state.db" == resolved.name and resolved.is_absolute()
+
+
+def test_the_db_flag_still_wins(set_setting, tmp_path) -> None:
+    from argparse import Namespace
+
+    from dportsv3.commands import tracker as tracker_cmd
+
+    set_setting("paths.state_db", "/from/settings.db")
+    got = tracker_cmd._resolve_state_db_path(Namespace(db=tmp_path / "x.db"))
+    assert got == tmp_path / "x.db"

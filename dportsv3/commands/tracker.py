@@ -88,23 +88,24 @@ def cmd_tracker(args: Namespace) -> int:
 
 
 def _resolve_state_db_path(args: Namespace) -> Path:
-    """Resolve the state.db path with the precedence:
-      1. --db PATH (explicit operator override)
-      2. DPORTSV3_STATE_DB env var
-      3. $PWD/state.db (fall-back default)
+    """Resolve the state.db path: ``--db`` if given, else
+    ``paths.state_db``.
 
-    Tracker reads + writes the same file artifact-store writes. The
-    operator is responsible for ensuring the path matches whatever
-    artifact-store was started with (typically --logs-root
-    /build/synth/logs → /build/synth/logs/evidence/state.db).
+    The tracker reads and writes the same file the runner does, so these
+    two must agree; both read the same setting, which is the point.
+
+    There is deliberately no ``$PWD/state.db`` fallback any more. It made
+    sense while the path had no default and arrived by environment
+    variable — an unset variable genuinely meant "nothing configured".
+    Now the setting has a real default, and treating a default as "unset"
+    sent a *service* to its own working directory: measured on hardware,
+    the tracker exited at startup with ``unable to open database file``
+    because its cwd is ``/``. A default that exists is an answer.
     """
     if args.db is not None:
         return Path(args.db)
     from dportsv3 import settings  # noqa: PLC0415
-    configured = settings.resolve("paths.state_db")
-    if configured.overridden:
-        return Path(configured.value)
-    return Path.cwd() / "state.db"
+    return Path(settings.get("paths.state_db"))
 
 
 def _configure_app_logging(level: int = logging.INFO) -> None:

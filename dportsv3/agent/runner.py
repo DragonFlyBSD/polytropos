@@ -390,6 +390,8 @@ def _looks_env_suspicious(result: dict) -> bool:
 def get_state_db_path(queue_root: Path) -> Path:
     """Get path to state.db used for lifecycle/status writes."""
     from dportsv3 import settings  # noqa: PLC0415
+    # The setting, default included — the tracker resolves the same one,
+    # and the two writing to different files would be silent corruption.
     configured = settings.get("paths.state_db")
     if configured and str(configured):
         return Path(configured)
