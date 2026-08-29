@@ -42,6 +42,12 @@ def _capture(monkeypatch, *, rc: int = 0, probe_stdout: str = "") -> list[str]:
     def fake(env, *argv, **kw):
         cmd = argv[-1]
         payloads.append(cmd)
+        # The salvage probe (`_extracted_wrksrc`) also queries WRKDIR, but
+        # its shell body is what decides whether anything was unpacked.
+        # These tests are about a port where nothing was, so answer no —
+        # otherwise every failing extract here looks salvageable.
+        if "[ -d " in cmd:
+            return subprocess.CompletedProcess(argv, 1, "", "")
         if "-V WRKDIR" in cmd:
             return subprocess.CompletedProcess(
                 argv, 0, "/work/obj/work\n/work/obj/work/foo-1.0\n", "")

@@ -1960,6 +1960,36 @@ def dops_reference(env: str) -> dict:
     }
 
 
+def _extracted_wrksrc(env: str, origin: str) -> tuple[str, str]:
+    """``(WRKDIR, WRKSRC)`` if the distfile is really unpacked, else ``("", "")``.
+
+    Asked only after a non-zero ``make extract``, to tell "nothing was
+    unpacked" apart from "unpacked, and then a later step failed". Both
+    paths come from ``make -V`` rather than being derived from each other:
+    WRKSRC is not always a direct child of WRKDIR.
+
+    Emptiness is checked on disk, not inferred. A port whose do-extract
+    fails outright still leaves WRKDIR behind, so the existence of the
+    directory proves nothing; its contents do.
+    """
+    cmd = (
+        f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
+        f'set -- $(make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
+        f'              WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'              {PACKAGE_BUILDING} '
+        f'              BATCH=yes -V WRKDIR -V WRKSRC 2>/dev/null); '
+        f'[ $# -eq 2 ] || exit 1; '
+        f'[ -d "$2" ] || exit 1; '
+        f'[ -n "$(ls -A "$2" 2>/dev/null)" ] || exit 1; '
+        f'printf "%s\n%s\n" "$1" "$2"'
+    )
+    r = _exec(env, "/bin/sh", "-c", cmd)
+    if r.returncode != 0:
+        return "", ""
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    return (lines[0], lines[1]) if len(lines) == 2 else ("", "")
+
+
 def make_extract(env: str, origin: str) -> dict:
     """Run ``make extract`` against the **compose root** —
     ``$DPORTS_COMPOSE_ROOT`` (= ``/work/artifacts/compose/<target>``).
@@ -2005,10 +2035,16 @@ def make_extract(env: str, origin: str) -> dict:
         # keeps going will improvise around a wall it cannot see.
         # `make -V IGNORE` is the framework's own answer, so ask it
         # rather than pattern-matching the error text.
+        # PACKAGE_BUILDING has to be set here too. It changes how
+        # bsd.default-versions.mk resolves the *_DEFAULT knobs, and IGNORE
+        # is derived from those — so a probe without it answers a question
+        # about a different environment than the one that just failed, and
+        # reports a wall the real command never hit.
         ignore_cmd = (
             f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
             f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
             f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+            f'     {PACKAGE_BUILDING} '
             f'     BATCH=yes -V IGNORE'
         )
         ig = _exec(env, "/bin/sh", "-c", ignore_cmd)
@@ -2036,10 +2072,41 @@ def make_extract(env: str, origin: str) -> dict:
             f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
             f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
             f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+            f'     {PACKAGE_BUILDING} '
             f'     BATCH=yes -V EXTRACT_DEPENDS'
         )
         ed = _exec(env, "/bin/sh", "-c", deps_cmd)
         declared = ed.stdout.strip() if ed.returncode == 0 else ""
+        # The source may be on disk anyway. `post-extract` runs after
+        # do-extract has unpacked the distfile, and a port whose
+        # post-extract copies files out of an EXTRACT_DEPENDS package
+        # fails there with a complete, usable WRKSRC already written.
+        # glib20 is the measured case: fetch, checksum and extract all
+        # succeed, then post-extract dies copying pkgconfig out of
+        # gobject-introspection@bootstrap. The agent only needs the
+        # source — it re-cuts patches, it does not build — so reporting
+        # a failure here sends it away from work it could do.
+        salvaged_dir, salvaged = _extracted_wrksrc(env, origin)
+        if salvaged:
+            _WRKSRC_CACHE[(env, origin)] = salvaged
+            return _exec_result(
+                0, p.stdout, p.stderr,
+                origin=origin, wrkdir=salvaged_dir, wrksrc=salvaged,
+                extract_depends=declared,
+                post_extract_failed=True,
+                summary=(
+                    f"`make extract` unpacked {origin} and then failed in a "
+                    f"later step; WRKSRC is present and usable at {salvaged}. "
+                    + (
+                        f"The port declares EXTRACT_DEPENDS={declared}, which "
+                        f"the dev-env cannot install, and that is the likely "
+                        f"cause. "
+                        if declared else ""
+                    )
+                    + "Proceed with dupe/genpatch against WRKSRC; do not "
+                      "treat this as a distfile problem."
+                ),
+            )
         if declared:
             return _exec_result(
                 p.returncode, p.stdout, p.stderr,
@@ -2057,11 +2124,16 @@ def make_extract(env: str, origin: str) -> dict:
             )
         return _exec_result(p.returncode, p.stdout, p.stderr,
                             origin=origin, wrkdir="", wrksrc="")
+    # Same PACKAGE_BUILDING as the extract above. The measured values are
+    # identical either way, but a variable query has to describe the same
+    # environment as the command it describes — otherwise the agent can
+    # unpack to one path and go looking in another.
     query_cmd = (
         'set -e; '
         f'cd "$DPORTS_COMPOSE_ROOT/{origin}"; '
         f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
         f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'     {PACKAGE_BUILDING} '
         f'     BATCH=yes -V WRKDIR -V WRKSRC'
     )
     q = _exec(env, "/bin/sh", "-c", query_cmd)
