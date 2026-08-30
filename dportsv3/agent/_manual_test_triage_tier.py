@@ -178,7 +178,8 @@ output format.
 
     # Resolve tier via the same policy the runner uses — literally the same
     # resolver, so this script cannot drift from the runner's answer.
-    pol = policy.load_policy(runner._policy_path())
+    policy_path = runner._policy_path()
+    pol = policy.load_policy(policy_path)
     tier = policy.tier_for(pol, result.classification, result.confidence)
 
     print(f"policy:         {policy_path}")
