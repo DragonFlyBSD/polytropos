@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from datetime import datetime, timedelta, timezone
+
 from dportsv3 import settings
 
 from . import llm
@@ -706,6 +708,82 @@ def _try_write_handoff(
         pass
 
 
+#: Where a transient provider failure is counted. The job file is what
+#: the runner claims from and what moves between pending/ and inflight/,
+#: so the tally travels with the work — no schema, no second source of
+#: truth to keep in step with the file.
+_RETRY_COUNT_KEY = "retry_count"
+_RETRY_AFTER_KEY = "retry_after"
+
+
+def _retry_backoff_seconds(attempts: int) -> int:
+    """How long to hold a job back after ``attempts`` transient failures.
+
+    Doubling, capped, shift rather than pow — the same shape as the
+    confirm backoff next door. Deliberately slower than an API client's
+    own ladder: the openai SDK already retries twice about 1.5s apart,
+    so a failure that reaches here has outlived it. Measured on NVIDIA,
+    a model went unroutable for roughly 40 minutes and then recovered
+    untouched, which is the interval these defaults are shaped for.
+    """
+    if attempts < 1:
+        return 0
+    base = int(settings.get("runner.llm_retry_backoff_seconds"))
+    cap = int(settings.get("runner.llm_retry_backoff_max_seconds"))
+    return min(cap, base << min(attempts - 1, 30))
+
+
+def job_held_back(meta: dict) -> bool:
+    """True while a requeued job is still serving its backoff.
+
+    ``meta`` is a parsed job file. Compared lexicographically against an
+    ISO-8601 UTC now, which is why both sides must stay in that format.
+    """
+    after = (meta or {}).get(_RETRY_AFTER_KEY, "")
+    return bool(after) and str(after) > datetime.now(timezone.utc).isoformat()
+
+
+def record_transient_failure(job_path: Path) -> bool:
+    """Count one transient provider failure against this job.
+
+    Returns True when the job has retries left and should go back on the
+    queue, False when the budget is spent and it should die the way it
+    does today. A file we cannot read or write also returns False —
+    without a tally a requeue would loop forever, and a job that dies is
+    recoverable while a job that spins is not.
+    """
+    try:
+        lines = job_path.read_text().splitlines()
+    except OSError:
+        return False
+
+    attempts = 0
+    kept: list[str] = []
+    for line in lines:
+        key = line.partition("=")[0]
+        if key == _RETRY_COUNT_KEY:
+            try:
+                attempts = int(line.partition("=")[2])
+            except ValueError:
+                attempts = 0
+        elif key != _RETRY_AFTER_KEY:
+            kept.append(line)
+
+    attempts += 1
+    if attempts > max(1, int(settings.get("runner.llm_retry_max"))):
+        return False
+
+    eligible = (datetime.now(timezone.utc)
+                + timedelta(seconds=_retry_backoff_seconds(attempts))).isoformat()
+    kept.append(f"{_RETRY_COUNT_KEY}={attempts}")
+    kept.append(f"{_RETRY_AFTER_KEY}={eligible}")
+    try:
+        job_path.write_text("\n".join(kept) + "\n")
+    except OSError:
+        return False
+    return True
+
+
 def _err(
     msg: str,
     services: Any,
@@ -720,19 +798,23 @@ def _err(
     fire on this outcome — TRIAGE_FAIL for the triage step,
     PATCH_GAVE_UP for the patch step (the catchall DEAD route).
 
-    ``transient`` says the provider failed, not the job. The step only
-    reports that much: whether it earns a requeue depends on how many
-    times this job has already been held back, and that tally belongs
-    to the runner, not here.
+    ``transient`` says the provider failed, not the job — a requeue
+    rather than a retirement, for as long as the job has retries left.
     """
     try:
         services.write_error_note(job_path, msg)
     except Exception:
         pass
+    if transient and record_transient_failure(job_path):
+        return StepOutcome(
+            status="failed",
+            next_event=JobEvent.PROVIDER_UNAVAILABLE,
+            detail={"status_str": msg, "error": True, "requeued": True},
+        )
     return StepOutcome(
         status="failed",
         next_event=failure_event,
-        detail={"status_str": msg, "error": True, "transient": transient},
+        detail={"status_str": msg, "error": True},
     )
 
 

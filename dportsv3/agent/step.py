@@ -71,32 +71,6 @@ class StepOutcome:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
-def _reroute_if_transient(ctx: "StepCtx", outcome: StepOutcome) -> StepOutcome:
-    """Turn a transient provider failure into a requeue, if the runner
-    says this job has retries left.
-
-    The step reported only that the provider failed rather than the
-    job; whether that earns another go depends on a tally the step
-    cannot see. When it does, the failure event is replaced wholesale —
-    including ``extra_events``, since those describe a job that is
-    ending and this one is not.
-    """
-    if outcome.status != "failed" or not outcome.detail.get("transient"):
-        return outcome
-    if ctx.should_requeue is None:
-        return outcome
-    try:
-        if not ctx.should_requeue(ctx.job_id):
-            return outcome
-    except Exception:  # noqa: BLE001 — a broken tally must not eat the job
-        return outcome
-    return StepOutcome(
-        status="failed",
-        next_event=JobEvent.PROVIDER_UNAVAILABLE,
-        detail={**outcome.detail, "requeued": True},
-    )
-
-
 @dataclass
 class StepResult:
     """One step's full record — what precheck said + the run
@@ -151,14 +125,6 @@ class StepCtx:
     # Lifecycle / observability — caller binds these from the runner.
     apply_transition: Callable[..., bool] | None = None
     activity_log: Callable[..., None] | None = None
-
-    # Asked when a step reports a transient provider failure: True to
-    # put the job back on the queue, False to let it die. The runner
-    # owns the answer because it owns the retry tally — a step has no
-    # way to know how many times this job has already been held back.
-    # Unbound (None) keeps the old behaviour: transient or not, the
-    # failure is terminal.
-    should_requeue: Callable[[str], bool] | None = None
 
     # Optional resources steps may use; nullable so unit tests can
     # construct a ctx incrementally.
@@ -265,8 +231,6 @@ class Orchestrator:
                         )
                     except Exception:
                         pass
-
-            outcome = _reroute_if_transient(ctx, outcome)
 
             for evt in outcome_events(outcome):
                 if ctx.apply_transition is None:

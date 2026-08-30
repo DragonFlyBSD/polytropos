@@ -1292,111 +1292,6 @@ def _preflight_models(queue_root: Path) -> list[str]:
     return problems
 
 
-def _job_held_back(job_id: str) -> bool:
-    """True while a requeued job is still serving its backoff.
-
-    Compared lexicographically against an ISO-8601 UTC now, the same
-    way the issue feed compares its own next_eligible_at — mixing
-    timestamp formats in one column is what made that comparison
-    fragile last time.
-    """
-    if _state_db_conn is None or not job_id:
-        return False
-    try:
-        with _state_db_lock:
-            row = _state_db_conn.execute(
-                "SELECT next_eligible_at FROM jobs WHERE job_id = ?",
-                (job_id,),
-            ).fetchone()
-    except Exception:  # noqa: BLE001 — a query failure must not stall the queue
-        return False
-    if row is None or not row[0]:
-        return False
-    return str(row[0]) > datetime.now(timezone.utc).isoformat()
-
-
-def _was_requeued(job_id: str) -> bool:
-    """True when the last transition put the job back on the queue, so
-    its file belongs in pending/ rather than failed/."""
-    if _state_db_conn is None or not job_id:
-        return False
-    try:
-        with _state_db_lock:
-            row = _state_db_conn.execute(
-                "SELECT state FROM jobs WHERE job_id = ?", (job_id,),
-            ).fetchone()
-    except Exception:  # noqa: BLE001
-        return False
-    return row is not None and str(row[0]) == "queued"
-
-
-def _llm_retry_max() -> int:
-    """Transient provider failures a job may survive. Floor of 1."""
-    return max(1, _setting_int("runner.llm_retry_max", 5))
-
-
-def _llm_backoff_seconds(attempts: int) -> int:
-    """How long to hold a job back after ``attempts`` transient provider
-    failures.
-
-    Same shift-not-pow shape as :func:`_confirm_backoff_seconds`, and
-    deliberately slower than any API client's own ladder. The openai SDK
-    already covers the sub-second flap — two tries about 1.5s apart —
-    so by the time a failure reaches here the provider has been failing
-    for longer than a client-side retry can bridge. Measured on NVIDIA:
-    a model that had served a whole run went unroutable for roughly 40
-    minutes and then recovered with no action taken, which is the
-    interval these defaults are shaped for.
-    """
-    if attempts < 1:
-        return 0
-    base = _setting_int("runner.llm_retry_backoff_seconds", 30)
-    cap = _setting_int("runner.llm_retry_backoff_max_seconds", 900)
-    # Shift rather than pow so a large tally cannot build a huge
-    # intermediate.
-    return min(cap, base << min(attempts - 1, 30))
-
-
-def _record_provider_unavailable(queue_root: Path, job_id: str) -> bool:
-    """Count one transient provider failure against ``job_id``.
-
-    Returns True when the retry budget is spent and the caller should
-    let the job die the way it does today. Also True when there is no
-    state DB to count in — without a tally a requeue would loop
-    forever, and a job that dies is recoverable while a job that spins
-    is not.
-    """
-    if _state_db_conn is None:
-        return True
-    cap = _llm_retry_max()
-    try:
-        with _state_db_lock:
-            _state_db_conn.execute(
-                "UPDATE jobs SET retry_count = COALESCE(retry_count, 0) + 1 "
-                "WHERE job_id = ?",
-                (job_id,),
-            )
-            row = _state_db_conn.execute(
-                "SELECT retry_count FROM jobs WHERE job_id = ?", (job_id,),
-            ).fetchone()
-            attempts = int(row[0]) if row is not None and row[0] is not None else 0
-            if attempts >= cap:
-                return True
-            delay = _llm_backoff_seconds(attempts)
-            eligible = (datetime.now(timezone.utc)
-                        + timedelta(seconds=delay)).isoformat()
-            _state_db_conn.execute(
-                "UPDATE jobs SET next_eligible_at = ? WHERE job_id = ?",
-                (eligible, job_id),
-            )
-            _state_db_conn.commit()
-            return False
-    except Exception as exc:  # noqa: BLE001 — bookkeeping must not kill the job
-        log(queue_root, "WARNING",
-            f"could not record provider failure for {job_id}: {exc}")
-        return True
-
-
 def _confirm_backoff_seconds(failures: int) -> int:
     """How long to hold an issue back after ``failures`` consecutive confirm
     attempts that produced no verdict.
@@ -2130,6 +2025,16 @@ def parse_job_file(path: Path) -> dict:
     return data
 
 
+def _job_was_requeued(job_path: Path) -> bool:
+    """True when the step put this job back on the queue rather than
+    retiring it — it stamped a backoff into the job file."""
+    from dportsv3.agent.steps import job_held_back  # noqa: PLC0415
+    try:
+        return job_held_back(parse_job_file(job_path))
+    except Exception:  # noqa: BLE001 — an unreadable file is not a requeue
+        return False
+
+
 def read_file_if_exists(path: Path, max_bytes: int = 200_000) -> str | None:
     """Read file contents if it exists, truncate if too large."""
     if not path.exists():
@@ -2783,14 +2688,17 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
     inflight_dir = queue_root / "inflight"
     jobs = sorted(pending_dir.glob("*.job"))
 
+    from dportsv3.agent.steps import job_held_back  # noqa: PLC0415
+
     for lead_path in jobs:
-        # A requeued job sits in pending/ like any other; what keeps it
-        # from being re-claimed on the very next pass is its backoff.
-        if _job_held_back(lead_path.name):
-            continue
         try:
             lead_meta = parse_job_file(lead_path)
         except Exception:
+            continue
+        # A requeued job sits in pending/ like any other; what keeps it
+        # from being re-claimed on the very next pass is its own backoff,
+        # carried in the job file we just parsed.
+        if job_held_back(lead_meta):
             continue
         lead_key = _job_dedup_key(lead_meta)
         candidate_siblings: list[Path] = []
@@ -2803,7 +2711,7 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
                 except Exception:
                     continue
                 if _job_dedup_key(other_meta) == lead_key and \
-                        not _job_held_back(other.name):
+                        not job_held_back(other_meta):
                     candidate_siblings.append(other)
         # Move lead first; if that races, try the next pending job.
         try:
@@ -3884,8 +3792,6 @@ def process_triage_job(
         bundle_dir=bundle_dir,
         bundle_id=job.get("bundle_id"),
         playbooks_dir=playbooks_dir,
-        should_requeue=lambda jid: not _record_provider_unavailable(
-            queue_root, jid),
     )
     ctx.state["job_path"] = job_path
     ctx.state["payload"] = payload
@@ -4432,8 +4338,6 @@ def process_patch_job(
         bundle_dir=bundle_dir,
         bundle_id=job.get("bundle_id"),
         playbooks_dir=playbooks_dir,
-        should_requeue=lambda jid: not _record_provider_unavailable(
-            queue_root, jid),
     )
     ctx.state["job_path"] = job_path
     ctx.state["payload"] = payload
@@ -4921,18 +4825,18 @@ def process_job(
                 continue
         log(queue_root, "INFO",
             f"moved job + {len(sibling_paths)} sibling(s) to done/")
-    elif _was_requeued(job_path.name):
+    elif _job_was_requeued(job_path):
         # The provider failed, not the job. Its lifecycle row is back at
         # QUEUED, so the file has to follow it — left in failed/ it
         # would be a queued job nothing can ever claim.
+        from dportsv3.agent.steps import record_transient_failure  # noqa: PLC0415
         move_job(job_path, "pending")
         for s in sibling_paths:
             # Count the attempt against each sibling too. They were part
-            # of it, they are going back on the queue with the lead, and
-            # without their own tally any of them could be picked as the
-            # next lead immediately — which would spend the whole group's
-            # retries in one pass instead of spreading them.
-            _record_provider_unavailable(queue_root, s.name)
+            # of it, and without their own tally any of them could be
+            # picked as the next lead immediately — spending the whole
+            # group's retries in one pass instead of spreading them.
+            record_transient_failure(s)
             try:
                 move_job(s, "pending")
             except OSError:
