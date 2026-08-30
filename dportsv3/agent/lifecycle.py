@@ -70,8 +70,8 @@ class JobEvent(StrEnum):
     ENV_BROKEN       = "env_broken"
     REAP_ORPHAN      = "reap_orphan"
     # The provider could not be reached, not the job's fault. Routes
-    # back to QUEUED rather than DEAD; the runner holds it with
-    # jobs.next_eligible_at and gives up via jobs.retry_count.
+    # back to QUEUED rather than DEAD; the backoff and the give-up
+    # tally live in the job file (see steps.record_transient_failure).
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     # Step 10b: operator-triggered job kill. Distinct from REAP_ORPHAN
     # so retire_reason ('abandoned') can be filled differently and

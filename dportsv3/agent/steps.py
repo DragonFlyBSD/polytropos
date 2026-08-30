@@ -22,10 +22,9 @@ import shutil
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
-
-from datetime import datetime, timedelta, timezone
 
 from dportsv3 import settings
 
@@ -821,16 +820,18 @@ def _err(
     ``transient`` says the provider failed, not the job — a requeue
     rather than a retirement, for as long as the job has retries left.
     """
-    try:
-        services.write_error_note(job_path, msg)
-    except Exception:
-        pass
     if transient and record_transient_failure(job_path):
+        # No error note: the job is waiting, not broken, and the file
+        # would travel with it into pending/ and read as a failure.
         return StepOutcome(
             status="failed",
             next_event=JobEvent.PROVIDER_UNAVAILABLE,
             detail={"status_str": msg, "error": True, "requeued": True},
         )
+    try:
+        services.write_error_note(job_path, msg)
+    except Exception:
+        pass
     return StepOutcome(
         status="failed",
         next_event=failure_event,
@@ -1196,17 +1197,25 @@ class PatchAttemptStep:
                 f"Harness patch failed for {origin}: {str(exc)[:200]}",
                 job_id=ctx.job_id,
             )
-            _try_write_handoff(
-                services, ctx, origin,
-                reason="patch_gave_up",
-                reason_detail=f"harness raised before producing a result: {str(exc)[:200]}",
-                patch_result=None,
-            )
-            return _err(
+            outcome = _err(
                 str(exc), services, job_path, JobEvent.PATCH_GAVE_UP,
                 transient=llm.is_transient(
                     exc, provider=custom_llm_provider or "", model=model),
             )
+            if not outcome.detail.get("requeued"):
+                # Only once it is actually over. A requeued job has not
+                # given up, and this artifact is what tells a human to
+                # take it over.
+                _try_write_handoff(
+                    services, ctx, origin,
+                    reason="patch_gave_up",
+                    reason_detail=(
+                        "harness raised before producing a result: "
+                        f"{str(exc)[:200]}"
+                    ),
+                    patch_result=None,
+                )
+            return outcome
         duration_ms = int((time.time() - start) * 1000)
 
         services.activity_log(

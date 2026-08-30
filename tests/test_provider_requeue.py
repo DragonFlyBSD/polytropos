@@ -117,8 +117,11 @@ def test_a_job_that_never_failed_is_never_held_back():
 # --- what _err returns -------------------------------------------------------
 
 class _Services:
-    def write_error_note(self, *a, **k):
-        pass
+    def __init__(self):
+        self.notes: list[str] = []
+
+    def write_error_note(self, job_path, msg):
+        self.notes.append(msg)
 
 
 def test_a_transient_failure_becomes_a_requeue(tmp_path):
@@ -153,3 +156,28 @@ def test_a_transient_failure_is_still_a_failed_outcome(tmp_path):
                      JobEvent.PATCH_GAVE_UP, transient=True)
     assert isinstance(out, StepOutcome)
     assert out.status == "failed"
+
+
+def test_a_requeue_writes_no_error_note(tmp_path):
+    """The note travels with the file into pending/, where it would read
+    as a failed job. The job is waiting, not broken."""
+    svc = _Services()
+    steps._err("boom", svc, _job(tmp_path), JobEvent.PATCH_GAVE_UP,
+               transient=True)
+    assert svc.notes == []
+
+
+def test_retiring_the_job_still_writes_the_note(tmp_path):
+    svc = _Services()
+    steps._err("boom", svc, _job(tmp_path), JobEvent.PATCH_GAVE_UP,
+               transient=False)
+    assert svc.notes == ["boom"]
+
+
+def test_the_note_returns_once_the_budget_is_spent(tmp_path, monkeypatch):
+    monkeypatch.setattr(steps.settings, "get",
+                        lambda k: 1 if k == "runner.llm_retry_max" else 30)
+    svc, job = _Services(), _job(tmp_path)
+    steps._err("boom", svc, job, JobEvent.PATCH_GAVE_UP, transient=True)
+    steps._err("boom", svc, job, JobEvent.PATCH_GAVE_UP, transient=True)
+    assert svc.notes == ["boom"], "only the terminal failure leaves a note"
