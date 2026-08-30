@@ -306,6 +306,18 @@ SETTINGS: list[Setting] = [
             "Empty falls back to the triage provider."),
     Setting("llm.patch.timeout", "int", 600, "Seconds per request."),
     Setting(
+        "llm.patch.free_tier", "bool", False,
+        "The patch model costs nothing, so drop the tier's token budget\n"
+        "and let the loop run to an answer. The budget bounds SPEND; on\n"
+        "a free endpoint there is none to bound, and it is the only\n"
+        "thing stopping the loop from finishing.\n"
+        "\n"
+        "The turn and attempt caps still apply — policy.tiers'\n"
+        "max_iterations and the patch harness's 30 tool turns — so a\n"
+        "runaway loop is still bounded. Expect long jobs: at the\n"
+        "measured 10-30s per turn an attempt can run 5-15 minutes.",
+    ),
+    Setting(
         "llm.patch.reasoning", "str", "low",
         "low rather than off, so a quality regression is a smaller step to\n"
         "walk back. TEMPORARY — see poly-r1g.",

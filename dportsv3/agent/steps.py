@@ -16,6 +16,7 @@ through ``StepOutcome.next_event`` / ``extra_events`` instead.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 import tempfile
@@ -784,6 +785,25 @@ def record_transient_failure(job_path: Path) -> bool:
     return True
 
 
+def _lift_budget_if_free(tier):
+    """Drop the tier's token budget when the patch model costs nothing.
+
+    Measured, same harness and tool loop, both providers: DeepSeek bills
+    3,836 tokens per turn against nemotron's 15,744 — 4.1x more on
+    prompts half the size, because NIM's cache covers a fixed early
+    chunk while DeepSeek's tracks the growing prefix. At the ASSIST
+    tier's 120k that is about 7.6 turns against 31, and every patch
+    attempt died there in the middle of sensible work.
+
+    Only the token budget goes. ``max_tool_turns`` (30, from patch.py)
+    and ``tier.max_iterations`` still bound the loop — without them
+    "unlimited" would mean exactly that.
+    """
+    if not settings.get("llm.patch.free_tier"):
+        return tier
+    return dataclasses.replace(tier, max_tokens=0)
+
+
 def _err(
     msg: str,
     services: Any,
@@ -987,7 +1007,7 @@ class PatchAttemptStep:
         payload: str = ctx.state["payload"]
         model: str = ctx.state["model"]
         env: str = ctx.state["env"]
-        tier = ctx.state["tier"]
+        tier = _lift_budget_if_free(ctx.state["tier"])
         bundle_id = ctx.bundle_id or job.get("bundle_id")
 
         # Companion settings, each falling back to triage's when unset —
@@ -1004,7 +1024,8 @@ class PatchAttemptStep:
             queue_root, "api_call_start",
             f"Calling harness patch for {origin} (tier={tier.name}, env={env})",
             job_id=ctx.job_id,
-            extra={"agent": "dports-patch", "model": model, "tier": tier.name},
+            extra={"agent": "dports-patch", "model": model, "tier": tier.name,
+                   "token_budget": tier.max_tokens or "unbounded (free tier)"},
         )
 
         # Pre-job clean assertion: refuse to start a patch job if

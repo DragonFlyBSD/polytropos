@@ -204,6 +204,17 @@
 # Seconds per request.
 #timeout = 600
 
+# The patch model costs nothing, so drop the tier's token budget
+# and let the loop run to an answer. The budget bounds SPEND; on
+# a free endpoint there is none to bound, and it is the only
+# thing stopping the loop from finishing.
+#
+# The turn and attempt caps still apply — policy.tiers'
+# max_iterations and the patch harness's 30 tool turns — so a
+# runaway loop is still bounded. Expect long jobs: at the
+# measured 10-30s per turn an attempt can run 5-15 minutes.
+#free_tier = false
+
 # low rather than off, so a quality regression is a smaller step to
 # walk back. TEMPORARY — see poly-r1g.
 # Override for one run with $DP_HARNESS_PATCH_REASONING.
