@@ -1242,6 +1242,56 @@ def _confirm_max_failures() -> int:
     return _setting_int("runner.confirm_max_failures", 3)
 
 
+def _preflight_models(queue_root: Path) -> list[str]:
+    """Check each role's configured model against its own endpoint.
+
+    Runs once at startup so a name that does not exist is one loud line
+    here, instead of one dead job per build failure for as long as
+    nobody notices. It is also what makes the retry layer's treatment
+    of an NVIDIA 404 safe: that only holds while a typo has already
+    been ruled out — see ``llm._PROVIDER_TRANSIENT_STATUS``.
+
+    Returns a problem line per broken role, empty when all is well. An
+    endpoint that cannot be reached yields no problems: ``list_models``
+    reports "could not ask", which is not a verdict.
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+    from dportsv3.agent import llm  # noqa: PLC0415
+
+    triage_base = settings.get_opt("llm.triage.api_base")
+    triage_key = settings.read_secret("llm.triage.api_key_file")
+    triage_prov = settings.get_opt("llm.triage.provider")
+    triage_model = settings.get_opt("llm.triage.model")
+
+    # Each patch setting falls back to triage's, matching how the patch
+    # step resolves them — otherwise preflight would validate a
+    # different endpoint than the one the job talks to.
+    roles = {
+        "triage": (triage_model, triage_base, triage_key, triage_prov),
+        "patch": (
+            settings.get_opt("llm.patch.model") or triage_model,
+            settings.get_opt("llm.patch.api_base") or triage_base,
+            settings.read_secret("llm.patch.api_key_file") or triage_key,
+            settings.get_opt("llm.patch.provider") or triage_prov,
+        ),
+    }
+
+    problems: list[str] = []
+    for role, (model, base, key, provider) in roles.items():
+        if not model:
+            continue
+        try:
+            problem = llm.validate_model(
+                model, api_base=base, api_key=key, provider=provider or "")
+        except Exception as exc:  # noqa: BLE001 — never block startup
+            log(queue_root, "WARNING",
+                f"preflight: could not check llm.{role}.model: {exc}")
+            continue
+        if problem:
+            problems.append(f"llm.{role}.model: {problem}")
+    return problems
+
+
 def _confirm_backoff_seconds(failures: int) -> int:
     """How long to hold an issue back after ``failures`` consecutive confirm
     attempts that produced no verdict.
@@ -4949,6 +4999,14 @@ def main(argv: list[str] | None = None) -> int:
     activity_log(queue_root, "runner_start",
                  f"Runner started (triage={triage_model}, "
                  f"patch={patch_model})")
+
+    # Deliberately not fatal. A model name that does not resolve breaks
+    # every LLM job, but the runner also runs confirm and verify builds
+    # that need no model at all, and refusing to start would take those
+    # down too. One ERROR per broken role is loud enough to find.
+    for problem in _preflight_models(queue_root):
+        log(queue_root, "ERROR", f"preflight: {problem}")
+        activity_log(queue_root, "config_problem", f"preflight: {problem}")
     update_runner_status("idle", job_id=None, stage=None)
 
     # Runner-level dev-env for the health probe + dsynth-busy gate.

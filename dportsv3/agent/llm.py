@@ -224,6 +224,125 @@ def _reasoning_kwargs(reasoning: str | None, provider: str = "") -> dict:
     return dialect(value, value in _REASONING_OFF)
 
 
+# --- which failures are worth trying again -----------------------------------
+
+#: Transient by HTTP status, for every provider. Same set pi uses
+#: (429/500/502/503/504/524) plus the two the openai SDK already retries
+#: on its own, so our classification does not disagree with the client's.
+_RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 524})
+
+#: Statuses that are transient for ONE provider and nothing else.
+#:
+#: NVIDIA answers an unroutable model with a bare "404 page not found"
+#: — Go's http.NotFound, i.e. no route matched — and returns the exact
+#: same body for a misspelled id, an id whose vendor prefix a client
+#: stripped (openclaw#71552), and a valid id that is momentarily
+#: unroutable. Measured here: individual requests 404 while their
+#: neighbours seconds away succeed, the model stays listed in
+#: /v1/models throughout, and it recovered on its own ~40 minutes
+#: later. Nobody else treats 404 as retryable and neither should we in
+#: general — this entry is safe only because ``validate_model`` has
+#: already proved the name exists, which is what separates "typo" from
+#: "unroutable". Do not add a provider here without that guarantee.
+_PROVIDER_TRANSIENT_STATUS = {"nvidia": frozenset({404})}
+
+#: Transient regardless of status code. NIM reports an overloaded
+#: worker pool this way and the status does not always come with it
+#: (pi#6364 had to match the substring for the same reason).
+_RETRYABLE_SUBSTRINGS = (
+    "resourceexhausted",
+    "all workers are busy",
+    "service temporarily overloaded",
+    "please retry later",
+    "you can retry your request",
+)
+
+#: Never retryable however transient the wrapper looks — retrying only
+#: burns the budget again. Matches pi's non-retryable provider-limit set.
+_TERMINAL_SUBSTRINGS = ("insufficient_quota", "invalid_api_key", "billing")
+
+
+def is_transient(exc: BaseException, *, provider: str = "") -> bool:
+    """True when ``exc`` is worth trying the same request again.
+
+    Conservative by construction: an error nobody recognises is
+    terminal, because a retry costs a whole request and a wrong
+    "transient" answer turns one failure into several.
+    """
+    text = str(exc).lower()
+    if any(s in text for s in _TERMINAL_SUBSTRINGS):
+        return False
+
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        if status in _RETRYABLE_STATUS:
+            return True
+        if status in _PROVIDER_TRANSIENT_STATUS.get(provider, frozenset()):
+            return True
+        # A 4xx we do not recognise is the caller's fault, not the
+        # provider's. Saying so here stops the substring pass below
+        # from rescuing it on an incidental word match.
+        if 400 <= status < 500:
+            return False
+
+    if any(s in text for s in _RETRYABLE_SUBSTRINGS):
+        return True
+
+    # Timeouts and dropped connections carry no status. Match on the
+    # exception type name so this module needs no openai import.
+    name = type(exc).__name__
+    return name in ("APITimeoutError", "APIConnectionError", "Timeout",
+                    "ConnectionError", "ReadTimeout", "ConnectTimeout")
+
+
+# --- is the configured model actually there? ---------------------------------
+
+
+def list_models(*, api_base: str | None, api_key: str | None,
+                provider: str = "") -> set[str] | None:
+    """Model ids the endpoint advertises, or None if it cannot be asked.
+
+    None means "no answer", never "no models" — the caller must not
+    read it as the model being absent.
+    """
+    base = api_base or _PROVIDER_API_BASE.get(provider)
+    try:
+        from openai import OpenAI  # noqa: PLC0415
+
+        client = OpenAI(api_key=api_key, base_url=base)
+        return {m.id for m in client.models.list().data}
+    except Exception:  # noqa: BLE001 — an unreachable endpoint is not a verdict
+        return None
+
+
+def validate_model(model: str, *, api_base: str | None, api_key: str | None,
+                   provider: str = "") -> str | None:
+    """None when the model is usable, else a line explaining what is wrong.
+
+    This is what makes treating a 404 as transient safe: a name that
+    does not exist is caught once, at startup, instead of being retried
+    forever against an endpoint that will never serve it. It earns its
+    keep on every provider though — a typo'd model is the commonest
+    configuration mistake there is, and the failure it produces
+    otherwise arrives one job at a time.
+    """
+    advertised = list_models(api_base=api_base, api_key=api_key,
+                             provider=provider)
+    if advertised is None:
+        return None  # could not ask; not a verdict, so not an error
+    wanted = _bare_model(model, _provider_of(model, provider or None))
+    if wanted in advertised or model in advertised:
+        return None
+    import difflib  # noqa: PLC0415
+
+    near = difflib.get_close_matches(wanted, sorted(advertised), n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(near)}?" if near else ""
+    return (f"model {model!r} is not offered by this endpoint "
+            f"({len(advertised)} available).{hint}")
+
+
 def complete(
     messages: list[dict],
     *,
