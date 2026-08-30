@@ -163,6 +163,10 @@ def _chat_llm_config() -> dict[str, Any] | None:
         "api_base": settings.get_opt("llm.chat.api_base"),
         "custom_llm_provider": settings.get_opt("llm.chat.provider"),
         "timeout": int(settings.get("llm.chat.timeout")),
+        # Thinking mode. Unlike the runner's roles this needs no env
+        # override, so the plain setting is the whole story — there is
+        # no blank-spelling case to handle as steps._reasoning_for does.
+        "reasoning": settings.get_opt("llm.chat.reasoning"),
         # Bound the assembled artifact+transcript context. The default
         # suits a modern 128K-context model; a smaller-context chat model
         # wants this turned down. Assembly lives in fix_chat.

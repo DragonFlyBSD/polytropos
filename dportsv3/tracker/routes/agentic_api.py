@@ -360,6 +360,7 @@ def register(app, ctx):
                 api_key=cfg["api_key"],
                 custom_llm_provider=cfg["custom_llm_provider"],
                 timeout=cfg["timeout"],
+                reasoning=cfg["reasoning"],
             )
         except Exception as exc:  # noqa: BLE001 — surface as 502
             _LOG.warning(

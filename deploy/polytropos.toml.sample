@@ -225,6 +225,12 @@
 # Seconds per request.
 #timeout = 120
 
+# none | low | high | max. Off by default, and for a blunter
+# reason than the other roles: the panel renders the reply and
+# nothing else, so whatever the model thinks is billed at full
+# output rate, never cached at generation, and discarded unread.
+#reasoning = "none"
+
 # Bound on the assembled artifact and transcript context. The
 # default suits a 128K-context model. The floor is 8192.
 #context_cap = 98304

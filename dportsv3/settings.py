@@ -326,6 +326,13 @@ SETTINGS: list[Setting] = [
     Setting("llm.chat.provider", "str", "", "Force a provider code path."),
     Setting("llm.chat.timeout", "int", 120, "Seconds per request."),
     Setting(
+        "llm.chat.reasoning", "str", "none",
+        "none | low | high | max. Off by default, and for a blunter\n"
+        "reason than the other roles: the panel renders the reply and\n"
+        "nothing else, so whatever the model thinks is billed at full\n"
+        "output rate, never cached at generation, and discarded unread.",
+    ),
+    Setting(
         "llm.chat.context_cap", "int", 96 * 1024,
         "Bound on the assembled artifact and transcript context. The\n"
         "default suits a 128K-context model. The floor is 8192.",

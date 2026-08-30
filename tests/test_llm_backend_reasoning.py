@@ -346,3 +346,45 @@ def test_the_two_prefix_tables_cannot_drift():
         llm._OPENAI_COMPATIBLE - llm._NAMESPACED_MODEL_IDS
     )
     assert not (llm._NAMESPACED_MODEL_IDS & llm._ROUTING_PREFIXES)
+
+
+# --- the chat role (poly-91w) ------------------------------------------------
+
+def test_the_chat_role_defaults_to_thinking_off(monkeypatch):
+    """The panel renders the reply and nothing else — the chat route
+    returns `reply`/`reply_html`/`usage` and never reasoning_content —
+    so anything the model thinks is billed at full output rate and
+    thrown away. Measured on nemotron: 14-21 completion tokens against
+    2 with thinking off, on a one-word prompt."""
+    from dportsv3.agent import steps
+
+    monkeypatch.delenv("DP_HARNESS_CHAT_REASONING", raising=False)
+    assert steps._reasoning_for("chat") == "none"
+
+
+def test_the_chat_config_carries_the_reasoning_setting(monkeypatch):
+    """Declaring the setting is not enough — it has to reach
+    llm.complete, which is what the omission cost us."""
+    from dportsv3 import settings
+    from dportsv3.tracker.routes import _common
+
+    monkeypatch.setattr(settings, "get_opt", lambda p: {
+        "llm.chat.model": "nvidia/nemotron-3-super-120b-a12b",
+        "llm.chat.api_base": "",
+        "llm.chat.provider": "",
+        "llm.chat.reasoning": "none",
+    }.get(p, ""))
+    monkeypatch.setattr(settings, "read_secret", lambda p: "k")
+    cfg = _common._chat_llm_config()
+    assert cfg is not None
+    assert cfg["reasoning"] == "none"
+
+
+def test_omitting_the_key_leaves_nvidia_thinking():
+    """Why this mattered: no reasoning argument means no dialect runs,
+    so nothing reaches extra_body and NVIDIA thinks by default. It does
+    NOT hang — that was the original filing's error."""
+    assert llm._reasoning_kwargs(None, "nvidia") == {}
+    assert llm._reasoning_kwargs("none", "nvidia") == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+    }
