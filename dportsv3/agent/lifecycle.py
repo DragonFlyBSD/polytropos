@@ -69,6 +69,10 @@ class JobEvent(StrEnum):
     ESCALATE_MANUAL  = "escalate_manual"
     ENV_BROKEN       = "env_broken"
     REAP_ORPHAN      = "reap_orphan"
+    # The provider could not be reached, not the job's fault. Routes
+    # back to QUEUED rather than DEAD; the runner holds it with
+    # jobs.next_eligible_at and gives up via jobs.retry_count.
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
     # Step 10b: operator-triggered job kill. Distinct from REAP_ORPHAN
     # so retire_reason ('abandoned') can be filled differently and
     # audit history can tell "operator killed this" apart from
@@ -150,6 +154,13 @@ TRANSITIONS: dict[tuple[JobState | None, JobEvent], JobState] = {
     (JobState.CONFIRMING,  JobEvent.CONFIRM_GREEN):    JobState.DONE,
     (JobState.CONFIRMING,  JobEvent.CONFIRM_RED):      JobState.DONE,
     (JobState.CONFIRMING,  JobEvent.CONFIRM_GAVE_UP):  JobState.DEAD,
+
+    # A transient provider failure is not a verdict on the job, so it
+    # goes back on the queue instead of dying. CLAIMED is included
+    # because the model call can raise before the *_START event lands.
+    (JobState.CLAIMED,     JobEvent.PROVIDER_UNAVAILABLE): JobState.QUEUED,
+    (JobState.TRIAGING,    JobEvent.PROVIDER_UNAVAILABLE): JobState.QUEUED,
+    (JobState.PATCHING,    JobEvent.PROVIDER_UNAVAILABLE): JobState.QUEUED,
 
     # env_broken can interrupt any active state
     (JobState.CLAIMED,     JobEvent.ENV_BROKEN):       JobState.DEAD,

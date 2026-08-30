@@ -240,6 +240,24 @@ SETTINGS: list[Setting] = [
         "handoff explaining why the build never ran. The floor is 1.",
     ),
     Setting(
+        "runner.llm_retry_max", "int", 5,
+        "Transient provider failures — an overloaded or unroutable\n"
+        "endpoint — a job may survive before it is retired for real.\n"
+        "The floor is 1.",
+    ),
+    Setting(
+        "runner.llm_retry_backoff_seconds", "int", 30,
+        "Wait after the first transient provider failure, doubling each\n"
+        "time. Longer than an API client's own retry ladder on purpose:\n"
+        "the SDK already covers the sub-second flap, so a failure that\n"
+        "reaches here has outlived it.",
+    ),
+    Setting(
+        "runner.llm_retry_backoff_max_seconds", "int", 900,
+        "Ceiling on that wait. A provider outage has been measured in\n"
+        "tens of minutes, so this is minutes rather than seconds.",
+    ),
+    Setting(
         "runner.confirm_backoff_seconds", "int", 60,
         "Wait after the first verdictless confirm attempt, doubling each\n"
         "time. The floor is 1.",

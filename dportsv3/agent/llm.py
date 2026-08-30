@@ -262,13 +262,19 @@ _RETRYABLE_SUBSTRINGS = (
 _TERMINAL_SUBSTRINGS = ("insufficient_quota", "invalid_api_key", "billing")
 
 
-def is_transient(exc: BaseException, *, provider: str = "") -> bool:
+def is_transient(exc: BaseException, *, provider: str = "",
+                 model: str = "") -> bool:
     """True when ``exc`` is worth trying the same request again.
 
     Conservative by construction: an error nobody recognises is
     terminal, because a retry costs a whole request and a wrong
     "transient" answer turns one failure into several.
+
+    ``provider`` and ``model`` are resolved the same way the request
+    itself resolves them, so a caller can hand over whatever it has —
+    the provider override, the model name, or both.
     """
+    provider = _provider_of(model, provider or None)
     text = str(exc).lower()
     if any(s in text for s in _TERMINAL_SUBSTRINGS):
         return False

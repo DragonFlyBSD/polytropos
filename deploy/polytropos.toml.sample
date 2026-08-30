@@ -136,6 +136,21 @@
 # handoff explaining why the build never ran. The floor is 1.
 #confirm_max_failures = 3
 
+# Transient provider failures — an overloaded or unroutable
+# endpoint — a job may survive before it is retired for real.
+# The floor is 1.
+#llm_retry_max = 5
+
+# Wait after the first transient provider failure, doubling each
+# time. Longer than an API client's own retry ladder on purpose:
+# the SDK already covers the sub-second flap, so a failure that
+# reaches here has outlived it.
+#llm_retry_backoff_seconds = 30
+
+# Ceiling on that wait. A provider outage has been measured in
+# tens of minutes, so this is minutes rather than seconds.
+#llm_retry_backoff_max_seconds = 900
+
 # Wait after the first verdictless confirm attempt, doubling each
 # time. The floor is 1.
 #confirm_backoff_seconds = 60

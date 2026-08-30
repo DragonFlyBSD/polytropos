@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from dportsv3 import settings
 
+from . import llm
 from .lifecycle import JobEvent
 from .step import Step, StepCtx, StepOutcome, StepReadiness
 
@@ -342,7 +343,11 @@ class TriageStep:
                 f"Harness triage failed for {origin}: {str(exc)[:200]}",
                 job_id=ctx.job_id,
             )
-            return _err(str(exc), services, job_path, JobEvent.TRIAGE_FAIL)
+            return _err(
+                str(exc), services, job_path, JobEvent.TRIAGE_FAIL,
+                transient=llm.is_transient(
+                    exc, provider=custom_llm_provider or "", model=model),
+            )
         duration_ms = int((time.time() - start) * 1000)
         services.activity_log(
             queue_root, "api_call_complete",
@@ -706,12 +711,19 @@ def _err(
     services: Any,
     job_path: Path,
     failure_event: JobEvent,
+    *,
+    transient: bool = False,
 ) -> StepOutcome:
     """Build a failure StepOutcome + write the .job.error note.
 
     ``failure_event`` is the lifecycle event the orchestrator will
     fire on this outcome — TRIAGE_FAIL for the triage step,
     PATCH_GAVE_UP for the patch step (the catchall DEAD route).
+
+    ``transient`` says the provider failed, not the job. The step only
+    reports that much: whether it earns a requeue depends on how many
+    times this job has already been held back, and that tally belongs
+    to the runner, not here.
     """
     try:
         services.write_error_note(job_path, msg)
@@ -720,7 +732,7 @@ def _err(
     return StepOutcome(
         status="failed",
         next_event=failure_event,
-        detail={"status_str": msg, "error": True},
+        detail={"status_str": msg, "error": True, "transient": transient},
     )
 
 
@@ -1087,7 +1099,11 @@ class PatchAttemptStep:
                 reason_detail=f"harness raised before producing a result: {str(exc)[:200]}",
                 patch_result=None,
             )
-            return _err(str(exc), services, job_path, JobEvent.PATCH_GAVE_UP)
+            return _err(
+                str(exc), services, job_path, JobEvent.PATCH_GAVE_UP,
+                transient=llm.is_transient(
+                    exc, provider=custom_llm_provider or "", model=model),
+            )
         duration_ms = int((time.time() - start) * 1000)
 
         services.activity_log(

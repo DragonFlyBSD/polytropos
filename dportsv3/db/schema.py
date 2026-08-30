@@ -169,7 +169,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     bundle_id TEXT,
     -- which runner last transitioned this job (see runners.runner_id).
     -- Recorded only; no code branches on it.
-    owner_id TEXT
+    owner_id TEXT,
+    -- A transient provider failure requeues the job instead of killing
+    -- it. retry_count is the consecutive tally the backoff grows on and
+    -- the cap counts; next_eligible_at holds the job out of the claim
+    -- query until that backoff expires, so the retries are spread
+    -- rather than spent on consecutive loop passes.
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    next_eligible_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -488,6 +495,8 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
+    "ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE jobs ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE bundles ADD COLUMN issue_key TEXT",
 )
 
