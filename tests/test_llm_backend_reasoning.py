@@ -44,6 +44,7 @@ from dportsv3.agent import llm
     ("vertex_ai/gemini-x", None, False),
     ("some-model", "deepseek", True),
     ("claude-x", "anthropic", False),
+    ("nvidia/nemotron-3-ultra-550b-a55b", None, True),
 ])
 def test_provider_decides_the_backend(monkeypatch, model, provider, expect_sdk):
     """Only OpenAI-wire providers go to the SDK. Anything whose request
@@ -256,3 +257,92 @@ def test_an_empty_override_means_provider_default(monkeypatch):
 
     monkeypatch.setenv("DP_HARNESS_TRIAGE_REASONING", "  ")
     assert steps._reasoning_for("triage") is None
+
+
+# --- namespaced providers (poly-ajd) ----------------------------------------
+
+@pytest.mark.parametrize("model,provider,expected", [
+    # A routing prefix: base_url already fixes the provider, so it goes.
+    ("deepseek/deepseek-v4-pro", "deepseek", "deepseek-v4-pro"),
+    # One segment only — an OpenRouter id is itself "vendor/model".
+    ("openrouter/deepseek/deepseek-chat", "openrouter", "deepseek/deepseek-chat"),
+    # Not a prefix, part of the name. Stripping these is a 404.
+    ("nvidia/nemotron-3-ultra-550b-a55b", "nvidia",
+     "nvidia/nemotron-3-ultra-550b-a55b"),
+    ("meta/llama-4-maverick", "nvidia", "meta/llama-4-maverick"),
+    ("qwen/qwen3-coder", "nvidia", "qwen/qwen3-coder"),
+    ("deepseek-ai/deepseek-r1", "nvidia", "deepseek-ai/deepseek-r1"),
+    ("some-model", "deepseek", "some-model"),
+    # An unlisted prefix that names the resolved provider is still a
+    # routing prefix — the llm.backend="openai" escape hatch relies on
+    # it, and forcing the backend must not also rewrite the model id.
+    ("anthropic/claude-x", "anthropic", "claude-x"),
+])
+def test_only_a_routing_prefix_is_stripped(model, provider, expected):
+    """The old rule was "a slash means a litellm prefix". NVIDIA NIM
+    disproves it: the namespace IS the id there, and half a model name
+    gets a 404 back."""
+    assert llm._bare_model(model, provider) == expected
+
+
+def test_a_namespaced_model_reaches_nim_intact(monkeypatch):
+    sink: dict = {}
+    _fake_openai(monkeypatch, sink)
+    monkeypatch.delenv("DP_HARNESS_LLM_BACKEND", raising=False)
+    llm.complete([{"role": "user", "content": "x"}],
+                 model="nvidia/nemotron-3-ultra-550b-a55b", api_key="k")
+    assert sink["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+    assert sink["_base_url"] == "https://integrate.api.nvidia.com/v1"
+
+
+def test_naming_the_provider_covers_the_models_nim_only_hosts(monkeypatch):
+    """NIM serves plenty of models whose namespace is not "nvidia".
+    Setting llm.<role>.provider is how those get the right base URL and
+    the right thinking dialect, with no api_base to configure."""
+    sink: dict = {}
+    _fake_openai(monkeypatch, sink)
+    monkeypatch.delenv("DP_HARNESS_LLM_BACKEND", raising=False)
+    llm.complete([{"role": "user", "content": "x"}],
+                 model="meta/llama-4-maverick", api_key="k",
+                 custom_llm_provider="nvidia", reasoning="none")
+    assert sink["model"] == "meta/llama-4-maverick"
+    assert sink["_base_url"] == "https://integrate.api.nvidia.com/v1"
+    assert sink["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+
+
+# --- one dialect per provider (poly-ajd) ------------------------------------
+
+def test_nvidia_disables_thinking_through_the_chat_template():
+    """Sending DeepSeek's spelling here fails silently: NIM ignores the
+    unknown field and thinks anyway, which is the exact cost poly-r1g
+    exists to avoid."""
+    assert llm._reasoning_kwargs("none", "nvidia") == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+    }
+
+
+@pytest.mark.parametrize("level", ["low", "high", "max"])
+def test_nvidia_has_no_effort_levels_so_any_level_means_on(level):
+    """nemotron's switch is a boolean. Passing reasoning_effort instead
+    would be an unknown parameter, not a graceful degrade."""
+    assert llm._reasoning_kwargs(level, "nvidia") == {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": True}}
+    }
+
+
+def test_an_unknown_provider_keeps_the_deepseek_dialect():
+    """The dialect table is opt-in: adding a provider must not change
+    what every existing one sends."""
+    assert llm._reasoning_kwargs("none", "groq") == \
+        llm._reasoning_kwargs("none")
+
+
+def test_the_two_prefix_tables_cannot_drift():
+    """_ROUTING_PREFIXES is derived rather than written out, so a
+    provider added to one table cannot be forgotten in the other."""
+    assert llm._ROUTING_PREFIXES == (
+        llm._OPENAI_COMPATIBLE - llm._NAMESPACED_MODEL_IDS
+    )
+    assert not (llm._NAMESPACED_MODEL_IDS & llm._ROUTING_PREFIXES)

@@ -22,8 +22,8 @@ a litellm new enough to do the job:
 REMOVE THIS SPLIT once py311-litellm is >= 1.93.2. At that point
 `reasoning_effort` is an ordinary parameter litellm maps for every
 provider, `_complete_openai` and the `_OPENAI_COMPATIBLE` /
-`_PROVIDER_API_BASE` tables stop earning their keep, and `complete()`
-goes back to one backend. Tracked on poly-r1g.
+`_PROVIDER_API_BASE` / `_REASONING_DIALECTS` tables stop earning their
+keep, and `complete()` goes back to one backend. Tracked on poly-r1g.
 
 The tokenizers stub (needed on DragonFly) is in dportsv3.agent.__init__,
 which runs before any module here is loaded.
@@ -97,19 +97,61 @@ def _backend() -> str:
 #: talk to them directly. Anything else goes through litellm, which is
 #: what translates non-OpenAI request/response shapes.
 _OPENAI_COMPATIBLE = frozenset(
-    {"deepseek", "openai", "openrouter", "together_ai", "groq", "xai"}
+    {"deepseek", "openai", "openrouter", "together_ai", "groq", "xai",
+     "nvidia"}
 )
 
 #: Default base URLs for providers we address by name rather than by an
 #: explicit api_base. litellm derives these from the model prefix; the
 #: SDK needs to be told.
-_PROVIDER_API_BASE = {"deepseek": "https://api.deepseek.com"}
+_PROVIDER_API_BASE = {
+    "deepseek": "https://api.deepseek.com",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+}
+
+#: Providers whose model ids carry a namespace of their own.
+#: "nvidia/nemotron-3-ultra-550b-a55b" is the id the endpoint wants, not
+#: a routing prefix wrapped around "nemotron-..." — the leading segment
+#: has to survive into the request. NIM also hosts models under other
+#: namespaces (meta/, qwen/, deepseek-ai/); naming the provider
+#: explicitly — llm.<role>.provider = "nvidia" — routes those here too,
+#: with no api_base to configure.
+_NAMESPACED_MODEL_IDS = frozenset({"nvidia"})
+
+#: Leading segments that really are a routing prefix, and so can be
+#: dropped once base_url has fixed the provider. Derived, so it cannot
+#: drift from the two tables above.
+_ROUTING_PREFIXES = _OPENAI_COMPATIBLE - _NAMESPACED_MODEL_IDS
 
 
 def _provider_of(model: str, custom_llm_provider: str | None) -> str:
     if custom_llm_provider:
         return custom_llm_provider.strip().lower()
     return model.split("/", 1)[0].strip().lower() if "/" in model else ""
+
+
+def _bare_model(model: str, provider: str = "") -> str:
+    """The model id as the endpoint itself wants it.
+
+    litellm addresses a model as "<provider>/<id>" and the SDK does not
+    need that prefix, because base_url already fixes the provider. Drop
+    it only when the leading segment really is one of those prefixes:
+    providers whose own ids are namespaced ("nvidia/nemotron-...",
+    "meta/llama-...", "qwen/...") would otherwise lose half their name
+    and get a 404 back.
+
+    A segment naming the provider we resolved to counts as a routing
+    prefix even when it is not in the table — that is what the
+    ``llm.backend = "openai"`` escape hatch used to do for every model,
+    and forcing the backend should not also change the model id.
+    """
+    head, sep, tail = model.partition("/")
+    if not sep:
+        return model
+    head = head.strip().lower()
+    if head in _NAMESPACED_MODEL_IDS:
+        return model
+    return tail if head in _ROUTING_PREFIXES or head == provider else model
 
 
 def _use_openai_sdk(model: str, custom_llm_provider: str | None,
@@ -129,7 +171,40 @@ def _use_openai_sdk(model: str, custom_llm_provider: str | None,
     return provider in _OPENAI_COMPATIBLE
 
 
-def _reasoning_kwargs(reasoning: str | None) -> dict:
+#: Spellings that mean "do not think".
+_REASONING_OFF = frozenset({"none", "off", "disabled"})
+
+
+def _reasoning_deepseek(value: str, off: bool) -> dict:
+    """DeepSeek's spelling, and the fallback for every provider without
+    an entry below — which is what they all got before there was a
+    table, so no existing provider changes shape.
+
+    The ``thinking`` object is documented as an extra_body field
+    (api-docs.deepseek.com/guides/thinking_mode) — passing it as a plain
+    kwarg is a TypeError — while ``reasoning_effort`` is a normal
+    OpenAI-style parameter.
+    """
+    if off:
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
+    return {"reasoning_effort": value}
+
+
+def _reasoning_nvidia(value: str, off: bool) -> dict:
+    """NVIDIA NIM hands the switch to the chat template, and it is a
+    boolean: nemotron thinks or it does not, there are no effort levels.
+    So any level means "on" and only the off spellings turn it off."""
+    return {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": not off}}
+    }
+
+
+#: How each provider spells thinking mode. Anything absent falls back
+#: to the DeepSeek form above.
+_REASONING_DIALECTS = {"nvidia": _reasoning_nvidia}
+
+
+def _reasoning_kwargs(reasoning: str | None, provider: str = "") -> dict:
     """Provider knobs for thinking mode. TEMPORARY — see module docstring.
 
     Hand-rolled because litellm 1.65.0 cannot express this. litellm
@@ -137,18 +212,16 @@ def _reasoning_kwargs(reasoning: str | None) -> dict:
     ``thinking={"type": "disabled"}`` itself, so this function is
     exactly what that version makes redundant.
 
-    ``"none"`` disables it; ``"low"``/``"high"``/``"max"`` set the effort.
-    The ``thinking`` object is documented as an extra_body field
-    (api-docs.deepseek.com/guides/thinking_mode) — passing it as a plain
-    kwarg is a TypeError — while ``reasoning_effort`` is a normal
-    OpenAI-style parameter.
+    ``"none"`` disables it; ``"low"``/``"high"``/``"max"`` set the
+    effort. Providers do not agree on how to say that, so the wire form
+    is keyed on ``provider`` — sending the wrong dialect is silent, the
+    endpoint just ignores a field it does not know and thinks anyway.
     """
     if not reasoning:
         return {}
     value = reasoning.strip().lower()
-    if value in ("none", "off", "disabled"):
-        return {"extra_body": {"thinking": {"type": "disabled"}}}
-    return {"reasoning_effort": value}
+    dialect = _REASONING_DIALECTS.get(provider, _reasoning_deepseek)
+    return dialect(value, value in _REASONING_OFF)
 
 
 def complete(
@@ -217,7 +290,8 @@ def _complete_openai(
     kwargs: dict = {
         # litellm takes "deepseek/deepseek-v4-pro"; the SDK wants the bare
         # model id, because the provider is already fixed by base_url.
-        "model": model.split("/", 1)[-1] if "/" in model else model,
+        # Namespaced ids keep their prefix — see _bare_model.
+        "model": _bare_model(model, provider),
         "messages": messages,
     }
     if tools:
@@ -226,7 +300,7 @@ def _complete_openai(
         kwargs["timeout"] = timeout
     if temperature is not None:
         kwargs["temperature"] = temperature
-    kwargs.update(_reasoning_kwargs(reasoning))
+    kwargs.update(_reasoning_kwargs(reasoning, provider))
 
     client = OpenAI(api_key=api_key, base_url=base)
     return _response_from(client.chat.completions.create(**kwargs))
