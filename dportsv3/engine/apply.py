@@ -60,7 +60,6 @@ Executor = Callable[[PlanOp, ApplyContext, FileTransaction], ApplyOpResult]
 def _exec_patch_apply(
     op: PlanOp, context: ApplyContext, txn: FileTransaction
 ) -> ApplyOpResult:
-    _ = txn
     rel = op.payload.get("path")
     if not isinstance(rel, str):
         return _failed_row(
@@ -94,6 +93,13 @@ def _exec_patch_apply(
             message=f"patch file does not exist: {rel}",
             source_path=patch_path,
         )
+
+    # patch(1) reads and writes the subject on disk, so the transaction
+    # has to stop buffering first. Without this an `mk` op staged earlier
+    # in the same overlay is invisible to patch, and worse, commit()
+    # writes that pre-patch buffer back over the patched file — the op
+    # reports applied and the change is silently gone (poly-bqo).
+    txn.flush_pending()
 
     command = [
         "patch",

@@ -6,6 +6,26 @@ import tempfile
 from pathlib import Path
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=str(path.parent), delete=False
+    ) as temp:
+        temp.write(content)
+        temp_path = Path(temp.name)
+    temp_path.replace(path)
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=str(path.parent), delete=False
+    ) as temp:
+        temp.write(data)
+        temp_path = Path(temp.name)
+    temp_path.replace(path)
+
+
 class FileTransaction:
     """Collect staged file writes/removals and commit atomically per file."""
 
@@ -71,30 +91,60 @@ class FileTransaction:
             after = before
         return before, after
 
+    def flush_pending(self) -> list[Path]:
+        """Write every staged change to disk now and forget it.
+
+        For executors that hand the file to an external process instead
+        of editing text in the buffer — today only ``patch.apply``,
+        which shells out to patch(1). Such an executor both reads and
+        writes the file on disk, so it has to see the staged edits, and
+        the later commit must not write a pre-subprocess buffer back
+        over its result. Flushing satisfies both: disk becomes the one
+        truth for these paths, and ``read_text`` falls through to it for
+        the rest of the run.
+
+        The staged paths lose their all-or-nothing commit, which is the
+        price of an executor that cannot work on the buffer. It is not a
+        new exposure: ``patch.apply`` already wrote to disk directly, and
+        ``rollback`` never undid disk writes.
+
+        No-op under dry_run, where commit writes nothing either. That
+        leaves one known gap: a dry run's patch(1) still reads the
+        unflushed file, so if an earlier op rewrote the region the patch
+        targets, the dry run can report a hunk result the real run would
+        not. Narrow, and it predates this method — dry runs never saw
+        staged edits — but the real path is now correct while dry run is
+        not, so the two can disagree.
+        """
+        if self.dry_run:
+            return []
+
+        flushed: list[Path] = []
+        for path, content in self._writes.items():
+            _atomic_write_text(path, content)
+            flushed.append(path)
+        for path, data in self._writes_bytes.items():
+            _atomic_write_bytes(path, data)
+            flushed.append(path)
+        for path in self._removes:
+            if path.exists():
+                path.unlink()
+            flushed.append(path)
+
+        self._writes.clear()
+        self._writes_bytes.clear()
+        self._removes.clear()
+        return sorted(set(flushed), key=str)
+
     def commit(self) -> None:
         if self.dry_run:
             return
 
         for path, content in self._writes.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=str(path.parent),
-                delete=False,
-            ) as temp:
-                temp.write(content)
-                temp_path = Path(temp.name)
-            temp_path.replace(path)
+            _atomic_write_text(path, content)
 
         for path, data in self._writes_bytes.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=str(path.parent), delete=False
-            ) as temp:
-                temp.write(data)
-                temp_path = Path(temp.name)
-            temp_path.replace(path)
+            _atomic_write_bytes(path, data)
 
         for path in self._removes:
             if path.exists():

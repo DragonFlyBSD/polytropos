@@ -1772,3 +1772,96 @@ def test_apply_plan_ci_unavailable_oracle_fails_without_strict(
     assert not result.ok
     assert result.oracle_failures == 1
     assert any(d.code == "E_APPLY_ORACLE_UNAVAILABLE" for d in result.diagnostics)
+
+
+def _mk_and_patch_plan(first_kind: str) -> Plan:
+    """Plan with an mk op and a patch.apply against the same Makefile.
+
+    ``first_kind`` picks which runs first, so one call builds the
+    clobbering order and the other the safe one.
+    """
+    mk_op = PlanOp(
+        id="op-mk",
+        target="@main",
+        kind="mk.target.set",
+        payload={"name": "dfly-patch", "recipe": ["\t@true"]},
+    )
+    patch_op = PlanOp(
+        id="op-patch",
+        target="@main",
+        kind="patch.apply",
+        payload={"path": "diffs/Makefile.diff"},
+    )
+    ops = [mk_op, patch_op] if first_kind == "mk" else [patch_op, mk_op]
+    return Plan(port="category/name", ops=ops)
+
+
+def _write_mk_and_patch_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    source = tmp_path / "src"
+    port = tmp_path / "out"
+    (source / "diffs").mkdir(parents=True)
+    port.mkdir(parents=True)
+    (port / "Makefile").write_text(
+        "PORTNAME= sample\nCONFIGURE_ARGS= --old\n.include <bsd.port.mk>\n"
+    )
+    (source / "diffs" / "Makefile.diff").write_text(
+        "--- Makefile.orig\n"
+        "+++ Makefile\n"
+        "@@ -1,3 +1,3 @@\n"
+        " PORTNAME= sample\n"
+        "-CONFIGURE_ARGS= --old\n"
+        "+CONFIGURE_ARGS= --new\n"
+        " .include <bsd.port.mk>\n"
+    )
+    return source, port
+
+
+def test_patch_apply_survives_an_mk_op_staged_before_it(tmp_path: Path) -> None:
+    """poly-bqo: an mk op that stages a write BEFORE patch.apply used to
+    revert it.
+
+    mk.target.set buffers the whole Makefile in the transaction; patch(1)
+    then edited the file on disk; commit() wrote the pre-patch buffer back
+    over it. The op reported applied and the patch was silently gone.
+    Both effects must survive, in either order.
+    """
+    source, port = _write_mk_and_patch_fixture(tmp_path)
+
+    result = apply_plan(
+        _mk_and_patch_plan("mk"),
+        source_root=source,
+        port_root=port,
+        target="@main",
+        oracle_profile="off",
+    )
+
+    assert result.ok, [
+        (d.code, d.message) for r in result.op_results for d in r.diagnostics
+    ]
+    text = (port / "Makefile").read_text()
+    assert "CONFIGURE_ARGS= --new" in text, "patch.apply was reverted by commit"
+    assert "dfly-patch:" in text, "mk op was lost"
+
+
+def test_patch_apply_and_a_later_mk_op_both_land(tmp_path: Path) -> None:
+    """The reverse order already worked — keep it working.
+
+    Here the mk op runs after patch.apply, so read_text() must see the
+    patched file rather than a stale buffered copy.
+    """
+    source, port = _write_mk_and_patch_fixture(tmp_path)
+
+    result = apply_plan(
+        _mk_and_patch_plan("patch"),
+        source_root=source,
+        port_root=port,
+        target="@main",
+        oracle_profile="off",
+    )
+
+    assert result.ok, [
+        (d.code, d.message) for r in result.op_results for d in r.diagnostics
+    ]
+    text = (port / "Makefile").read_text()
+    assert "CONFIGURE_ARGS= --new" in text
+    assert "dfly-patch:" in text
