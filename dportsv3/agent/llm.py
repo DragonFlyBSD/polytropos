@@ -31,8 +31,12 @@ which runs before any module here is loaded.
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from dataclasses import dataclass, field
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -261,6 +265,11 @@ _RETRYABLE_SUBSTRINGS = (
 #: burns the budget again. Matches pi's non-retryable provider-limit set.
 _TERMINAL_SUBSTRINGS = ("insufficient_quota", "invalid_api_key", "billing")
 
+# Waits before retry 1, 2, 3, … in seconds. Fast while a flap is the
+# likely explanation, then stepping up; the last entry repeats and is
+# therefore the ceiling. Also the fallback when settings cannot be read.
+_DEFAULT_RETRY_SCHEDULE = "3,3,3,5,5,15"
+
 
 def is_transient(exc: BaseException, *, provider: str = "",
                  model: str = "") -> bool:
@@ -301,6 +310,132 @@ def is_transient(exc: BaseException, *, provider: str = "",
     name = type(exc).__name__
     return name in ("APITimeoutError", "APIConnectionError", "Timeout",
                     "ConnectionError", "ReadTimeout", "ConnectTimeout")
+
+
+# --- staged retry, per request -----------------------------------------------
+#
+# There are two ladders and they are deliberately different.
+#
+# This one is per REQUEST. It keeps the message list, the worktree and
+# every turn already paid for, so a retry here costs one call. That
+# makes it cheap enough to be short and frequent: measured on one run,
+# 126 calls succeeded while 41 failed in the same window, neighbours
+# seconds apart, and the first success after a 429 came 25s later.
+#
+# The runner's per-JOB ladder (runner.llm_retry_*) throws all of that
+# away and restarts the attempt cold, so it is long and rare. A failure
+# that reaches it has outlived this one and means the provider is
+# actually down, not flapping.
+#
+# Staged rather than exponential on purpose. Exponential assumes
+# contention grows with time; staged encodes the hypothesis the data
+# supports — the first few failures are a flap worth retrying fast, and
+# something still failing by attempt 4 is an outage worth backing off
+# from. The last entry repeats, so it is also the ceiling.
+#
+# The counter is local to the call, so a success resets it: the next
+# request starts at the top of the schedule and never inherits a delay
+# earned by an earlier one.
+
+# Indirection so tests do not actually sleep.
+_SLEEP = time.sleep
+
+
+def _setting(name: str, default):
+    """One setting, with ``default`` when settings cannot be read.
+
+    Falling back rather than raising is deliberate: a client that cannot
+    reach a config file should still retry a flap, not die on the first
+    one.
+    """
+    try:
+        from dportsv3 import settings  # noqa: PLC0415
+
+        return settings.get(name)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _retry_settings() -> tuple[int, list[int]]:
+    """(max retries, wait schedule) as configured."""
+    max_retries = int(_setting("llm.retry_max", 6))
+    raw = str(_setting("llm.retry_backoff_schedule", _DEFAULT_RETRY_SCHEDULE))
+    return max(0, max_retries), _parse_schedule(raw)
+
+
+def _seconds_list(raw: str) -> list[int]:
+    """Comma-separated seconds → waits. Garbage entries are dropped
+    rather than raising: a typo in the config must not take the agent
+    down mid-run."""
+    waits = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            seconds = int(float(part))
+        except ValueError:
+            continue
+        # A negative is garbage, not "retry immediately". Dropping it
+        # keeps a typo from turning the schedule into a hot loop.
+        if seconds >= 0:
+            waits.append(seconds)
+    return waits
+
+
+def _parse_schedule(raw: str) -> list[int]:
+    """The configured schedule, or the default when it parses to
+    nothing. An unreadable schedule is a broken config, not a request to
+    turn retry off — ``llm.retry_max = 0`` is how you do that."""
+    return _seconds_list(raw) or _seconds_list(_DEFAULT_RETRY_SCHEDULE)
+
+
+def _retry_waits(max_retries: int, schedule: list[int]) -> list[int]:
+    """The wait before each retry. Shorter schedule than ``max_retries``
+    means the last entry repeats — that is what makes it the ceiling."""
+    if not schedule or max_retries <= 0:
+        return []
+    return [schedule[min(i, len(schedule) - 1)] for i in range(max_retries)]
+
+
+def _retry_total_seconds() -> float:
+    """Wall-clock bound on one call's whole ladder, request time
+    included. Generous against the schedule (which sleeps ~34s by
+    default) and tight against a request timeout, so a flap is retried
+    and a hang is not."""
+    return max(0.0, float(_setting("llm.retry_total_seconds", 180.0)))
+
+
+def _sdk_max_retries() -> int:
+    """The openai SDK's own retry count. 0 by default: complete() owns
+    the ladder, and two ladders in series multiply."""
+    return max(0, int(_setting("llm.sdk_max_retries", 0)))
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """The provider's own hint, in seconds, or None.
+
+    Never trusted unclamped — opencode #13591 turned a Retry-After into
+    a two-week sleep that no operator could clear. The caller bounds it
+    by the schedule's ceiling.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None:
+        return None
+    for key, divisor in (("retry-after-ms", 1000.0), ("retry-after", 1.0)):
+        try:
+            raw = headers.get(key)
+        except Exception:  # noqa: BLE001 — a header bag we do not understand
+            return None
+        if raw is None:
+            continue
+        try:
+            return float(raw) / divisor
+        except (TypeError, ValueError):
+            # Retry-After may also be an HTTP-date. We do not parse it;
+            # the schedule is a fine answer and cannot be poisoned.
+            continue
+    return None
 
 
 # --- is the configured model actually there? ---------------------------------
@@ -380,18 +515,57 @@ def complete(
     billed at full rate and is never cached at generation, so this is a
     direct saving rather than a caching artifact. Only the openai-SDK
     backend can deliver it — see the module docstring.
+
+    A transient failure is retried in place on the staged schedule (see
+    ``_retry_waits``) so that one unlucky request does not discard the
+    turns already spent. Only ``is_transient`` errors qualify; anything
+    terminal is raised on the first try, as before.
     """
-    if _use_openai_sdk(model, custom_llm_provider, api_base):
-        return _complete_openai(
-            messages, model=model, tools=tools, api_base=api_base,
-            api_key=api_key, custom_llm_provider=custom_llm_provider,
-            timeout=timeout, temperature=temperature, reasoning=reasoning,
-        )
-    return _complete_litellm(
-        messages, model=model, tools=tools, api_base=api_base,
-        api_key=api_key, custom_llm_provider=custom_llm_provider,
-        timeout=timeout, temperature=temperature, reasoning=reasoning,
-    )
+    max_retries, schedule = _retry_settings()
+    waits = _retry_waits(max_retries, schedule)
+    ceiling = max(waits) if waits else 0
+    # Wall-clock bound over the whole ladder. The per-retry ceiling does
+    # not cover a timeout: at a 300s request timeout, six retries would
+    # sit inside one call for 35 minutes — which is how opencode #25041
+    # hangs. A slow failure is not a flap, so it gets no ladder.
+    deadline = time.monotonic() + _retry_total_seconds()
+
+    attempt = 0
+    while True:
+        try:
+            if _use_openai_sdk(model, custom_llm_provider, api_base):
+                return _complete_openai(
+                    messages, model=model, tools=tools, api_base=api_base,
+                    api_key=api_key, custom_llm_provider=custom_llm_provider,
+                    timeout=timeout, temperature=temperature,
+                    reasoning=reasoning,
+                )
+            return _complete_litellm(
+                messages, model=model, tools=tools, api_base=api_base,
+                api_key=api_key, custom_llm_provider=custom_llm_provider,
+                timeout=timeout, temperature=temperature, reasoning=reasoning,
+            )
+        except Exception as exc:
+            if attempt >= len(waits) or not is_transient(
+                    exc, provider=custom_llm_provider or "", model=model):
+                raise
+            delay = waits[attempt]
+            hinted = _retry_after_seconds(exc)
+            if hinted is not None:
+                # Honour the provider, but never above the ceiling.
+                delay = min(max(delay, hinted), ceiling)
+            if time.monotonic() + delay > deadline:
+                raise
+            # WARNING, not DEBUG: a silent 30s pause inside one call is
+            # exactly the thing an operator needs to see, and this line
+            # is the only record that the flap was survived rather than
+            # never happening.
+            _LOG.warning(
+                "llm: retry %d/%d in %ss after transient failure: %s",
+                attempt + 1, len(waits), delay, str(exc)[:200],
+            )
+            _SLEEP(delay)
+            attempt += 1
 
 
 def _complete_openai(
@@ -427,7 +601,13 @@ def _complete_openai(
         kwargs["temperature"] = temperature
     kwargs.update(_reasoning_kwargs(reasoning, provider))
 
-    client = OpenAI(api_key=api_key, base_url=base)
+    # max_retries is explicit because the SDK's default is 2 and the
+    # ladders would otherwise multiply: 6 staged retries over a silent
+    # 3-requests-per-call becomes 21 requests at an endpoint that is
+    # already overloaded. opencode never overrode it and shipped exactly
+    # that (issue #30510). complete() owns the ladder; the SDK owns none.
+    client = OpenAI(api_key=api_key, base_url=base,
+                    max_retries=_sdk_max_retries())
     return _response_from(client.chat.completions.create(**kwargs))
 
 

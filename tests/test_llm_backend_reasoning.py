@@ -139,9 +139,10 @@ class _FakeCompletions:
 
 def _fake_openai(monkeypatch, sink):
     class _Client:
-        def __init__(self, api_key=None, base_url=None):
+        def __init__(self, api_key=None, base_url=None, max_retries=None):
             sink["_api_key"] = api_key
             sink["_base_url"] = base_url
+            sink["_max_retries"] = max_retries
             self.chat = type("C", (), {"completions": _FakeCompletions(sink)})()
 
     import openai
@@ -388,3 +389,14 @@ def test_omitting_the_key_leaves_nvidia_thinking():
     assert llm._reasoning_kwargs("none", "nvidia") == {
         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
     }
+
+
+def test_the_sdk_ladder_is_disabled_so_the_two_do_not_multiply(monkeypatch):
+    """complete() owns the retry ladder. Leaving the SDK's default of 2
+    in place would make every staged retry three requests against an
+    endpoint that is already overloaded — opencode issue #30510."""
+    sink: dict = {}
+    _fake_openai(monkeypatch, sink)
+    llm.complete([{"role": "user", "content": "x"}],
+                 model="deepseek/deepseek-v4-pro", api_key="k")
+    assert sink["_max_retries"] == 0

@@ -243,7 +243,8 @@ SETTINGS: list[Setting] = [
         "runner.llm_retry_max", "int", 5,
         "Transient provider failures — an overloaded or unroutable\n"
         "endpoint — a job may survive before it is retired for real.\n"
-        "The floor is 1.",
+        "Counted per job, after llm.retry_max has already failed in\n"
+        "place, so reaching this means a real outage. The floor is 1.",
     ),
     Setting(
         "runner.llm_retry_backoff_seconds", "int", 30,
@@ -269,6 +270,37 @@ SETTINGS: list[Setting] = [
     ),
 
     # ------------------------------------------------------------------ llm
+    Setting(
+        "llm.retry_max", "int", 6,
+        "Times a single failing request is retried in place before the\n"
+        "failure is handed to the job-level ladder below. Retrying here\n"
+        "keeps the conversation, the worktree and the turns already\n"
+        "paid for, so it is much cheaper than a requeue. 0 disables it.",
+    ),
+    Setting(
+        "llm.retry_backoff_schedule", "str", "3,3,3,5,5,15",
+        "Seconds to wait before retry 1, 2, 3, … A staged schedule, not\n"
+        "a formula: the first failures are usually a flap worth retrying\n"
+        "fast, while one still failing later is an outage worth backing\n"
+        "off from. The last entry repeats, so it is also the ceiling —\n"
+        "including for a provider-sent Retry-After, which is clamped to\n"
+        "it rather than obeyed.",
+    ),
+    Setting(
+        "llm.retry_total_seconds", "float", 180.0,
+        "Wall-clock bound on one request's whole ladder, time spent\n"
+        "waiting for the failing calls included. The per-retry ceiling\n"
+        "cannot bound a timeout: at a 300s request timeout six retries\n"
+        "would sit inside a single call for 35 minutes. Generous against\n"
+        "the schedule above, tight against a timeout — so a flap is\n"
+        "retried and a hang is handed straight to the job ladder.",
+    ),
+    Setting(
+        "llm.sdk_max_retries", "int", 0,
+        "Retries the openai SDK performs on its own. 0 because the\n"
+        "schedule above is the ladder, and two ladders in series\n"
+        "multiply into far more requests than either one describes.",
+    ),
     Setting(
         "llm.backend", "str", "auto",
         "'auto' uses the openai SDK for providers that speak the OpenAI\n"
