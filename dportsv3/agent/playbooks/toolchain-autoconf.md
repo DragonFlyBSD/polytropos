@@ -25,10 +25,26 @@ set of patterns.
 2. **OS-detection `#if defined(__FreeBSD__)` blocks that don't
    include `__DragonFly__`**. Symptom: configure succeeds but
    compile fails with undeclared identifiers (functions, types)
-   that should be available. Fix: extend the ifdef. A dops
-   `mk target set dfly-patch` body with REINPLACE_CMDs is durable
-   across upstream regenerations; a static `dragonfly/patch-*.c`
-   works but rots on every version bump.
+   that should be available. Fix: extend the ifdef — but the form
+   follows **which file the ifdef lives in**, not the fact that it
+   is an ifdef:
+
+   - **Hand-written source** (`.c`, `.h`, and the autotools
+     *sources* `configure.ac` / `Makefile.am`) → a static
+     `dragonfly/patch-*`. That is the durable form here. A
+     whole-line `REINPLACE_CMD` silently no-ops the next time
+     upstream edits that line, dropping the DragonFly branch with
+     no build error; a patch fails loudly instead and says it needs
+     re-cutting.
+   - **Generated output** (`configure`, `Makefile.in`, libtool m4
+     output) → a dops op, since patching regenerated output decays
+     on every bump. Better still, patch the autotools source above
+     and let it regenerate.
+
+   Read the target before picking the op — choosing the op first is
+   how a source patch that only needed re-cutting becomes a fragile
+   substitution. Full decision and the re-cut procedure:
+   [error-prefer-dops-over-static-patches](error-prefer-dops-over-static-patches.md).
 
 3. **Missing headers FreeBSD has but DragonFly doesn't.** See the
    [error-freebsd-only-features](error-freebsd-only-features.md)

@@ -2069,7 +2069,8 @@ def queue_root_for_log(job: dict | None) -> Path | None:
 
 
 def _log_playbook_selection(queue_root, role, origin, selection,
-                            job_id: str | None = None):
+                            job_id: str | None = None,
+                            toolchains: set[str] | None = None):
     """Emit a `playbooks_selected` activity row with included +
     skipped counts so operators see WHY their entry didn't fire.
 
@@ -2090,12 +2091,16 @@ def _log_playbook_selection(queue_root, role, origin, selection,
             (
                 f"{origin or '?'}: role={role} "
                 f"included={len(selection.included)} "
-                f"skipped={len(selection.skipped)}"
+                f"skipped={len(selection.skipped)} "
+                # Empty here is what silently dropped every toolchain-*
+                # playbook, and the row gave no way to see it.
+                f"toolchains={','.join(sorted(toolchains)) if toolchains else 'none'}"
             ),
             job_id=job_id,
             extra={
                 "role": role,
                 "origin": origin,
+                "toolchains": sorted(toolchains or ()),
                 "included": list(selection.included),
                 "skipped_count": len(selection.skipped),
                 # Cap skipped reasons to avoid bloating the log.
@@ -2305,17 +2310,24 @@ def build_triage_payload(
     # toolchain-*.md playbooks fire for ports whose framework
     # Makefile carries recognizable signals (USES=, GNU_CONFIGURE=).
     from dportsv3.agent.playbooks import (  # noqa: PLC0415
-        detect_toolchains, load_playbooks,
+        detect_toolchains, detect_toolchains_from_makefile, load_playbooks,
     )
+    # The port dir is only on disk when the bundle was materialized. When
+    # it wasn't, the directory read returns an empty set and every
+    # toolchain-* playbook silently drops out of the payload — the same
+    # Makefile the payload itself renders happily, because read_bundle_text
+    # falls back to the artifact store and this did not.
     detected_toolchains = detect_toolchains(
         bundle_dir / "port" if bundle_dir else None,
+    ) or detect_toolchains_from_makefile(
+        read_bundle_text(bundle_dir, job.get("bundle_id"), "port/Makefile"),
     )
     playbook_selection = load_playbooks(
         playbooks_dir, role="triage", classification=None,
         toolchains=detected_toolchains,
     )
     _log_playbook_selection(queue_root_for_log(job), "triage", origin,
-                            playbook_selection,
+                            playbook_selection, toolchains=detected_toolchains,
                             job_id=job.get("job_id"))
 
     ctx = ContextCtx(
@@ -2404,17 +2416,24 @@ def build_patch_payload(
         # playbook selector falls back to its default set.
         triage_classification = None
     from dportsv3.agent.playbooks import (  # noqa: PLC0415
-        detect_toolchains, load_playbooks,
+        detect_toolchains, detect_toolchains_from_makefile, load_playbooks,
     )
+    # The port dir is only on disk when the bundle was materialized. When
+    # it wasn't, the directory read returns an empty set and every
+    # toolchain-* playbook silently drops out of the payload — the same
+    # Makefile the payload itself renders happily, because read_bundle_text
+    # falls back to the artifact store and this did not.
     detected_toolchains = detect_toolchains(
         bundle_dir / "port" if bundle_dir else None,
+    ) or detect_toolchains_from_makefile(
+        read_bundle_text(bundle_dir, job.get("bundle_id"), "port/Makefile"),
     )
     playbook_selection = load_playbooks(
         playbooks_dir, role="patch", classification=triage_classification,
         toolchains=detected_toolchains,
     )
     _log_playbook_selection(queue_root_for_log(job), "patch", origin,
-                            playbook_selection,
+                            playbook_selection, toolchains=detected_toolchains,
                             job_id=job.get("job_id"))
 
     ctx = ContextCtx(

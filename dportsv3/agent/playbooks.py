@@ -45,6 +45,7 @@ __all__ = [
     "list_entries",
     "load_playbooks",
     "detect_toolchains",
+    "detect_toolchains_from_makefile",
 ]
 
 
@@ -303,6 +304,26 @@ def _tags_from_makefile_text(text: str) -> set[str]:
         if _USE_GMAKE_RE.match(line):
             tags.add("gmake")
     return tags
+
+
+def detect_toolchains_from_makefile(text: str | None) -> set[str]:
+    """Toolchain tags inferred from a port Makefile's text alone.
+
+    The directory-based :func:`detect_toolchains` can only work when the
+    port files exist on disk. Callers that reach bundle contents through
+    an artifact store have the Makefile's *text* and no directory, and
+    were silently getting an empty set — which reads as "no toolchain
+    context" and drops every ``toolchain-*`` playbook from the payload.
+
+    Only the Makefile signals (``USES=``, ``GNU_CONFIGURE``,
+    ``USE_GMAKE``) are available this way. The file-presence signals
+    need a tree, but a bundle only carries ``port/*`` — never
+    ``configure.ac`` or ``CMakeLists.txt`` — so nothing is lost here
+    that a bundle could have supplied.
+    """
+    if not text:
+        return set()
+    return _tags_from_makefile_text(text)
 
 
 def detect_toolchains(port_dir: Path | None) -> set[str]:
