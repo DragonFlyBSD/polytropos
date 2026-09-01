@@ -7,9 +7,12 @@ Lifecycle pinned by these tests:
   ``checkout_bundle_branch`` will reuse it).
 - Convert FAILURE → branch is dropped (the next attempt starts
   fresh from base; partial convert commits are not useful).
-- Patch end (either outcome) → branch is dropped (changes.diff
-  was already captured at patch success — slice 5 made it the
-  branch-vs-base shape; on failure the branch's state is moot).
+- Patch end (either outcome) → the worktree goes. The branch goes
+  too only when it carries no commits of its own; one that does is
+  kept for the convert→patch chain (B1, 5cc4931). An empty branch
+  that survives gets reused later still pinned at the base it was
+  cut from, and `git diff <base>` then reports everything the base
+  gained since as a reversion (poly-et4).
 - Verify end (either outcome) → the throwaway ``bundle/<id>-verify``
   branch is dropped and the pre-verify ref restored (verify runs on
   its own branch cut fresh from base, decoupled from the patch
@@ -76,7 +79,7 @@ def test_drop_helper_logs_success_when_removed(monkeypatch, tmp_path):
     monkeypatch.setattr(
         worker, "destroy_job_worktree",
         lambda env, bundle_id, kind="patch", **kw: {
-            "ok": True, "removed": True,
+            "ok": True, "dropped_branch": True,
             "branch": f"bundle/{bundle_id}", "base": "main",
         },
     )
@@ -104,7 +107,7 @@ def test_drop_helper_quiet_when_branch_already_absent(
     monkeypatch.setattr(
         worker, "destroy_job_worktree",
         lambda env, bundle_id, kind="patch", **kw: {
-            "ok": True, "removed": False, "reason": "branch_absent",
+            "ok": True, "dropped_branch": False, "reason": "branch_absent",
             "branch": f"bundle/{bundle_id}", "base": "main",
         },
     )
@@ -236,7 +239,7 @@ def test_drop_verify_destroys_the_worktree_and_its_branch(monkeypatch, tmp_path)
         lambda env, bundle_id, kind="verify", **kw: seen.append(
             (env, bundle_id, kind, kw.get("drop_branch"))
         ) or {
-            "ok": True, "removed": True, "branch": "bundle/b-verify",
+            "ok": True, "dropped_branch": True, "branch": "bundle/b-verify",
         },
     )
     runner._drop_verify_branch_for_job(
@@ -265,8 +268,14 @@ def test_drop_verify_wrapper_tolerates_worker_raise(monkeypatch, tmp_path):
 
 
 def test_patch_drop_keeps_the_bundle_branch(monkeypatch, tmp_path):
-    """A bundle's convert->patch chain shares bundle/<id> and a later job in
-    the chain still wants its commits. Only the worktree is disposable."""
+    """The patch path must never *force* the branch away.
+
+    A bundle's convert->patch chain shares bundle/<id> and a later job in
+    the chain still wants its commits, so drop_branch is never passed here
+    (5cc4931). Whether an empty branch is cleaned up is the worker's call
+    via drop_branch_if_unused — see
+    test_patch_drop_asks_to_drop_an_unused_branch.
+    """
     _activity_recorder(monkeypatch)
     seen: list = []
     from dportsv3.agent import worker
@@ -274,10 +283,55 @@ def test_patch_drop_keeps_the_bundle_branch(monkeypatch, tmp_path):
         worker, "destroy_job_worktree",
         lambda env, bundle_id, kind="patch", **kw: seen.append(
             (kind, kw.get("drop_branch"))
-        ) or {"ok": True, "removed": True, "branch": f"bundle/{bundle_id}"},
+        ) or {"ok": True, "dropped_branch": True, "branch": f"bundle/{bundle_id}"},
     )
     runner._drop_bundle_branch_for_job(
         queue_root=tmp_path, job_id="j-1", env="e1",
         bundle_id="b-abc", job_type="patch", reason="patch_success",
     )
     assert seen == [("patch", None)], "must not delete the bundle branch"
+
+
+def test_patch_drop_asks_to_drop_an_unused_branch(monkeypatch, tmp_path):
+    """poly-et4: an empty bundle branch must not survive the job.
+
+    The companion of test_patch_drop_keeps_the_bundle_branch — that one
+    pins "never delete a branch with commits", this one pins "do ask for
+    the empty case to go". The worker decides which it is; the helper's
+    job is to ask.
+    """
+    _activity_recorder(monkeypatch)
+    seen: list = []
+    from dportsv3.agent import worker
+    monkeypatch.setattr(
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: seen.append(kw) or {
+            "ok": True, "dropped_branch": True, "branch": f"bundle/{bundle_id}",
+        },
+    )
+    runner._drop_bundle_branch_for_job(
+        queue_root=tmp_path, job_id="j-1", env="e1",
+        bundle_id="b-abc", job_type="patch", reason="patch_success",
+    )
+    assert seen == [{"drop_branch_if_unused": True}]
+    assert seen[0].get("drop_branch") is None, "a branch with commits is never forced"
+
+
+def test_drop_row_is_gated_on_the_key_the_worker_returns(monkeypatch, tmp_path):
+    """The helper used to read result["removed"], which the worker never
+    set, so the row never fired and the missing drop was invisible."""
+    rows = _activity_recorder(monkeypatch)
+    from dportsv3.agent import worker
+    monkeypatch.setattr(
+        worker, "destroy_job_worktree",
+        lambda env, bundle_id, kind="patch", **kw: {
+            "ok": True, "dropped_branch": False,
+            "branch": f"bundle/{bundle_id}",
+        },
+    )
+    runner._drop_bundle_branch_for_job(
+        queue_root=tmp_path, job_id="j-1", env="e1",
+        bundle_id="b-kept", job_type="patch", reason="patch_success",
+    )
+    assert not [r for r in rows if r["stage"] == "bundle_branch_dropped"], \
+        "a kept branch must not be reported as dropped"

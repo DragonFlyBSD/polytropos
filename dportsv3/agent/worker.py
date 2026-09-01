@@ -2376,7 +2376,8 @@ done
 
 
 def destroy_job_worktree(
-    env: str, bundle_id: str, kind: str = "patch", *, drop_branch: bool = False,
+    env: str, bundle_id: str, kind: str = "patch", *,
+    drop_branch: bool = False, drop_branch_if_unused: bool = False,
 ) -> dict:
     """Throw the job's worktree away.
 
@@ -2386,6 +2387,16 @@ def destroy_job_worktree(
 
     ``drop_branch`` also deletes the branch — right for the throwaway verify
     branch, wrong for a bundle branch whose commits a later job still wants.
+
+    ``drop_branch_if_unused`` deletes it only when it carries no commits of
+    its own (``rev-list --count <base>..<branch> == 0``). That keeps B1's
+    convert->patch chain intact — a branch with commits is never touched —
+    while stopping an empty one from surviving to be reused later, still
+    pinned at the base it was cut from. A reused stale branch makes
+    ``git diff <base>`` report every file the base gained since as a
+    reversion (poly-et4: a libunwind re-run produced a diff reverting four
+    merged PRs and the gcc12 default). Measured in env 2026Q3: 70 bundle
+    branches, none with a single commit, 53 of them stale.
     """
     if not bundle_id:
         return {"ok": False, "error": "bundle_id is required"}
@@ -2412,10 +2423,33 @@ def destroy_job_worktree(
     cmd = f"{git} worktree remove --force {q_wt}; rm -rf {q_wt}; {git} worktree prune"
     if drop_branch:
         cmd += f"; {git} branch -D {q_branch} >/dev/null 2>&1 || true"
+    elif drop_branch_if_unused:
+        # Only when it carries nothing of its own. rev-list is the whole
+        # test: 0 means every commit on it is already in base, so deleting
+        # it cannot lose work. A non-zero count leaves it alone, which is
+        # what keeps the convert->patch chain working.
+        base = _resolve_bundle_base_branch(env)
+        if base is not None:
+            q_base = shlex.quote(base)
+            cmd += (
+                f"; n=$({git} rev-list --count {q_base}..{q_branch} 2>/dev/null || echo -1); "
+                f'if [ "$n" = "0" ]; then '
+                # -d, not -D: we have already established the branch is
+                # fully merged into base, and -d makes git enforce that
+                # independently. If the rev-list reasoning above is ever
+                # wrong, git refuses rather than destroying commits.
+                f"{git} branch -d {q_branch} >/dev/null 2>&1 && "
+                f"echo __POLY_BRANCH_DROPPED__; "
+                f'else echo "__POLY_BRANCH_KEPT__ n=$n"; fi'
+            )
     rm_p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work")
+    # drop_branch reports intent, as it always has. The conditional path
+    # reports what actually happened, via a token git itself would never
+    # print — the branch delete can legitimately not fire.
+    dropped = drop_branch or ("__POLY_BRANCH_DROPPED__" in (rm_p.stdout or ""))
     return _exec_result(
         rm_p.returncode, rm_p.stdout, rm_p.stderr,
-        branch=branch, worktree=worktree, dropped_branch=drop_branch,
+        branch=branch, worktree=worktree, dropped_branch=dropped,
     )
 
 

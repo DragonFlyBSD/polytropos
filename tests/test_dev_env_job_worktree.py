@@ -190,3 +190,92 @@ def test_dirty_check_refuses_to_guess_when_git_cannot_answer(tmp_path, monkeypat
 
     with pytest.raises(CommandError, match="could not determine whether"):
         cli._port_dirty_paths(tmp_path, "devel/foo")
+
+
+# --- poly-et4: drop an unused bundle branch, keep one with commits -------
+
+
+def _capture_exec(monkeypatch, stdout: str = ""):
+    """Record the shell destroy_job_worktree runs, and fake its output."""
+    import subprocess
+    from dportsv3.agent import worker
+    seen: list[str] = []
+
+    def fake_exec(env, *argv, **kw):
+        seen.append(argv[-1] if argv else "")
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
+    monkeypatch.setattr(worker, "_point_ports_link",
+                        lambda env, name: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(worker, "_resolve_bundle_base_branch", lambda env: "master")
+    return seen
+
+
+def test_destroy_asks_git_whether_the_branch_is_empty(monkeypatch):
+    from dportsv3.agent import worker
+    seen = _capture_exec(monkeypatch, stdout="__POLY_BRANCH_DROPPED__\n")
+
+    res = worker.destroy_job_worktree(
+        "e1", "b-abc", "patch", drop_branch_if_unused=True,
+    )
+
+    cmd = seen[-1]
+    assert "rev-list --count master..bundle/b-abc" in cmd
+    # -d, not -D: git independently refuses to delete an unmerged
+    # branch, so a wrong rev-list answer cannot destroy commits.
+    assert "branch -d " in cmd
+    assert "branch -D" not in cmd
+    assert res["dropped_branch"] is True
+
+
+def test_destroy_keeps_a_branch_that_has_commits(monkeypatch):
+    from dportsv3.agent import worker
+    _capture_exec(monkeypatch, stdout="__POLY_BRANCH_KEPT__ n=3\n")
+
+    res = worker.destroy_job_worktree(
+        "e1", "b-abc", "patch", drop_branch_if_unused=True,
+    )
+
+    assert res["dropped_branch"] is False, "a branch with commits must survive"
+
+
+def test_destroy_without_the_flag_never_touches_the_branch(monkeypatch):
+    from dportsv3.agent import worker
+    seen = _capture_exec(monkeypatch)
+
+    res = worker.destroy_job_worktree("e1", "b-abc", "patch")
+
+    assert "branch -d" not in seen[-1] and "branch -D" not in seen[-1]
+    assert "rev-list" not in seen[-1]
+    assert res["dropped_branch"] is False
+
+
+def test_destroy_skips_the_check_when_the_base_is_unknown(monkeypatch):
+    """No base means no safe answer, so leave the branch alone."""
+    from dportsv3.agent import worker
+    seen = _capture_exec(monkeypatch)
+    monkeypatch.setattr(worker, "_resolve_bundle_base_branch", lambda env: None)
+
+    res = worker.destroy_job_worktree(
+        "e1", "b-abc", "patch", drop_branch_if_unused=True,
+    )
+
+    assert "branch -d" not in seen[-1] and "branch -D" not in seen[-1]
+    assert res["dropped_branch"] is False
+
+
+def test_destroy_does_not_mistake_git_chatter_for_a_drop(monkeypatch):
+    """The drop signal is a token git would never emit.
+
+    A bare marker sniffed out of `worktree remove`/`prune` output could
+    be produced by the surrounding commands; this pins that it is not.
+    """
+    from dportsv3.agent import worker
+    _capture_exec(monkeypatch, stdout="Removing worktrees/DROPPED: gitdir file points nowhere\n")
+
+    res = worker.destroy_job_worktree(
+        "e1", "b-abc", "patch", drop_branch_if_unused=True,
+    )
+
+    assert res["dropped_branch"] is False

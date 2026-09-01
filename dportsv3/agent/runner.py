@@ -3141,10 +3141,15 @@ def _drop_bundle_branch_for_job(
         return
     from dportsv3.agent import worker  # noqa: PLC0415
     try:
-        # Keep the branch: a bundle's convert->patch chain shares it, and a
-        # later job in the chain still wants its commits. Only the worktree
-        # goes.
-        result = worker.destroy_job_worktree(env, bundle_id, "patch")
+        # Keep the branch when it carries commits: a bundle's convert->patch
+        # chain shares it, and a later job in the chain still wants them.
+        # Drop it when it carries none — an empty branch has nothing to
+        # preserve, and surviving to be reused later, still pinned at the
+        # base it was cut from, is what made a libunwind re-run emit a diff
+        # reverting four merged PRs and the gcc12 default (poly-et4).
+        result = worker.destroy_job_worktree(
+            env, bundle_id, "patch", drop_branch_if_unused=True,
+        )
     except Exception as exc:
         try:
             activity_log(
@@ -3172,7 +3177,10 @@ def _drop_bundle_branch_for_job(
         except Exception:
             pass
         return
-    if result.get("removed"):
+    # destroy_job_worktree returns dropped_branch; "removed" was never a
+    # key it set, so neither this row nor the verify one below ever fired
+    # (poly-et4) — the operation was silent in both directions.
+    if result.get("dropped_branch"):
         try:
             activity_log(
                 queue_root, "bundle_branch_dropped",
@@ -3401,7 +3409,7 @@ def _drop_verify_branch_for_job(
         except Exception:
             pass
         return
-    if result.get("removed"):
+    if result.get("dropped_branch"):
         try:
             activity_log(
                 queue_root, "verify_branch_dropped",
