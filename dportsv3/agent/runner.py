@@ -3913,6 +3913,17 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
         path = args.get('path', '')
         size = len((args.get('content') or ''))
         return f"{path} ({size} bytes){ok_tag}{suffix}"
+    if tool == "edit_file":
+        # Resulting file size, not the argument's — the same signal
+        # that made put_file's truncations visible in this log.
+        err = (result.get("error") or "").strip().splitlines()
+        suffix = f" — {err[0][:120]}" if (not ok and err) else ""
+        path = args.get("path", "")
+        size = result.get("size")
+        span = f" -> {size} bytes" if size is not None else ""
+        reps = result.get("replacements")
+        rep = f" x{reps}" if reps and reps > 1 else ""
+        return f"{path}{span}{rep}{ok_tag}{suffix}"
     if tool in ("make_extract", "make_patch"):
         return f"origin={args.get('origin', '')}{ok_tag}"
     if tool in ("dupe", "genpatch"):

@@ -18,6 +18,12 @@ if str(_GEN) not in sys.path:
     sys.path.insert(0, str(_GEN))
 
 
+# A structurally valid one-line diff. put_file validates the content of
+# dragonfly/patch-* writes, so these lock tests need a real diff rather
+# than a placeholder to isolate the guard they are actually about.
+_REAL_DIFF = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n"
+
+
 @pytest.fixture
 def env_dir(tmp_path, monkeypatch):
     """A minimal env-paths layout so worker tools can locate
@@ -71,14 +77,14 @@ def test_put_file_allows_deltaports_root(env_dir):
     res = worker.put_file(
         "env",
         "/work/DeltaPorts/ports/devel/foo/dragonfly/patch-Makefile.in",
-        "@@ -1 +1 @@\n",
+        _REAL_DIFF,
     )
     assert res.get("ok") is not False
     assert res["sha256"]
     target = env_dir / "work" / "DeltaPorts" / "ports" / "devel" / "foo" / \
         "dragonfly" / "patch-Makefile.in"
     assert target.is_file()
-    assert target.read_text() == "@@ -1 +1 @@\n"
+    assert target.read_text() == _REAL_DIFF
 
 
 def test_put_file_refusal_does_not_leak_into_other_paths(env_dir):
@@ -172,7 +178,7 @@ def test_put_file_allows_dragonfly_and_diffs_sources(env_dir):
     from dportsv3.agent import worker
     base = "/work/DeltaPorts/ports/devel/baz"
     for rel in ("dragonfly/patch-x", "diffs/Makefile.diff"):
-        res = worker.put_file("env", f"{base}/{rel}", "@@ -1 +1 @@\n")
+        res = worker.put_file("env", f"{base}/{rel}", _REAL_DIFF)
         assert res.get("ok") is not False, rel
 
 
@@ -188,7 +194,7 @@ def test_put_file_allows_non_dragonfly_file_on_dops_port(env_dir):
     res = worker.put_file(
         "env",
         "/work/DeltaPorts/ports/devel/baz/dragonfly/patch-x",
-        "@@ -1 +1 @@\n",
+        _REAL_DIFF,
     )
     assert res.get("ok") is not False
 

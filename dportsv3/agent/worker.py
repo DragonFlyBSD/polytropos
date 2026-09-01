@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -210,6 +211,29 @@ def _sha256(data: bytes) -> str:
 # against but weaker models violate anyway. Enforce at the tool boundary
 # so the model sees a clear error result and can adjust on the next turn.
 # -----------------------------------------------------------------------------
+
+
+def _as_bool(value, *, name: str) -> bool | dict:
+    """Coerce a tool-supplied flag to a real bool.
+
+    ``dispatch`` hands LLM arguments through untouched, and models do
+    emit ``"false"`` for a boolean now and then. Python would take that
+    string as true — silently turning a single replace into a
+    whole-file one — so anything that is not clearly a boolean is
+    refused rather than guessed at.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "yes", "1"):
+            return True
+        if lowered in ("false", "no", "0", ""):
+            return False
+    return {
+        "ok": False,
+        "error": f"{name} must be true or false, got {value!r}",
+    }
 
 
 def _reject_makefile_dragonfly_authoring(chroot_path: str) -> dict | None:
@@ -619,6 +643,142 @@ def get_file(
     }
 
 
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _validate_unified_diff(name: str, text: str) -> str | None:
+    """Return why ``text`` is not a usable unified diff, or None if it is.
+
+    Structural only — it does not need the target tree. That is enough
+    to catch what the agent actually produces when it hand-authors a
+    patch after genpatch gave it nothing (poly-7jw): a body whose line
+    counts contradict its own hunk header (measured: a header claiming
+    ``@@ -358,13 +358,16 @@`` over 28 context lines and no changes),
+    and patches with no ``+``/``-`` line at all, which apply cleanly and
+    change nothing.
+    """
+    if not text.strip():
+        return f"{name}: file is empty"
+    if not text.endswith("\n"):
+        return (
+            f"{name}: does not end with a newline. patch(1) often tolerates "
+            f"that, but in a patch you just wrote it means the last line was "
+            f"cut off — which is the failure being guarded against here"
+        )
+
+    lines = text.split("\n")[:-1]
+    hunks = changed = 0
+    i = 0
+    while i < len(lines):
+        header = _HUNK_HEADER_RE.match(lines[i])
+        if header is None:
+            i += 1
+            continue
+        hunks += 1
+        header_text = lines[i]
+        old_want = int(header.group(2)) if header.group(2) is not None else 1
+        new_want = int(header.group(4)) if header.group(4) is not None else 1
+        old_got = new_got = 0
+        i += 1
+        # Stop as soon as the header's own counts are satisfied. Reading
+        # on to the next header instead would fold whatever sits between
+        # hunks — a blank separator line, a trailing newline at EOF —
+        # into this hunk's tally and reject a perfectly good patch.
+        while i < len(lines) and (old_got < old_want or new_got < new_want):
+            line = lines[i]
+            if _HUNK_HEADER_RE.match(line):
+                break
+            # A real file header (--- followed by +++) starts the next
+            # file; a lone '---' inside a body is a deleted line.
+            if line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
+                break
+            if line.startswith("\\"):  # "\ No newline at end of file"
+                i += 1
+                continue
+            marker = line[:1]
+            if marker == "-":
+                old_got += 1
+                changed += 1
+            elif marker == "+":
+                new_got += 1
+                changed += 1
+            elif marker == " " or line == "":
+                old_got += 1
+                new_got += 1
+            else:
+                return (
+                    f"{name}: line {i + 1} in a hunk body starts with "
+                    f"{marker!r}; every body line needs a ' ', '-' or '+' prefix"
+                )
+            i += 1
+        if (old_got, new_got) != (old_want, new_want):
+            return (
+                f"{name}: hunk header {header_text!r} claims {old_want} old / "
+                f"{new_want} new line(s); the body does not match "
+                f"(counted {old_got} / {new_got})"
+            )
+        # Counts are satisfied, so stop reading — but a '+'/'-' line
+        # sitting right after them is body the header never declared,
+        # which is the same drift seen from the other side. A blank or
+        # context line here is left alone: trailing whitespace at EOF is
+        # common and harmless.
+        if i < len(lines):
+            trailing = lines[i]
+            is_file_header = (
+                trailing.startswith("--- ")
+                and i + 1 < len(lines)
+                and lines[i + 1].startswith("+++ ")
+            )
+            if trailing[:1] in ("+", "-") and not is_file_header:
+                return (
+                    f"{name}: line {i + 1} ({trailing[:40]!r}) is a change line "
+                    f"past the end of hunk {header_text!r}, which declared only "
+                    f"{old_want}/{new_want} line(s) — the body and the header "
+                    f"have drifted apart"
+                )
+    if hunks == 0:
+        return f"{name}: no '@@ -a,b +c,d @@' hunk header found"
+    if changed == 0:
+        return f"{name}: {hunks} hunk(s) but no '+' or '-' line — it would change nothing"
+    return None
+
+def _reject_malformed_patch_write(chroot_path: str, content: str) -> dict | None:
+    """Refuse a structurally broken ``dragonfly/patch-*`` write.
+
+    This is the path the malformed patch in poly-7jw actually took.
+    ``install_patches`` validates what genpatch produced, but genpatch
+    is not how the bad patch got there: when genpatch gave the agent
+    nothing (because the file it diffed had been truncated first), the
+    agent fell back to hand-authoring the diff and writing it straight
+    into the overlay. Nothing looked at it until ``do-patch`` failed a
+    build later, by which point the tool call that caused it was far
+    out of view.
+
+    Scoped to ``dragonfly/patch-*`` basenames — other files under
+    ``dragonfly/`` are whole-file ``file materialize`` sources, not
+    diffs, and must not be parsed as one.
+    """
+    if "/dragonfly/" not in chroot_path:
+        return None
+    if not chroot_path.rpartition("/")[2].startswith("patch-"):
+        return None
+    problem = _validate_unified_diff(chroot_path.rpartition("/")[2], content)
+    if problem is None:
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"refusing to write {chroot_path}: {problem}. Hand-authored "
+            f"patches are where hunk headers and bodies drift apart — "
+            f"generate the diff instead (dupe the file, edit it with "
+            f"edit_file, then genpatch + install_patches), so the counts "
+            f"come from diff(1) rather than from you."
+        ),
+        "kind": "malformed_patch_write",
+        "path": chroot_path,
+    }
+
+
 def _reject_line_numbered_content(path: str, content: str) -> dict | None:
     """Refuse a write that still carries get_file's line numbers.
 
@@ -689,6 +849,9 @@ def put_file(
         refused = _reject_line_numbered_content(path, content)
         if refused is not None:
             return refused
+        refused = _reject_malformed_patch_write(path, content)
+        if refused is not None:
+            return refused
     paths = env_paths(env)
     host = _resolve_chroot_path(paths, path)
 
@@ -717,6 +880,151 @@ def put_file(
     if mode is not None:
         host.chmod(mode)
     return {"path": path, "sha256": _sha256(data), "size": len(data)}
+
+
+def edit_file(
+    env: str,
+    path: str,
+    old_string: str,
+    new_string: str,
+    *,
+    expected_sha256: str | None = None,
+    replace_all: bool = False,
+) -> dict:
+    """Replace ``old_string`` with ``new_string`` in ``path``.
+
+    The targeted counterpart to :func:`put_file`. ``get_file`` windows
+    its reads so a large file never lands whole in the prompt; with
+    ``put_file`` as the only write, changing one line of a 19KB source
+    meant re-emitting all 19KB from a 200-line view of it, and the
+    model truncated instead (poly-7jw: 19229 bytes written back as 47).
+    An anchored replace removes that class — the untouched bytes are
+    never in the model's hands.
+
+    ``old_string`` must match exactly once unless ``replace_all`` is
+    set; zero and ambiguous matches both fail rather than guess. The
+    same write guards as ``put_file`` apply, plus the line-number
+    check on both strings — numbers left on ``old_string`` would
+    otherwise surface as a bare "no match" with no hint why.
+
+    Text only: a file that is not valid UTF-8 has no string to anchor
+    on, and is directed back to ``put_file`` with base64.
+    """
+    for guard in (
+        _reject_dports_write(path),
+        _reject_makefile_dragonfly_authoring(path),
+        _reject_orphan_dops_write(path),
+        _reject_line_numbered_content(path, old_string),
+        _reject_line_numbered_content(path, new_string),
+    ):
+        if guard is not None:
+            return guard
+
+    replace_all = _as_bool(replace_all, name="edit_file: replace_all")
+    if isinstance(replace_all, dict):
+        return replace_all
+
+    if not old_string:
+        return {
+            "ok": False,
+            "error": "edit_file: old_string is empty — give the text to replace",
+            "path": path,
+        }
+    if old_string == new_string:
+        return {
+            "ok": False,
+            "error": "edit_file: old_string and new_string are identical — nothing to do",
+            "path": path,
+        }
+
+    paths = env_paths(env)
+    host = _resolve_chroot_path(paths, path)
+    if not host.is_file():
+        return {"ok": False, "error": f"edit_file: no such file: {path}", "path": path}
+
+    raw = host.read_bytes()
+    if expected_sha256 is not None:
+        current = _sha256(raw)
+        if current != expected_sha256:
+            return {
+                "ok": False,
+                "error": (
+                    f"edit_file: sha256 mismatch on {path} "
+                    f"(expected {expected_sha256[:12]}…, got {current[:12]}…) — "
+                    f"the file changed since you read it; re-read before editing"
+                ),
+                "path": path,
+            }
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "ok": False,
+            "error": (
+                f"edit_file: {path} is not UTF-8 text and has no string to "
+                f"anchor on — use put_file with encoding='base64'"
+            ),
+            "path": path,
+        }
+
+    count = text.count(old_string)
+    if count == 0:
+        return {
+            "ok": False,
+            "error": (
+                f"edit_file: old_string not found in {path}. It must match the "
+                f"file byte for byte, including indentation — re-read the "
+                f"region with get_file (stripping its line numbers) or narrow "
+                f"it with grep."
+            ),
+            "path": path,
+            "matches": 0,
+        }
+    if count > 1 and not replace_all:
+        return {
+            "ok": False,
+            "error": (
+                f"edit_file: old_string matches {count} times in {path}. "
+                f"Extend it with surrounding lines until it is unique, or "
+                f"pass replace_all=true to change every occurrence."
+            ),
+            "path": path,
+            "matches": count,
+        }
+
+    updated = text.replace(old_string, new_string)
+    refused = _reject_malformed_patch_write(path, updated)
+    if refused is not None:
+        return refused
+
+    data = updated.encode("utf-8")
+    # Temp-and-replace, not a plain write: a write that dies partway
+    # through leaves a truncated file, which is the exact failure this
+    # tool exists to prevent. Same directory so the rename is atomic.
+    mode = host.stat().st_mode & 0o777
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=str(host.parent), delete=False
+    ) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    tmp_path.chmod(mode)
+    tmp_path.replace(host)
+
+    # A window around the first edit, so the model can confirm the
+    # result without a second read costing a full get_file turn.
+    edited_line = text[: text.index(old_string)].count("\n")
+    new_lines = updated.splitlines()
+    lo = max(0, edited_line - 3)
+    hi = min(len(new_lines), edited_line + new_string.count("\n") + 4)
+    return {
+        "ok": True,
+        "path": path,
+        "sha256": _sha256(data),
+        "size": len(data),
+        "replacements": count if replace_all else 1,
+        "first_edit_line": edited_line + 1,
+        "context": "\n".join(new_lines[lo:hi]),
+    }
 
 
 def _git_diff_with_untracked(env: str, rel: str) -> subprocess.CompletedProcess:
@@ -2469,6 +2777,17 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     Host-side file copy; no chroot exec needed since both source and
     destination are in the writable overlay. If ``patches`` is None,
     every ``patch-*`` file in ``genpatch-out/`` is installed.
+
+    Two things this refuses to do quietly, both measured in poly-7jw:
+
+    - Install nothing and report success. With ``patches=None`` and an
+      empty ``genpatch-out``, this used to return ``installed=[]`` and
+      the dispatcher stamped ``ok=True`` on it. genpatch had produced
+      no diff because the file it diffed was already corrupted, and the
+      agent read the empty success as "patches installed".
+    - Install a structurally broken diff. A malformed hunk copies fine
+      and only surfaces much later, as a do-patch failure with no link
+      back to the tool call that caused it.
     """
     paths = env_paths(env)
     src = paths.writable / "work" / "genpatch-out"
@@ -2482,6 +2801,39 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         missing = [str(p) for p in candidates if not p.is_file()]
         if missing:
             raise FileNotFoundError(f"missing patches: {missing}")
+
+    if not candidates:
+        return {
+            "ok": False,
+            "error": (
+                f"install_patches: nothing to install — no patch-* file in "
+                f"{src}. genpatch produced no diff, which usually means the "
+                f"file it diffed matches its .orig (the edit did not land) or "
+                f"the .orig itself is wrong. Re-check the WRKSRC edit before "
+                f"treating this as done."
+            ),
+            "origin": origin,
+            "source_dir": str(src),
+            "installed": [],
+        }
+
+    rejected = [
+        problem
+        for f in candidates
+        if (problem := _validate_unified_diff(f.name, f.read_text(errors="replace"))) is not None
+    ]
+    if rejected:
+        return {
+            "ok": False,
+            "error": (
+                "install_patches: refusing to install malformed patch(es): "
+                + "; ".join(rejected)
+            ),
+            "origin": origin,
+            "rejected": rejected,
+            "installed": [],
+        }
+
     dst.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
     for f in candidates:

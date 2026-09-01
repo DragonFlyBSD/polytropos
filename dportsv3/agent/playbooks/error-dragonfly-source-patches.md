@@ -117,10 +117,12 @@ introduce one, both ending in a `file materialize dragonfly/patch-…
   line.
 - **From a WRKSRC edit** — for non-trivial changes, `make_extract` +
   (`make_patch` if a `files/patch-*` also touches the file) + `dupe` +
-  `put_file` (edit the source) + `genpatch` + `install_patches`, then
+  `edit_file` (change the source) + `genpatch` + `install_patches`, then
   add the materialize line. Editing the file is easier than
-  hand-writing the diff. See `flow-patch.md` for why `make_patch`
-  matters when layering on top of FreeBSD `files/*` patches.
+  hand-writing the diff, and `edit_file` keeps the parts you did not
+  read out of it — `put_file` on a source file re-emits the whole thing
+  and truncates. See `flow-patch.md` for why `make_patch` matters when
+  layering on top of FreeBSD `files/*` patches.
 
 **Never** text-edit a `dragonfly/` patch in place — nudging context
 lines or hunk headers shifts the hunk body but not its header,

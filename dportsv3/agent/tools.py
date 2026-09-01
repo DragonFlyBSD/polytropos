@@ -82,8 +82,31 @@ _TOOLS: list[dict] = [
            "start_line": _INT,
            "end_line": _INT},
           ["path"]),
+    _tool("edit_file",
+          "**Your default tool for changing an existing file.** Replaces "
+          "old_string with new_string in place — you supply only the region "
+          "you are changing, never the whole file. old_string must match the "
+          "file byte for byte (indentation included) and must be unique: a "
+          "zero match and an ambiguous match both fail rather than guess, so "
+          "extend old_string with surrounding lines until it is unique, or "
+          "pass replace_all=true to change every occurrence. get_file's line "
+          "numbers are display only — strip the number and the tab before "
+          "using a window as old_string. expected_sha256 (from a prior "
+          "get_file) is an optimistic lock against editing stale content. "
+          "Returns the new sha256 plus a few lines of context around the "
+          "edit, so you do not need a second read to confirm it. For a file "
+          "that is not UTF-8 text, use put_file with base64.",
+          {"path": _STR, "old_string": _STR, "new_string": _STR,
+           "expected_sha256": _STR,
+           "replace_all": {"type": "boolean"}},
+          ["path", "old_string", "new_string"]),
     _tool("put_file",
-          "Write a file. encoding='text' (UTF-8, default) or 'base64' (binary). "
+          "Write a file **whole**. Use this to CREATE a new file, or to "
+          "replace a short one outright — to change part of an existing file "
+          "use edit_file instead. Whole-file writes on a file you have only "
+          "read a window of are how content gets silently truncated: content "
+          "here replaces every byte, so anything you did not re-emit is gone. "
+          "encoding='text' (UTF-8, default) or 'base64' (binary). "
           "expected_sha256 is an optimistic lock — pass the sha256 from a prior get_file. "
           "Write the file's real content: get_file's line numbers are display "
           "only, and a write that still has them is refused rather than baked "

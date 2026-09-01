@@ -115,7 +115,7 @@ auto-running the patch agent on this port at all. So:
 - **Apply triage's Suggested Fix first.** It's a concrete starting
   hypothesis. Don't burn turns re-investigating what's already in the
   Triage Summary.
-- **Try something before exploring.** A wrong put_file is more useful
+- **Try something before exploring.** A wrong edit is more useful
   than ten get_files that lead nowhere — at least the next attempt
   knows that approach didn't work.
 - **Time-box exploration.** If you're 4+ tool calls in and haven't
@@ -147,7 +147,8 @@ debugging tarpit that burns whole budgets.
     **DeltaPorts overlay**: dragonfly-specific patches
     (`dragonfly/patch-*`), `Makefile.DragonFly`, `overlay.dops`,
     `diffs/*.diff`, `STATUS`. **This is the source of truth you
-    edit.** Always `put_file` here when changing a port. Materialize
+    edit.** Always write here when changing a port — `edit_file` to
+    change an existing file, `put_file` to create one. Materialize
     afterwards.
 
 - `/work/DPorts/<origin>/`
@@ -272,8 +273,9 @@ lock root, not the compose root — the worker will refuse both).
 After each edit, run `materialize_dports` again before `dsynth_build`.
 
 **When you edit `overlay.dops`, you write the dops DSL yourself** —
-read it with `grep`/`get_file`, write the new/changed lines with
-`put_file`, then **call `validate_dops(origin)`**. If `ok=false`, the
+read it with `grep`/`get_file`, change the lines with `edit_file`
+(`put_file` only when the overlay doesn't exist yet), then **call
+`validate_dops(origin)`**. If `ok=false`, the
 `stderr_tail` diagnostics carry `line:column` and an `E_*` code — fix
 the offending line(s) and call `validate_dops` again until it's clean.
 Do NOT `materialize_dports` against a dops that hasn't passed
@@ -282,7 +284,14 @@ Consult `dops_reference()` (once) if you need the syntax.
 
 For `put_file` on any file you haven't `get_file`'d this session,
 pass `expected_sha256` from a prior read to make the edit race-safe
-against stale content.
+against stale content. `edit_file` takes the same guard.
+
+**Changing a file that already exists is `edit_file`'s job.** You give
+it the old text and the new text; everything you did not name stays
+exactly as it is. `put_file` is for creating a file — it overwrites
+every byte, so using it to change a file you only read a window of
+deletes the rest, and the patch you generate afterwards is diffed
+against the damage.
 
 ## SEARCH BEFORE READ (token-cost discipline)
 
@@ -379,7 +388,10 @@ In all cases, edit `/work/DeltaPorts/ports/<origin>/` and let
        untouched by any framework patch (pristine == build state).
      - `dupe(/work/DPorts/<origin>/work/.../file.c)` to snapshot the
        baseline (post-`do-patch` if you ran make_patch, else pristine)
-     - `put_file` to edit the source file inside WRKSRC
+     - `edit_file` to change the source file inside WRKSRC. Use this,
+       not `put_file`: a whole-file write has to re-emit every byte
+       you did not read, and on a multi-kilobyte source that silently
+       truncates it — genpatch then diffs the wreckage.
      - `genpatch(<same path>)` to produce a unified diff in
        /work/genpatch-out/. Because genpatch diffs against the dupe
        baseline, the hunk context matches what `do-patch` sees at
@@ -409,7 +421,12 @@ In all cases, edit `/work/DeltaPorts/ports/<origin>/` and let
 - **Never** edit `/work/DPorts/<origin>/` directly — your changes will
   be lost on the next `materialize_dports`.
 - Prefer minimal, surgical edits. A 3-line patch beats a rewrite.
-- Use `expected_sha256` on `put_file` when you've previously read a file.
+- Change an existing file with `edit_file`, not `put_file`. `put_file`
+  replaces every byte, so on a file you only read a window of it
+  truncates the rest away — that is how a genpatch baseline gets
+  corrupted and the resulting patch comes out empty or malformed.
+- Use `expected_sha256` on either write tool when you've previously
+  read the file.
 - On `dsynth_build` failure, **call `dsynth_log(origin)` immediately**.
   The real build error is in the per-port log, not in dsynth_build's
   stdout_tail. Don't grep `/work/DPorts/.../*.log` — those files don't

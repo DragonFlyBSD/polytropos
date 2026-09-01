@@ -9,9 +9,12 @@ priority: 55
 
 You edit `ports/<origin>/overlay.dops` **free-hand** in dops DSL: read
 it with `grep`/`get_file`, write the new or changed lines with
-`put_file`, then validate. There is no per-directive intent tool and no
-file-delete tool — `put_file` (whole-file write) and `install_patches`
-are your only write primitives, plus the build loop. The grammar itself
+`edit_file` (or `put_file` when creating the overlay from nothing), then
+validate. There is no per-directive intent tool and no file-delete tool.
+Your write primitives are `edit_file` (anchored replace — the default
+for changing anything that already exists), `put_file` (whole-file
+write — for creating a file, or replacing a short one outright) and
+`install_patches`, plus the build loop. The grammar itself
 (every `mk`/`file`/`text` op, heredoc blocks, conditional ops) is in
 `dops_reference()` — call it once when you're about to write a fresh
 overlay. This file covers the *flow* knowledge the grammar reference
@@ -216,9 +219,14 @@ produce the diff rather than hand-writing one:
 3. `dupe(<wrksrc>/path/to/file.c)` — snapshots a `.orig` and exposes the
    file for editing. **Dupe AFTER make_patch** so the baseline is the
    post-`do-patch` state — that baseline is what genpatch diffs against.
-4. `put_file <wrksrc>/path/to/file.c <new content>` — edit it.
-   `put_file` to a WRKSRC path is allowed; to `ports/<origin>/` it is
-   not — edit the overlay there, not the extracted source.
+4. `edit_file <wrksrc>/path/to/file.c <old_string> <new_string>` — change
+   it. Anchored replace: you pass only the region you are changing, so
+   the rest of the file is never at risk. **Do not use `put_file` here.**
+   A whole-file write means re-emitting every byte from a windowed read,
+   and on a multi-kilobyte source that truncates — genpatch then diffs a
+   corrupted baseline and produces an empty or garbage patch. Writing to
+   a WRKSRC path is allowed; to `ports/<origin>/` it is not — edit the
+   overlay there, not the extracted source.
 5. `genpatch(<same path>)` — runs `diff -u` between `.orig` and current,
    depositing a WRKSRC-relative `patch-*` file. (It picks up WRKSRC from
    the prior `make_extract` automatically.) Because the `.orig` baseline
