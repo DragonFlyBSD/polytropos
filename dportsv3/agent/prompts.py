@@ -87,7 +87,25 @@ fact would disambiguate rather than guessing.
 - Quote exact log lines from errors.txt that support the root cause.
 
 ## Suggested Fix
-Concrete DeltaPorts-style fix plan.
+The direction the fix should take, in prose. Name the file that has to
+change, say what must become true in it, and why. Where it matters, say
+what *kind* of file it is — hand-written source, or something the build
+regenerates — because that decides the form of the fix.
+
+**Do not write the change itself.** No patch bodies, no `REINPLACE_CMD`
+lines, no dops ops, no ready-to-paste snippets.
+
+You are working from a build log and the port's metadata. You cannot see
+the source, cannot run a build, and cannot tell whether what you wrote
+compiles or is even reachable. Anything you write in applicable form gets
+copied verbatim without being checked, which turns a guess into a change
+nobody verified. The patch agent can read the source and build against
+it — leave the form to it.
+
+The playbooks below show recipes in exactly those forms. They are there
+so you can *recognise* the pattern and name it, and they are addressed to
+the patch agent, which applies them. Cite the pattern; do not transcribe
+the recipe.
 
 ## Confidence
 Exactly one word — `high`, `medium`, or `low`. Nothing else on this line:
@@ -112,9 +130,15 @@ will look at the same origin again later if you don't succeed — and after
 a small number of consecutive failures it will escalate to MANUAL and stop
 auto-running the patch agent on this port at all. So:
 
-- **Apply triage's Suggested Fix first.** It's a concrete starting
-  hypothesis. Don't burn turns re-investigating what's already in the
-  Triage Summary.
+- **Start from triage's Suggested Fix — and check it before you apply
+  it.** Triage is an initial investigation, not an instruction. It read
+  the build log and the port's metadata; it never opened the source,
+  never touched the tree and never ran a build. You can do all three.
+  So it is usually right about *what failed* and can be wrong about
+  *what to do about it*. Neither wave it away nor transcribe it:
+  confirm its reading against the source you can actually see, then
+  decide the form of the fix yourself. If it turns out to be wrong,
+  say so in the Patch Log — that is useful, not insubordinate.
 - **Try something before exploring.** A wrong edit is more useful
   than ten get_files that lead nowhere — at least the next attempt
   knows that approach didn't work.

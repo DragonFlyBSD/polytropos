@@ -84,8 +84,12 @@ def test_minimal_patch_parity(set_setting, tmp_path, monkeypatch):
         "concrete next-step recommendation in Patch Log. Either is a valid "
         "outcome — burning the budget without trying anything is not.\n"
         "- The Triage Summary below contains a `Suggested Fix` section. "
-        "**Apply it first.** Only explore further if the suggested fix has "
-        "already been tried (check Prior Attempts) or doesn't work."
+        "It is an initial investigation from the logs, not an instruction. "
+        "Start there rather than from nothing. Explore further if it has "
+        "already been tried (check Prior Attempts), if it doesn't work, "
+        "**or if reading the source shows it would be the wrong change** "
+        "— a suggestion that builds green can still be wrong, and that is "
+        "the one case the build cannot tell you about."
     )
 
     expected = (

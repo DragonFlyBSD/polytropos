@@ -550,8 +550,12 @@ class AutomationContextSection:
             f"concrete next-step recommendation in Patch Log. Either is a valid "
             f"outcome — burning the budget without trying anything is not.\n"
             f"- The Triage Summary below contains a `Suggested Fix` section. "
-            f"**Apply it first.** Only explore further if the suggested fix has "
-            f"already been tried (check Prior Attempts) or doesn't work."
+            f"It is an initial investigation from the logs, not an instruction. "
+            f"Start there rather than from nothing. Explore further if it has "
+            f"already been tried (check Prior Attempts), if it doesn't work, "
+            f"**or if reading the source shows it would be the wrong change** "
+            f"— a suggestion that builds green can still be wrong, and that is "
+            f"the one case the build cannot tell you about."
         )
         return f"## Automation Context\n{body}\n"
 
