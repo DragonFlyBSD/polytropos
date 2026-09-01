@@ -94,6 +94,22 @@ class PatchEventDispatcher:
                     extra={"tool": ev.get("tool")},
                 )
 
+        if et == "attempt_workspace_reset":
+            cleared = ev.get("genpatch_out_cleared") or []
+            bits = [f"attempt {ev.get('attempt')}"]
+            if cleared:
+                bits.append(f"cleared {len(cleared)} staged patch(es)")
+            if "workdir_clean_ok" in ev:
+                bits.append(
+                    "wrkdir cleaned" if ev.get("workdir_clean_ok")
+                    else f"wrkdir clean FAILED: {ev.get('workdir_clean_error', '')[:120]}"
+                )
+            self.activity_log(
+                self.queue_root, "attempt_workspace_reset",
+                "; ".join(bits),
+                job_id=self.job_id,
+            )
+
         if et == "attempt_start":
             self.activity_log(
                 self.queue_root, "attempt_start",

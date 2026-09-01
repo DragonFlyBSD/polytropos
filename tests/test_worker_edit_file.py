@@ -223,20 +223,25 @@ def test_validator_catches_the_libunwind_signature():
 
     problem = _validate_unified_diff("patch-tests_test-ptrace.c", diff)
     assert problem is not None
-    assert "claims 13 old / 16 new" in problem
+    assert "declares 13 old / 16 new" in problem
+    assert "carries more" in problem
 
 
-def test_validator_catches_the_gcc12_signature():
-    """Header claims 8 lines, body supplies 5 — it runs out early."""
+def test_validator_tolerates_the_gcc12_signature_at_eof():
+    """Header claims 8, body supplies 5, and the file ends there.
+
+    Deliberately allowed (poly-dq5): a final hunk short by trailing
+    context is what devel/readline, shells/bash, net/openslp,
+    net/hostapd210 and graphics/dcp2icc all ship, and patch(1) applies
+    them. Rejecting it cost a whole job and caught nothing real.
+    """
     from dportsv3.agent.worker import _validate_unified_diff
 
     diff = (
         "--- a/t.c\n+++ b/t.c\n@@ -1,8 +1,8 @@\n"
         " one\n-two\n+TWO\n three\n four\n"
     )
-    problem = _validate_unified_diff("patch-t.c", diff)
-    assert problem is not None
-    assert "claims 8 old / 8 new" in problem
+    assert _validate_unified_diff("patch-t.c", diff) is None
 
 
 def test_validator_accepts_blank_separated_hunks():
@@ -283,13 +288,12 @@ def test_validator_catches_a_context_only_patch():
     assert "no '+' or '-' line" in problem
 
 
-def test_validator_catches_a_missing_trailing_newline():
+def test_validator_no_longer_rejects_a_missing_trailing_newline():
+    """Removed in poly-dq5 — see the docstring for why it earned nothing."""
     from dportsv3.agent.worker import _validate_unified_diff
 
     diff = "--- a/t.c\n+++ b/t.c\n@@ -1,1 +1,1 @@\n-a\n+b"
-    problem = _validate_unified_diff("patch-t.c", diff)
-    assert problem is not None
-    assert "newline" in problem
+    assert _validate_unified_diff("patch-t.c", diff) is None
 
 
 def test_validator_catches_an_empty_patch():
@@ -377,7 +381,10 @@ def test_install_patches_rejects_the_batch_if_any_patch_is_bad(env_dir):
     out = env_dir / "work" / "genpatch-out"
     out.mkdir(parents=True)
     (out / "patch-good.c").write_text("--- a/g.c\n+++ b/g.c\n@@ -1,1 +1,1 @@\n-a\n+b\n")
-    (out / "patch-bad.c").write_text("--- a/b.c\n+++ b/b.c\n@@ -1,9 +1,9 @@\n-a\n+b\n")
+    # body longer than the header declares — a real malformation
+    (out / "patch-bad.c").write_text(
+        "--- a/b.c\n+++ b/b.c\n@@ -1,2 +1,2 @@\n" + " ctx\n" * 6
+    )
 
     res = worker.install_patches("env", "devel/foo")
 
@@ -515,3 +522,291 @@ def test_replace_all_accepts_real_booleans(env_dir):
     assert res["ok"] is True
     assert res["replacements"] == 2
     assert host.read_text() == "changed\nother\nchanged\n"
+
+
+# --- poly-dq5: the near-miss hint ----------------------------------------
+
+
+_TAB_INDENTED = (
+    "\tcase SYSCALL:\n"
+    "\t  if (!state)\n"
+    "#if HAVE_DECL_PT_SYSCALL\n"
+    "\t  ptrace (PT_SYSCALL, target_pid, 0);\n"
+    "#else\n"
+    "#error Syscall me\n"
+    "#endif\n"
+)
+
+
+def test_not_found_returns_the_nearest_region_verbatim(env_dir):
+    """The exact failure from devel/libunwind: two tabs vs tab-plus-spaces.
+
+    The model guessed at the indentation 13 times across that job and
+    never hit it, because nothing ever showed it the real bytes.
+    """
+    from dportsv3.agent import worker
+    _source(env_dir, "t.c", _TAB_INDENTED)
+
+    wrong = (
+        "#if HAVE_DECL_PT_SYSCALL\n"
+        "\t\tptrace (PT_SYSCALL, target_pid, 0);\n"
+        "#else\n"
+    )
+    res = worker.edit_file("env", "/work/t.c", wrong, "X")
+
+    assert res["ok"] is False
+    assert res["matches"] == 0
+    # The real bytes, tab + two spaces — copyable as the next old_string.
+    assert "\t  ptrace (PT_SYSCALL, target_pid, 0);" in res["nearest_text"]
+    assert res["nearest_line"] == 3
+    assert "nearest_text" in res["error"]
+
+
+def test_not_found_warns_when_the_region_holds_tabs(env_dir):
+    from dportsv3.agent import worker
+    _source(env_dir, "t.c", _TAB_INDENTED)
+
+    res = worker.edit_file("env", "/work/t.c", "#if HAVE_DECL_PT_SYSCALL\n  nope\n", "X")
+
+    assert res["ok"] is False
+    assert "TAB characters" in res["error"]
+
+
+def test_nearest_text_is_actually_usable_as_the_next_anchor(env_dir):
+    """Round-trip: the hint must be copy-pasteable, not just informative."""
+    from dportsv3.agent import worker
+    host = _source(env_dir, "t.c", _TAB_INDENTED)
+
+    wrong = "#if HAVE_DECL_PT_SYSCALL\n\t\tptrace (PT_SYSCALL, target_pid, 0);\n#else\n"
+    first = worker.edit_file("env", "/work/t.c", wrong, "X")
+    assert first["ok"] is False
+
+    second = worker.edit_file("env", "/work/t.c", first["nearest_text"], "REPLACED\n")
+    assert second["ok"] is True
+    assert "REPLACED" in host.read_text()
+
+
+def test_no_hint_when_nothing_resembles_the_anchor(env_dir):
+    from dportsv3.agent import worker
+    _source(env_dir, "t.c", "alpha\nbeta\ngamma\n")
+
+    res = worker.edit_file("env", "/work/t.c", "zzz\nqqq\n", "X")
+
+    assert res["ok"] is False
+    assert "nearest_text" not in res
+    assert "Nothing in the file resembles it" in res["error"]
+
+
+# --- poly-dq5: the validator no longer rejects benign shapes -------------
+
+
+def test_validator_accepts_a_patch_with_no_trailing_newline():
+    """Removed rule. It cost devel/libunwind two whole attempts."""
+    from dportsv3.agent.worker import _validate_unified_diff
+    assert _validate_unified_diff("p", "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b") is None
+
+
+def test_validator_accepts_a_final_hunk_short_at_eof():
+    """The readline / bash / openslp / hostapd210 / dcp2icc shape."""
+    from dportsv3.agent.worker import _validate_unified_diff
+    diff = "--- a\n+++ b\n@@ -1,7 +1,7 @@\n c1\n c2\n c3\n-old\n+new\n c4\n"
+    assert _validate_unified_diff("p", diff) is None
+
+
+def test_validator_still_catches_a_short_hunk_mid_file():
+    """Short is only forgiven at EOF — a header followed by more hunks is real."""
+    from dportsv3.agent.worker import _validate_unified_diff
+    diff = "--- a\n+++ b\n@@ -1,9 +1,9 @@\n-a\n+b\n@@ -50,1 +50,1 @@\n-c\n+d\n"
+    problem = _validate_unified_diff("p", diff)
+    assert problem is not None
+    assert "supplies 1 / 1" in problem
+
+
+def test_validator_still_catches_the_libunwind_artifact():
+    from dportsv3.agent.worker import _validate_unified_diff
+    diff = "--- a\n+++ b\n@@ -358,13 +358,16 @@\n" + " ctx\n" * 28
+    problem = _validate_unified_diff("p", diff)
+    assert problem is not None
+    assert "carries more" in problem
+
+
+# --- poly-dq5: the staging dead-end and the per-attempt workspace --------
+
+
+def test_reset_attempt_workspace_clears_genpatch_out(env_dir):
+    """One attempt's output must not be installable by the next.
+
+    install_patches with no explicit list installs every patch-* it
+    finds, so a leftover can land in an unrelated port. Measured:
+    libunwind's malformed patch sat there for nine hours.
+    """
+    from dportsv3.agent import worker
+    out = env_dir / "work" / "genpatch-out"
+    out.mkdir(parents=True)
+    (out / "patch-stale.c").write_text("--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b\n")
+    (out / "keep-me.txt").write_text("not a patch")
+
+    res = worker.reset_attempt_workspace("env", None)
+
+    assert res["ok"] is True
+    assert res["genpatch_out_cleared"] == ["patch-stale.c"]
+    assert not (out / "patch-stale.c").exists()
+    assert (out / "keep-me.txt").exists()  # only patch-* is scratch
+
+
+def test_reset_attempt_workspace_survives_a_missing_dir(env_dir):
+    from dportsv3.agent import worker
+    res = worker.reset_attempt_workspace("env", None)
+    assert res["ok"] is True
+    assert res["genpatch_out_cleared"] == []
+
+
+def test_attempt_loop_resets_the_workspace_each_attempt():
+    """Wiring check: the loop must call it, not just define it."""
+    import inspect
+    from dportsv3.agent import attempt_loop
+    src = inspect.getsource(attempt_loop.run)
+    assert "reset_attempt_workspace(" in src
+    assert "attempt_idx=attempt_idx" in src
+    # and it must sit with the cache reset, at the top of each attempt
+    assert src.index("reset_attempt_caches()") < src.index("reset_attempt_workspace")
+
+
+def test_patch_run_forwards_origin_to_the_attempt_loop():
+    """Without origin the workspace reset cannot clean the port's WRKDIR."""
+    import inspect
+    from dportsv3.agent import patch
+    assert "origin=origin" in inspect.getsource(patch.run)
+
+
+def test_genpatch_stages_into_genpatch_out_on_a_cache_hit(env_dir, monkeypatch):
+    """The dead-end: install_patches only reads genpatch-out.
+
+    On a _WRKSRC_CACHE hit genpatch used to leave the patch in WRKSRC
+    only, so install_patches raised FileNotFoundError and the agent was
+    left hand-authoring the diff.
+    """
+    from dportsv3.agent import worker
+
+    wrksrc = env_dir / "work" / "obj" / "devel" / "foo" / "foo-1.0"
+    wrksrc.mkdir(parents=True)
+    monkeypatch.setitem(
+        worker._WRKSRC_CACHE, ("env", "devel/foo"), "/work/obj/devel/foo/foo-1.0"
+    )
+
+    diff = "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+
+    def fake_exec(env, *argv, **kw):
+        # genpatch's real side effect: the patch appears in WRKSRC.
+        (wrksrc / "patch-tests_t.c").write_text(diff)
+        import subprocess
+        return subprocess.CompletedProcess(argv, 0, "generated patch-tests_t.c\n", "")
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
+
+    res = worker.genpatch("env", "/work/obj/devel/foo/foo-1.0/tests/t.c")
+
+    assert res["ok"] is True
+    staged = env_dir / "work" / "genpatch-out" / "patch-tests_t.c"
+    assert staged.is_file(), "genpatch must stage where install_patches reads"
+    assert staged.read_text() == diff
+    # install_patches can now find it
+    out = worker.install_patches("env", "devel/foo")
+    assert out.get("ok", True) is True
+    assert out["installed"] == ["ports/devel/foo/dragonfly/patch-tests_t.c"]
+
+
+def test_workdir_is_not_cleaned_on_the_first_attempt(env_dir, monkeypatch):
+    """reset_port already cleans it when the previous job ended.
+
+    Cleaning again on attempt 1 would force a needless re-extract of a
+    tree that is already pristine.
+    """
+    from dportsv3.agent import worker
+    calls = []
+    monkeypatch.setattr(
+        worker, "_clean_port_workdir",
+        lambda env, origin: calls.append(origin) or {"ok": True},
+    )
+
+    worker.reset_attempt_workspace("env", "devel/foo", attempt_idx=1)
+    assert calls == []
+
+    worker.reset_attempt_workspace("env", "devel/foo", attempt_idx=2)
+    assert calls == ["devel/foo"]
+
+
+def test_genpatch_out_is_cleared_on_every_attempt(env_dir, monkeypatch):
+    """Unlike the WRKDIR, this is shared across jobs and never swept."""
+    from dportsv3.agent import worker
+    monkeypatch.setattr(worker, "_clean_port_workdir", lambda e, o: {"ok": True})
+    out = env_dir / "work" / "genpatch-out"
+    out.mkdir(parents=True)
+    (out / "patch-stale.c").write_text("x")
+
+    res = worker.reset_attempt_workspace("env", "devel/foo", attempt_idx=1)
+    assert res["genpatch_out_cleared"] == ["patch-stale.c"]
+
+
+def test_nearest_region_declines_a_weak_resemblance(env_dir):
+    """One incidental line matching is not a near miss.
+
+    Pointing the model at an unrelated region is worse than saying
+    nothing.
+    """
+    from dportsv3.agent import worker
+    body = "".join(f"unrelated line {n}\n" for n in range(40))
+    _source(env_dir, "t.c", body + "int main(void) { return 0; }\n")
+
+    anchor = "int main(void) { return 0; }\n" + "".join(
+        f"totally different {n}\n" for n in range(20)
+    )
+    res = worker.edit_file("env", "/work/t.c", anchor, "X")
+
+    assert res["ok"] is False
+    assert "nearest_text" not in res
+
+
+def test_nearest_region_still_fires_on_a_real_near_miss(env_dir):
+    """The libunwind shape: most lines right, indentation wrong."""
+    from dportsv3.agent import worker
+    _source(env_dir, "t.c", _TAB_INDENTED)
+
+    anchor = (
+        "#if HAVE_DECL_PT_SYSCALL\n"
+        "        ptrace (PT_SYSCALL, target_pid, 0);\n"
+        "#else\n"
+        "#error Syscall me\n"
+        "#endif\n"
+    )
+    res = worker.edit_file("env", "/work/t.c", anchor, "X")
+
+    assert res["ok"] is False
+    assert "\t  ptrace (PT_SYSCALL, target_pid, 0);" in res["nearest_text"]
+
+
+def test_workspace_reset_keeps_the_materialize_baseline(env_dir, monkeypatch):
+    """Cleaning a WRKDIR must not make dsynth_build refuse.
+
+    _clean_port_workdir drops _MATERIALIZE_STATE, which dsynth_build
+    gates on — losing it would cost a turn per retry to
+    blocked_by=stale_compose for a compose tree that is still valid.
+    """
+    from dportsv3.agent import worker
+    monkeypatch.setitem(worker._MATERIALIZE_STATE, ("env", "devel/foo"), "abc123")
+    monkeypatch.setattr(
+        worker, "_clean_port_workdir",
+        lambda e, o: worker._MATERIALIZE_STATE.pop((e, o), None) or {"ok": True},
+    )
+
+    worker.reset_attempt_workspace("env", "devel/foo", attempt_idx=2)
+
+    assert worker._MATERIALIZE_STATE.get(("env", "devel/foo")) == "abc123"
+
+
+def test_workspace_reset_event_reaches_the_activity_log():
+    """Without a dispatcher branch the reset is invisible in the tracker."""
+    import inspect
+    from dportsv3.agent import steps
+    src = inspect.getsource(steps.PatchEventDispatcher.__call__)
+    assert 'et == "attempt_workspace_reset"' in src

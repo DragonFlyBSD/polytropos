@@ -117,6 +117,7 @@ def run(
     timeout: int = 600,
     max_tool_turns: int = 12,
     on_event=None,
+    origin: str | None = None,
     system_prompt: str | None = None,
     tool_whitelist: set[str] | frozenset[str] | None = None,
     proof_parser=None,
@@ -149,6 +150,21 @@ def run(
         # tools elided as "you already have this" has to be forgotten —
         # otherwise a retry is refused content it never saw.
         worker.reset_attempt_caches()
+        # The scratch on disk has to be forgotten too: genpatch-out and
+        # the port's WRKDIR are shared, and an attempt that inherits
+        # them diffs against the previous attempt's edits (poly-dq5).
+        workspace = worker.reset_attempt_workspace(
+            env, origin, attempt_idx=attempt_idx
+        )
+        if on_event is not None:
+            try:
+                on_event({
+                    "type": "attempt_workspace_reset",
+                    "attempt": attempt_idx,
+                    **workspace,
+                })
+            except Exception:
+                pass  # callback must never break the loop
         if attempt_idx == 1:
             messages = list(base_messages)
         else:

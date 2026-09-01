@@ -649,24 +649,36 @@ _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 def _validate_unified_diff(name: str, text: str) -> str | None:
     """Return why ``text`` is not a usable unified diff, or None if it is.
 
-    Structural only — it does not need the target tree. That is enough
-    to catch what the agent actually produces when it hand-authors a
-    patch after genpatch gave it nothing (poly-7jw): a body whose line
-    counts contradict its own hunk header (measured: a header claiming
-    ``@@ -358,13 +358,16 @@`` over 28 context lines and no changes),
-    and patches with no ``+``/``-`` line at all, which apply cleanly and
-    change nothing.
+    Structural only — it does not need the target tree. Deliberately
+    narrow: it refuses what patch(1) refuses, not everything a strict
+    reading of the format would.
+
+    Two rules earn their place, because between them they catch the
+    artifact the agent produces when it hand-authors a diff (poly-7jw):
+    a hunk whose body is *longer* than its header declares, and a patch
+    with no ``+``/``-`` line at all, which applies cleanly and changes
+    nothing.
+
+    A third rule — "must end with a newline" — was tried and removed
+    (poly-dq5). It flagged nothing patch(1) rejects and cost a whole
+    job: on devel/libunwind it refused 15 writes and both
+    install_patches calls, and the agent burned two attempts re-sending
+    the same bytes. Over all 4199 dragonfly patches in DeltaPorts it
+    flagged 6, all benign, including graphics/dcp2icc's own fix that
+    built green.
+
+    A final hunk that is *short* at EOF is tolerated for the same
+    reason. devel/readline, shells/bash, net/openslp and net/hostapd210
+    all ship a last hunk one trailing-context line short, and patch(1)
+    applies them.
     """
     if not text.strip():
         return f"{name}: file is empty"
-    if not text.endswith("\n"):
-        return (
-            f"{name}: does not end with a newline. patch(1) often tolerates "
-            f"that, but in a patch you just wrote it means the last line was "
-            f"cut off — which is the failure being guarded against here"
-        )
 
-    lines = text.split("\n")[:-1]
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
     hunks = changed = 0
     i = 0
     while i < len(lines):
@@ -680,16 +692,16 @@ def _validate_unified_diff(name: str, text: str) -> str | None:
         new_want = int(header.group(4)) if header.group(4) is not None else 1
         old_got = new_got = 0
         i += 1
-        # Stop as soon as the header's own counts are satisfied. Reading
-        # on to the next header instead would fold whatever sits between
-        # hunks — a blank separator line, a trailing newline at EOF —
-        # into this hunk's tally and reject a perfectly good patch.
+        # Stop once the header's own counts are satisfied. Reading on to
+        # the next header would fold whatever sits between hunks — a
+        # blank separator, a trailing newline at EOF — into this hunk's
+        # tally and reject a good patch.
         while i < len(lines) and (old_got < old_want or new_got < new_want):
             line = lines[i]
             if _HUNK_HEADER_RE.match(line):
                 break
-            # A real file header (--- followed by +++) starts the next
-            # file; a lone '---' inside a body is a deleted line.
+            # A real file header (--- then +++) starts the next file; a
+            # lone '---' inside a body is a deleted line.
             if line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
                 break
             if line.startswith("\\"):  # "\ No newline at end of file"
@@ -711,17 +723,28 @@ def _validate_unified_diff(name: str, text: str) -> str | None:
                     f"{marker!r}; every body line needs a ' ', '-' or '+' prefix"
                 )
             i += 1
-        if (old_got, new_got) != (old_want, new_want):
+
+        if old_got > old_want or new_got > new_want:
             return (
-                f"{name}: hunk header {header_text!r} claims {old_want} old / "
-                f"{new_want} new line(s); the body does not match "
-                f"(counted {old_got} / {new_got})"
+                f"{name}: hunk header {header_text!r} declares {old_want} old / "
+                f"{new_want} new line(s) but the body carries more "
+                f"({old_got} / {new_got}) — the body and the header have "
+                f"drifted apart"
             )
-        # Counts are satisfied, so stop reading — but a '+'/'-' line
-        # sitting right after them is body the header never declared,
-        # which is the same drift seen from the other side. A blank or
-        # context line here is left alone: trailing whitespace at EOF is
-        # common and harmless.
+        if (old_got, new_got) != (old_want, new_want):
+            # Short. Tolerated only when the file simply ran out and the
+            # shortfall is trailing context (context counts for both
+            # sides, so an equal shortfall means no change line is
+            # missing). Anything else is a real mismatch.
+            short_old = old_want - old_got
+            short_new = new_want - new_got
+            if not (i >= len(lines) and short_old == short_new):
+                return (
+                    f"{name}: hunk header {header_text!r} declares {old_want} old / "
+                    f"{new_want} new line(s); the body supplies {old_got} / {new_got}"
+                )
+        # Counts satisfied — a '+'/'-' line sitting right after them is
+        # body the header never declared.
         if i < len(lines):
             trailing = lines[i]
             is_file_header = (
@@ -736,11 +759,58 @@ def _validate_unified_diff(name: str, text: str) -> str | None:
                     f"{old_want}/{new_want} line(s) — the body and the header "
                     f"have drifted apart"
                 )
+
     if hunks == 0:
         return f"{name}: no '@@ -a,b +c,d @@' hunk header found"
     if changed == 0:
         return f"{name}: {hunks} hunk(s) but no '+' or '-' line — it would change nothing"
     return None
+
+
+def _nearest_region(text: str, needle: str, *, max_lines: int = 24) -> tuple[int, str] | None:
+    """The block in ``text`` that ``needle`` most nearly matches.
+
+    Scored on whitespace-normalised lines, so a block that differs only
+    in indentation scores as a full match. Returns ``(first_line,
+    verbatim_text)`` with the file's real bytes — the point is to let
+    the model copy the indentation rather than keep guessing at it.
+
+    Why this exists: get_file renders ``f"{n:6d}\\t{line}"``, so a
+    tab-indented line arrives as number, TAB, then the file's own TAB,
+    and nothing says which is furniture. edit_file then wants that
+    distinction reproduced exactly. On devel/libunwind the model tried
+    two tabs, one tab, two spaces, six spaces, tab-plus-six-spaces and
+    a literal backslash-t before hitting the real tab-plus-two-spaces
+    (poly-dq5). aider has shipped the same idea for years as
+    "Did you mean to match some of these actual lines?".
+    """
+    def norm(line: str) -> str:
+        return re.sub(r"[ \t]+", " ", line).strip()
+
+    lines = text.split("\n")
+    needle_lines = needle.split("\n")
+    if needle_lines and needle_lines[-1] == "":
+        needle_lines.pop()
+    if not needle_lines or not lines:
+        return None
+
+    want = [norm(l) for l in needle_lines]
+    have = [norm(l) for l in lines]
+    span = min(len(want), max_lines)
+
+    best_score, best_at = 0, -1
+    for i in range(max(1, len(have) - span + 1)):
+        score = sum(1 for a, b in zip(have[i:i + span], want[:span]) if a and a == b)
+        if score > best_score:
+            best_score, best_at = score, i
+    # Demand a real resemblance. A single incidental line matching in a
+    # 24-line window is not a near miss, and pointing the model at an
+    # unrelated region is worse than saying nothing.
+    if best_at < 0 or best_score * 3 < span:
+        return None
+    end = min(len(lines), best_at + span)
+    return best_at + 1, "\n".join(lines[best_at:end])
+
 
 def _reject_malformed_patch_write(chroot_path: str, content: str) -> dict | None:
     """Refuse a structurally broken ``dragonfly/patch-*`` write.
@@ -969,17 +1039,38 @@ def edit_file(
 
     count = text.count(old_string)
     if count == 0:
-        return {
+        result = {
             "ok": False,
             "error": (
                 f"edit_file: old_string not found in {path}. It must match the "
-                f"file byte for byte, including indentation — re-read the "
-                f"region with get_file (stripping its line numbers) or narrow "
-                f"it with grep."
+                f"file byte for byte, including indentation."
             ),
             "path": path,
             "matches": 0,
         }
+        near = _nearest_region(text, old_string)
+        if near is not None:
+            first_line, region = near
+            result["nearest_line"] = first_line
+            result["nearest_text"] = region
+            hint = (
+                f" The closest region is at line {first_line}; its exact "
+                f"bytes are in nearest_text. Copy that verbatim as "
+                f"old_string rather than retyping it."
+            )
+            if "\t" in region:
+                hint += (
+                    " It contains TAB characters — get_file's line-number "
+                    "separator is also a tab, so the indentation you see "
+                    "there is not what the file holds."
+                )
+            result["error"] += hint
+        else:
+            result["error"] += (
+                " Nothing in the file resembles it — re-read the region with "
+                "get_file or narrow it with grep."
+            )
+        return result
     if count > 1 and not replace_all:
         return {
             "ok": False,
@@ -1261,6 +1352,76 @@ _READ_CACHE: dict[tuple[str, str, int, int], str] = {}
 def reset_attempt_caches() -> None:
     """Forget what the model has been shown; call at each attempt start."""
     _READ_CACHE.clear()
+
+
+def reset_attempt_workspace(
+    env: str, origin: str | None, *, attempt_idx: int = 1
+) -> dict:
+    """Clear the scratch an attempt inherits from the one before it.
+
+    Two shared locations outlive a single attempt and quietly poison the
+    next one (poly-dq5):
+
+    ``/work/genpatch-out`` is shared by every job and nothing empties
+    it. ``install_patches`` with no explicit list installs every
+    ``patch-*`` it finds there into whichever origin is current, so one
+    attempt's output — or one *port's* output — can land in another.
+    Measured: libunwind's malformed patch sat there for nine hours.
+
+    The port's WRKDIR survives too. ``make extract`` is a no-op once the
+    cookie exists, so a later attempt inherits the earlier one's edits
+    and ``dupe`` snapshots them as the baseline; the diff genpatch then
+    produces is missing every hunk from the earlier attempts. Measured
+    on devel/libunwind attempt 4, which read its own attempt-1 edit and
+    concluded "the upstream source already has the DragonFly support".
+
+    The WRKDIR is only cleaned from the second attempt onward. Between
+    *jobs* it is already handled — ``reset_port`` runs
+    ``_clean_port_workdir`` as its first stage when a patch job ends —
+    so cleaning on attempt 1 would buy nothing and cost a full
+    re-extract of a tree that is already pristine.
+
+    Both stages are best-effort — a failure here is reported but does
+    not stop the attempt, which can still do useful work.
+    """
+    result: dict = {"ok": True, "origin": origin}
+    try:
+        genpatch_out = env_paths(env).writable / "work" / "genpatch-out"
+        removed = []
+        if genpatch_out.is_dir():
+            for f in sorted(genpatch_out.iterdir()):
+                if f.is_file() and f.name.startswith("patch-"):
+                    f.unlink()
+                    removed.append(f.name)
+        result["genpatch_out_cleared"] = removed
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        result["genpatch_out_error"] = str(exc)[:200]
+
+    if origin and attempt_idx > 1:
+        try:
+            # _clean_port_workdir drops the materialize baseline along
+            # with the WRKSRC path, which is right for reset_port but
+            # wrong here: it tracks ports/<origin>/ against the compose
+            # tree at /work/artifacts/compose, and cleaning a WRKDIR
+            # under /work/obj does not invalidate that. Losing it would
+            # make dsynth_build refuse with blocked_by=stale_compose
+            # until the agent re-materialized, costing a turn per retry
+            # for nothing. dsynth_build re-checks the subtree hash
+            # anyway, so a baseline that has genuinely gone stale is
+            # still caught there.
+            baseline = _MATERIALIZE_STATE.get((env, origin))
+            cleaned = _clean_port_workdir(env, origin)
+            if baseline is not None:
+                _MATERIALIZE_STATE[(env, origin)] = baseline
+            result["workdir_clean_ok"] = bool(cleaned.get("ok"))
+            if not cleaned.get("ok"):
+                result["workdir_clean_error"] = (
+                    cleaned.get("stderr_tail") or cleaned.get("error", "")
+                )[:200]
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            result["workdir_clean_ok"] = False
+            result["workdir_clean_error"] = str(exc)[:200]
+    return result
 
 
 def _port_subtree_hash(env: str, origin: str) -> str:
@@ -2747,6 +2908,22 @@ def genpatch(env: str, path: str) -> dict:
         )
 
     p = _exec(env, "/bin/sh", "-c", cmd)
+
+    # The cache-hit path leaves the patch in WRKSRC, and install_patches
+    # only ever reads genpatch-out — so on every attempt after the first
+    # make_extract in this process, the sanctioned dupe -> genpatch ->
+    # install_patches route dead-ended and the agent was left
+    # hand-authoring the diff (poly-dq5, measured on devel/libunwind).
+    # Copy it across so there is one place to install from, while
+    # keeping the WRKSRC copy and its canonical name.
+    if p.returncode == 0 and patch_path is not None and patch_basename is not None:
+        try:
+            src = _resolve_chroot_path(paths, patch_path)
+            if src.is_file():
+                genpatch_out.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, genpatch_out / patch_basename)
+        except Exception:  # noqa: BLE001 — staging is best-effort
+            pass
 
     # List both staging dirs for diagnostic completeness — operators
     # debugging a cache-miss case may be looking at the legacy dir

@@ -94,7 +94,13 @@ _TOOLS: list[dict] = [
           "using a window as old_string. expected_sha256 (from a prior "
           "get_file) is an optimistic lock against editing stale content. "
           "Returns the new sha256 plus a few lines of context around the "
-          "edit, so you do not need a second read to confirm it. For a file "
+          "edit, so you do not need a second read to confirm it. "
+          "**If old_string is not found, the result carries `nearest_text`: "
+          "the closest region of the file, byte for byte. Copy that as your "
+          "next old_string instead of retyping it** — get_file separates its "
+          "line number from the content with a TAB, so on a tab-indented file "
+          "you cannot tell the separator from the file's own indentation, and "
+          "retyping will keep missing. For a file "
           "that is not UTF-8 text, use put_file with base64.",
           {"path": _STR, "old_string": _STR, "new_string": _STR,
            "expected_sha256": _STR,

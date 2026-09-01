@@ -48,6 +48,7 @@ def run(
         timeout=timeout,
         max_tool_turns=max_tool_turns,
         on_event=on_event,
+        origin=origin,
         system_prompt=prompts.PATCH_SYSTEM,
         tool_whitelist=tools.patch_tool_names(),
         session_dump=session_dump,
