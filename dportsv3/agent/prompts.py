@@ -88,9 +88,11 @@ fact would disambiguate rather than guessing.
 
 ## Suggested Fix
 The direction the fix should take, in prose. Name the file that has to
-change, say what must become true in it, and why. Where it matters, say
-what *kind* of file it is — hand-written source, or something the build
-regenerates — because that decides the form of the fix.
+change and describe the state it needs to end up in — what must be true
+of it afterwards, and why — not the operation that gets it there. Where
+it matters, say what *kind* of file it is: hand-written source, or
+something the build regenerates. A regenerated file cannot be edited
+directly, and the patch agent needs to know that before it starts.
 
 **Do not write the change itself.** No patch bodies, no `REINPLACE_CMD`
 lines, no dops ops, no ready-to-paste snippets.

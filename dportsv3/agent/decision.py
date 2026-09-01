@@ -315,7 +315,7 @@ def decide(
     # MANUAL → ASSIST so the patch agent runs and gets a chance to
     # apply the operator's directive. The patch agent sees the
     # operator's text via UserContextSection in PATCH_SECTIONS and
-    # any prior changes.diff via PriorAttemptsSection.
+    # a summary of prior attempts via PriorAttemptsSection.
     if resolved.name == "MANUAL":
         if history.has_fresh_user_context:
             promoted = policy.tiers.get("ASSIST") or Tier(name="ASSIST")

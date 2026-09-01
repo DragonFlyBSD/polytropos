@@ -85,6 +85,108 @@ def _truncate_head_tail(text: str, cap: int) -> str:
     return head + marker + tail
 
 
+def _clip_chars(text: str, limit: int) -> str:
+    """Hard-clip ``text`` to ``limit`` chars with a truncation marker."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n[...truncated to {limit} chars...]\n"
+
+
+# poly-9u2: a prior attempt is a record, not a recipe.
+#
+# Both prior-* sections used to inline an earlier bundle's
+# ``changes.diff`` verbatim, under a heading carrying that bundle's
+# ``Rebuild Status: success``. The agent copied it. devel/libunwind
+# produced five byte-identical ``agent_fixed`` diffs across two models
+# and four harness changes: each copy compiled (because the previous
+# one had), was stamped success, and became the next run's exemplar.
+# ``rebuild_ok`` only ever meant "dsynth compiled the port" — the diff
+# it certified writes a comment-only branch into a ptrace switch, so
+# the binary builds green and hangs.
+#
+# What is worth carrying forward is which files an attempt touched and
+# what happened to it, not the edit itself. The recipe travelled through
+# two channels — the diff body and the fenced ``## Patch Plan (JSON)``
+# block inside ``patch.md`` — so both are reduced here rather than
+# reproduced.
+
+#: Git's per-file header lines, skipped when tallying outside a hunk.
+_DIFF_HEADER_PREFIXES = (
+    "+++ ", "--- ", "index ", "new file mode", "deleted file mode",
+    "old mode ", "new mode ", "similarity index", "dissimilarity index",
+    "rename from", "rename to", "copy from", "copy to", "Binary files",
+)
+
+
+def _diff_git_path(line: str) -> str:
+    """Best-effort b-side path out of a ``diff --git a/X b/X`` header."""
+    head, sep, tail = line.partition(" b/")
+    if sep and tail.strip():
+        return tail.strip()
+    return line[len("diff --git "):].strip()
+
+
+def _summarize_diff(text: str) -> str:
+    """Render a unified diff as a per-file changed-line tally.
+
+    Deliberately lossy: names the files and counts the lines, and never
+    emits diff content. A prior attempt should tell the agent where the
+    last one went, not hand it something to transcribe.
+    """
+    files: list[list] = []
+    in_hunk = False
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            files.append([_diff_git_path(line), 0, 0])
+            in_hunk = False
+            continue
+        if not files:
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        # Outside a hunk, a leading +/- is git's own file header, not a
+        # changed line. Inside one it is always content: a removed line
+        # whose text happens to start with "--" renders as "---..." and
+        # must still be counted. Hence the header skip is pre-hunk only.
+        if not in_hunk and line.startswith(_DIFF_HEADER_PREFIXES):
+            continue
+        if line.startswith("+"):
+            files[-1][1] += 1
+        elif line.startswith("-"):
+            files[-1][2] += 1
+    if not files:
+        return "- (no per-file changes could be read from the recorded diff)"
+    return "\n".join(f"- {name} (+{add}/-{rem})" for name, add, rem in files)
+
+
+def _strip_fenced_blocks(text: str) -> str:
+    """Drop ``` fenced blocks, leaving an elision marker in their place.
+
+    The patch report's required format puts the attempt's ops in a
+    ``## Patch Plan (JSON)`` block; the surrounding prose is the part
+    that says what was tried and why. An unterminated fence (the report
+    was already clipped mid-block) is closed at end of text.
+    """
+    out: list[str] = []
+    inside = False
+    dropped = 0
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            if inside:
+                out.append(f"[... {dropped} line(s) of literal content elided ...]")
+            inside = not inside
+            dropped = 0
+            continue
+        if inside:
+            dropped += 1
+        else:
+            out.append(line)
+    if inside:
+        out.append(f"[... {dropped} line(s) of literal content elided ...]")
+    return "\n".join(out)
+
+
 # I/O callables sections need but can't import directly (avoiding a
 # cycle with runner.py). The caller binds these into the ctx.
 ReadBundleText = Callable[[Path | None, str | None, str], str | None]
@@ -440,8 +542,10 @@ class PriorTriagesSection:
     list is already most-recent-first):
       - analysis/triage.md         — prior classification + reasoning
       - analysis/rebuild_proof.json — terminal proof or synthetic
-      - analysis/patch.md          — patch agent narrative (clipped)
-      - analysis/changes.diff      — what edits the patch agent made
+      - analysis/patch.md          — patch agent narrative (fenced
+        blocks elided, then clipped)
+      - analysis/changes.diff      — reduced to the files it touched
+        and their line counts, never reproduced (poly-9u2)
 
     Char caps are tighter than the patch flow's
     ``PriorAttemptsSection`` because triage budget is leaner.
@@ -451,31 +555,43 @@ class PriorTriagesSection:
     name: str = "prior_triages"
     priority: int = 90
     max_patch_chars: int = 2000
-    max_diff_chars: int = 3000
+    #: rebuild_proof.json is the model's own Rebuild Proof block, stored
+    #: verbatim — model-authored text, so bound it like any other.
+    max_proof_chars: int = 1000
 
     def render(self, ctx: ContextCtx) -> str | None:
         if not ctx.prior_triage_bundle_ids or ctx.read_bundle_text is None:
             return None
-        lines = ["## Prior Triages (most recent 2)"]
+        lines = [
+            "## Prior Triages (most recent 2)",
+            "",
+            "Earlier rounds on this same port. It is failing now, so none of "
+            "them left it working, and one of them may be why it is still "
+            "failing. A `Rebuild Status` of success means the port compiled "
+            "at the time — nothing in the pipeline checks that the change was "
+            "correct. Diffs are summarised to the files they touched.",
+            "",
+        ]
         emitted_any = False
         for past_bundle in ctx.prior_triage_bundle_ids[:2]:
             section_lines = [f"### Bundle {past_bundle}"]
             had_content = False
-            for relpath, title, code_block, cap in [
+            for relpath, title, code_block, transform in [
                 ("analysis/triage.md", "Triage", None, None),
-                ("analysis/rebuild_proof.json", "Rebuild Proof", "json", None),
+                ("analysis/rebuild_proof.json",
+                 "Rebuild Proof (compile-only)", "json",
+                 lambda s: _clip_chars(s, self.max_proof_chars)),
                 ("analysis/patch.md", "Patch Report", None,
-                 self.max_patch_chars),
-                ("analysis/changes.diff", "Changes Diff", "diff",
-                 self.max_diff_chars),
+                 lambda s: _clip_chars(
+                     _strip_fenced_blocks(s), self.max_patch_chars)),
+                ("analysis/changes.diff", "Files Changed", None,
+                 _summarize_diff),
             ]:
                 content = ctx.read_bundle_text(None, past_bundle, relpath)
                 if not content:
                     continue
-                if cap is not None and len(content) > cap:
-                    content = content[:cap] + (
-                        f"\n[...truncated to {cap} chars...]\n"
-                    )
+                if transform is not None:
+                    content = transform(content)
                 had_content = True
                 section_lines.append(f"#### {title}")
                 if code_block:
@@ -588,18 +704,20 @@ class PriorAttemptsSection:
     section reads each bundle's current patch artifacts via
     ``ctx.read_bundle_text``. Legacy artifact names are retained as a
     fallback for older bundles.
+
+    poly-9u2: what an attempt *did* is summarised, not reproduced —
+    ``changes.diff`` renders as a per-file line tally and ``patch.md``
+    has its fenced blocks elided. The build signal is labelled
+    ``compiled`` throughout, because that is all it ever measured.
     """
     name: str = "prior_attempts"
     priority: int = 50
     max_bundles: int = 3
     max_patch_chars: int = 4000
-    max_diff_chars: int = 6000
     max_trace_events: int = 12
 
     def _clip(self, value: str, limit: int) -> str:
-        if len(value) <= limit:
-            return value
-        return value[:limit] + f"\n[...truncated to {limit} chars...]\n"
+        return _clip_chars(value, limit)
 
     def _audit_summary(self, content: str) -> str:
         try:
@@ -629,11 +747,11 @@ class PriorAttemptsSection:
                         "  - "
                         f"attempt={attempt.get('attempt', '?')} "
                         f"tokens={attempt.get('tokens', '?')} "
-                        f"rebuild_ok={attempt.get('rebuild_ok', '?')}"
+                        f"compiled={attempt.get('rebuild_ok', '?')}"
                     )
             if attempts and isinstance(attempts[-1], dict):
-                last_rebuild_ok = attempts[-1].get("rebuild_ok", "?")
-                lines.append(f"- last_rebuild_ok: {last_rebuild_ok}")
+                last_compiled = attempts[-1].get("rebuild_ok", "?")
+                lines.append(f"- last_attempt_compiled: {last_compiled}")
         return "\n".join(lines) if lines else self._clip(content, 2000)
 
     def _tool_trace_summary(self, content: str) -> str:
@@ -649,7 +767,11 @@ class PriorAttemptsSection:
             if isinstance(event, dict):
                 events.append(event)
         if not events:
-            return self._clip(content, 2000)
+            # Never fall back to the raw trace. Tool-call args carry
+            # put_file/edit_file bodies — dumping them here would
+            # reopen the channel this section exists to close.
+            n = len([ln for ln in content.splitlines() if ln.strip()])
+            return f"- (tool trace unreadable: {n} line(s) did not parse)"
         lines = []
         for event in events[-self.max_trace_events:]:
             event_type = event.get("type", "?")
@@ -664,7 +786,7 @@ class PriorAttemptsSection:
             if event_type == "attempt_end":
                 lines.append(
                     f"- attempt_end {event.get('attempt', '?')}: "
-                    f"rebuild_ok={event.get('rebuild_ok', '?')} "
+                    f"compiled={event.get('rebuild_ok', '?')} "
                     f"tokens={event.get('tokens', '?')}"
                 )
                 continue
@@ -689,7 +811,20 @@ class PriorAttemptsSection:
     def render(self, ctx: ContextCtx) -> str | None:
         if not ctx.prior_patch_bundle_ids or ctx.read_bundle_text is None:
             return None
-        lines = ["## Prior Attempts (most recent 3)"]
+        lines = [
+            "## Prior Attempts (most recent 3)",
+            "",
+            "This port is failing now, so no attempt below left it working — "
+            "and one of them may be why it is still failing. They are a record "
+            "of what has already been tried, not a template to follow. A "
+            "`Rebuild Status` of success means only that the port compiled at "
+            "the time; nothing in this pipeline checks that a change was "
+            "correct, so a green build is not evidence that it was. The edits "
+            "themselves are summarised rather than shown, deliberately: work "
+            "the fix out from the source, then use these to avoid repeating a "
+            "dead end.",
+            "",
+        ]
         emitted_any = False
         emitted_count = 0
         for past_bundle in ctx.prior_patch_bundle_ids:
@@ -702,7 +837,9 @@ class PriorAttemptsSection:
                     "analysis/patch.md",
                     "Patch Report",
                     None,
-                    lambda s: self._clip(s, self.max_patch_chars),
+                    lambda s: self._clip(
+                        _strip_fenced_blocks(s), self.max_patch_chars
+                    ),
                 ),
                 (
                     "analysis/patch_audit.json",
@@ -712,9 +849,9 @@ class PriorAttemptsSection:
                 ),
                 (
                     "analysis/changes.diff",
-                    "Changes Diff",
-                    "diff",
-                    lambda s: self._clip(s, self.max_diff_chars),
+                    "Files Changed",
+                    None,
+                    _summarize_diff,
                 ),
                 (
                     "analysis/tool_trace.jsonl",
@@ -722,16 +859,11 @@ class PriorAttemptsSection:
                     None,
                     self._tool_trace_summary,
                 ),
-                (
-                    "analysis/patch_plan.json",
-                    "Legacy Patch Plan",
-                    "json",
-                    lambda s: s,
-                ),
-                ("analysis/patch.log", "Legacy Patch Log", None, lambda s: s),
+                ("analysis/patch.log", "Legacy Patch Log", None,
+                 _strip_fenced_blocks),
                 (
                     "analysis/rebuild_status.txt",
-                    "Legacy Rebuild Status",
+                    "Legacy Rebuild Status (compile-only)",
                     None,
                     lambda s: s,
                 ),

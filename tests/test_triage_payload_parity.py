@@ -245,9 +245,11 @@ def test_prior_triages_includes_patch_evidence(tmp_path, monkeypatch):
     )
     assert "#### Patch Report" in actual
     assert "Tried `mk set X` — failed." in actual
-    assert "#### Changes Diff" in actual
-    assert "```diff" in actual
-    assert "+NEW" in actual
+    # poly-9u2: files and line counts, not the edit itself.
+    assert "#### Files Changed" in actual
+    assert "- ports/x/y/Makefile (+1/-1)" in actual
+    assert "#### Changes Diff" not in actual
+    assert "+NEW" not in actual
 
 
 def test_prior_triages_truncates_long_patch_evidence(tmp_path, monkeypatch):
@@ -283,7 +285,10 @@ def test_prior_triages_truncates_long_patch_evidence(tmp_path, monkeypatch):
          "has_snippets": "false"},
     )
     assert "[...truncated to 2000 chars...]" in actual
-    assert "[...truncated to 3000 chars...]" in actual
+    # poly-9u2: the diff is no longer clipped, it is summarised — a body
+    # with no `diff --git` header yields no per-file rows at all.
+    assert "[...truncated to 3000 chars...]" not in actual
+    assert "no per-file changes could be read" in actual
 
 
 # --- snippet round -----------------------------------------------------------

@@ -236,16 +236,21 @@ def test_with_prior_attempts(tmp_path, monkeypatch):
     assert "#### Patch Audit Summary" in actual
     assert "- status: budget-exhausted" in actual
     assert "- tokens: prompt=10 completion=2 total=12" in actual
-    assert "attempt=1 tokens=12 rebuild_ok=False" in actual
-    assert "- last_rebuild_ok: False" in actual
-    assert "#### Changes Diff" in actual
-    assert "```diff" in actual
-    assert "+changed" in actual
+    assert "attempt=1 tokens=12 compiled=False" in actual
+    assert "- last_attempt_compiled: False" in actual
+    # poly-9u2: the diff is named and counted, never reproduced.
+    assert "#### Files Changed" in actual
+    assert "- foo (+1/-0)" in actual
+    assert "#### Changes Diff" not in actual
+    assert "+changed" not in actual
     assert "#### Tool Trace Summary" in actual
     assert "tool dsynth_build fail: devel/foo" in actual
-    assert "### Bundle past-b" in actual
-    assert "#### Legacy Patch Plan" in actual
-    assert "legacy tried Z" in actual
+    # past-b carries only the legacy patch_plan.json — the ops recipe —
+    # which poly-9u2 stopped rendering, so the bundle has no content
+    # left to emit.
+    assert "#### Legacy Patch Plan" not in actual
+    assert "legacy tried Z" not in actual
+    assert "### Bundle past-b" not in actual
     assert "### Bundle past-d" not in actual
 
 
