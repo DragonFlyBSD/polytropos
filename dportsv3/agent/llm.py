@@ -102,7 +102,7 @@ def _backend() -> str:
 #: what translates non-OpenAI request/response shapes.
 _OPENAI_COMPATIBLE = frozenset(
     {"deepseek", "openai", "openrouter", "together_ai", "groq", "xai",
-     "nvidia"}
+     "nvidia", "meta"}
 )
 
 #: Default base URLs for providers we address by name rather than by an
@@ -111,6 +111,7 @@ _OPENAI_COMPATIBLE = frozenset(
 _PROVIDER_API_BASE = {
     "deepseek": "https://api.deepseek.com",
     "nvidia": "https://integrate.api.nvidia.com/v1",
+    "meta": "https://api.meta.ai/v1",
 }
 
 #: Providers whose model ids carry a namespace of their own.
@@ -120,7 +121,14 @@ _PROVIDER_API_BASE = {
 #: namespaces (meta/, qwen/, deepseek-ai/); naming the provider
 #: explicitly — llm.<role>.provider = "nvidia" — routes those here too,
 #: with no api_base to configure.
-_NAMESPACED_MODEL_IDS = frozenset({"nvidia"})
+#:
+#: "meta" is here for the opposite reason to "nvidia": Meta's own API
+#: takes a bare id ("muse-spark-1.3-contributor", no slash), so it never
+#: needs stripping — but "meta/" IS a real namespace on somebody else's
+#: host (NIM serves "meta/llama-..."), and letting it become a routing
+#: prefix would strip half of those ids and 404 them. Membership here
+#: keeps it out of _ROUTING_PREFIXES below, which is what protects them.
+_NAMESPACED_MODEL_IDS = frozenset({"nvidia", "meta"})
 
 #: Leading segments that really are a routing prefix, and so can be
 #: dropped once base_url has fixed the provider. Derived, so it cannot
@@ -203,9 +211,48 @@ def _reasoning_nvidia(value: str, off: bool) -> dict:
     }
 
 
+#: Our effort names to Meta's. Their ladder is
+#: minimal|low|medium|high|xhigh, ours is none|low|high|max, so only the
+#: top end needs a word; anything unlisted passes straight through, which
+#: lets an operator write "medium" or "xhigh" directly.
+_META_EFFORT = {"max": "xhigh"}
+
+_meta_off_warned = False
+
+
+def _reasoning_meta(value: str, off: bool) -> dict:
+    """Meta Model API takes the plain OpenAI parameter — but muse-spark
+    will not switch thinking off.
+
+    ``reasoning_effort="none"`` returns HTTP 400 ``"reasoning_effort"
+    does not support "none" with this model.`` That is documented
+    (dev.meta.ai/docs/protocols/chat-completions marks "none" as not
+    supported by Muse Spark) and was measured against the live endpoint,
+    where every other level answered.
+
+    So "off" cannot be honoured, and the choice is to fail the request or
+    to buy the cheapest thinking there is. This buys "minimal" — 14
+    reasoning tokens on a one-line prompt, against 424 at "xhigh" — and
+    warns once, because silently spending reasoning tokens an operator
+    switched off is the cost surprise poly-r1g exists to prevent.
+    """
+    global _meta_off_warned
+    if off:
+        if not _meta_off_warned:
+            _meta_off_warned = True
+            _LOG.warning(
+                "reasoning is set to %r but this model cannot disable "
+                "thinking (reasoning_effort=\"none\" is rejected); "
+                "sending \"minimal\" instead, so requests still cost "
+                "some reasoning tokens", value,
+            )
+        return {"reasoning_effort": "minimal"}
+    return {"reasoning_effort": _META_EFFORT.get(value, value)}
+
+
 #: How each provider spells thinking mode. Anything absent falls back
 #: to the DeepSeek form above.
-_REASONING_DIALECTS = {"nvidia": _reasoning_nvidia}
+_REASONING_DIALECTS = {"nvidia": _reasoning_nvidia, "meta": _reasoning_meta}
 
 
 def _reasoning_kwargs(reasoning: str | None, provider: str = "") -> dict:
