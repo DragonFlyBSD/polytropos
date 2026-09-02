@@ -3964,7 +3964,7 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
             f"origin={args.get('origin', '')} relpath={args.get('relpath', '')} "
             f"diff_bytes={diff_len}{ok_tag}"
         )
-    if tool == "dsynth_build":
+    if tool in ("dsynth_build", "dsynth_test"):
         rb = result.get("rebuild_ok")
         return f"origin={args.get('origin', '')} rebuild_ok={rb}{ok_tag}"
     if tool == "dsynth_log":

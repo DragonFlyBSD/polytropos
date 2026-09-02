@@ -3095,24 +3095,13 @@ def _dsynth_log_path(origin: str) -> str:
     return f"{DSYNTH_LOGS_DIR}/{_dsynth_log_stem(origin)}.log"
 
 
-def dsynth_build(env: str, origin: str) -> dict:
-    """Run ``dsynth build <origin>`` inside the chroot.
+def _dsynth_run(env: str, origin: str, subcommand: str,
+                tool: str) -> dict:
+    """Shared body for :func:`dsynth_build` and :func:`dsynth_test`.
 
-    Invokes dsynth directly (not via the ``dbuild`` helper) with:
-    - ``-S`` to disable the ncurses TUI (otherwise stdout is curses
-      escape codes the LLM can't parse)
-    - ``-y`` to assume-yes on all prompts (no stdin gymnastics)
-
-    The result dict carries ``log_hint``: the in-chroot path to the
-    per-port build log dsynth actually wrote, and ``log_flavors`` when
-    the port has more than one. On failure, the agent should call
-    ``dsynth_log(origin)`` to read it — stdout/stderr_tail here only
-    capture the wrapper output, not the actual build error.
-
-    The ``dbuild`` helper at
-    ``scripts/tools/dev-env/dports_dev_env/helpers.py:62-90`` is
-    intentionally not used: it doesn't pass -S/-y because humans use
-    it interactively.
+    ``subcommand`` is dsynth's ("build" or "test"); ``tool`` is the
+    agent-facing name, used only so a refusal names the tool the model
+    actually called.
     """
     # Stale-compose guard: refuse if substrate state at last
     # successful materialize_dports doesn't match the substrate
@@ -3129,7 +3118,7 @@ def dsynth_build(env: str, origin: str) -> dict:
             "rebuild_ok": False,
             "origin": origin,
             "error": (
-                f"dsynth_build refused: no successful "
+                f"{tool} refused: no successful "
                 f"materialize_dports for {origin!r} in this attempt. "
                 f"Call materialize_dports first; the compose tree "
                 f"on disk may be from a stale state."
@@ -3143,7 +3132,7 @@ def dsynth_build(env: str, origin: str) -> dict:
             "rebuild_ok": False,
             "origin": origin,
             "error": (
-                f"dsynth_build refused: ports/{origin}/ has changed "
+                f"{tool} refused: ports/{origin}/ has changed "
                 f"since the last successful materialize_dports "
                 f"(baseline sha {baseline[:12]}…, now {current[:12]}…). "
                 f"Re-run materialize_dports to refresh the compose "
@@ -3175,7 +3164,7 @@ def dsynth_build(env: str, origin: str) -> dict:
         'flag=/work/.dports-agent-hooks-disabled; '
         'trap "rm -f \\"$flag\\"" EXIT; '
         ': > "$flag"; '
-        'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" build "$1"'
+        f'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" {subcommand} "$1"'
     )
     p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)
     # Name the log dsynth actually wrote. The unflavored path is a
@@ -3193,6 +3182,57 @@ def dsynth_build(env: str, origin: str) -> dict:
     )
 
 
+def dsynth_build(env: str, origin: str) -> dict:
+    """Run ``dsynth build <origin>`` inside the chroot.
+
+    Invokes dsynth directly (not via the ``dbuild`` helper) with:
+    - ``-S`` to disable the ncurses TUI (otherwise stdout is curses
+      escape codes the LLM can't parse)
+    - ``-y`` to assume-yes on all prompts (no stdin gymnastics)
+
+    The result dict carries ``log_hint``: the in-chroot path to the
+    per-port build log dsynth actually wrote, and ``log_flavors`` when
+    the port has more than one. On failure, the agent should call
+    ``dsynth_log(origin)`` to read it — stdout/stderr_tail here only
+    capture the wrapper output, not the actual build error.
+
+    This is the cheap iteration build. It does NOT run the Q/A phases
+    and does NOT set DEVELOPER, so a port can pass here and still be
+    refused by the acceptance gate — see :func:`dsynth_test`.
+
+    Neither tool goes through the dev-env's ``dbuild`` / ``dtest``
+    helpers: those are written for humans at a terminal and pass
+    neither ``-S`` nor ``-y``.
+    """
+    return _dsynth_run(env, origin, "build", "dsynth_build")
+
+
+def dsynth_test(env: str, origin: str) -> dict:
+    """Run ``dsynth test <origin>`` — the acceptance gate (poly-8ni).
+
+    Same guards and log handling as :func:`dsynth_build`; the only
+    difference is dsynth's subcommand. That matters because ``test``
+    is what ``verify-fix`` runs (dev-env ``apply-and-build`` step 3
+    invokes ``dtest``), and it is strictly stricter than ``build``:
+    it force-rebuilds by removing any existing package first, runs the
+    extra Q/A phases (stage-qa, check-plist, the test target), and
+    builds with ``DEVELOPER`` set.
+
+    That last part is the one that bit. DragonFly's
+    ``Mk/bsd.sanity.mk`` gates its whole ``DEV_ERROR`` block on
+    ``.if defined(DEVELOPER)``, so a Makefile defect can be fatal here
+    and invisible to ``dsynth_build``. devel/libunwind reached
+    ``agent_fixed`` on a green ``dsynth_build`` and was then refused by
+    verify at check-sanity, for a pre-existing overlay defect the loop
+    had no way to observe.
+
+    Before this tool existed the agent could not reach the gate it was
+    judged by. It still is not the pass/fail oracle — ``rebuild_ok``
+    from either tool counts — because requiring a green ``test`` would
+    newly fail every port carrying a latent stage-qa or check-plist
+    defect, and how many that is has not been measured.
+    """
+    return _dsynth_run(env, origin, "test", "dsynth_test")
 def _dsynth_log_flavor(path: Path, origin: str) -> str:
     """The flavor a log filename encodes, or "" for an unflavored one."""
     stem = _dsynth_log_stem(origin)

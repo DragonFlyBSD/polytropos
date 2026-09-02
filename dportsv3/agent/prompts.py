@@ -432,11 +432,21 @@ In all cases, edit `/work/DeltaPorts/ports/<origin>/` and let
    `/work/DPorts/<origin>/` from the latest DeltaPorts state.
 
 5. Build: `dsynth_build(origin)`. Inspect `stdout_tail` /
-   `stderr_tail`. If `rebuild_ok=true`, you're done; emit the final
-   output (below) and stop. If false, return to step 2 with the new
-   error info.
+   `stderr_tail`. If false, return to step 2 with the new error info.
 
-6. Use `emit_diff(origin, relpath)` whenever you want to see the
+6. Confirm at the gate: once `dsynth_build` is green, call
+   `dsynth_test(origin)` **once**. That is the build `verify` runs
+   before an operator accepts your fix, and it is stricter — Q/A
+   phases and `DEVELOPER` checks a plain build never performs. Then
+   emit the final output (below) and stop.
+
+   If the gate fails, read `dsynth_log(origin)`. If the failure is in
+   your change, fix it. If it is a pre-existing defect in the port that
+   your change did not introduce and does not touch, **do not chase
+   it** — name it in Patch Log and stop. Reporting a wall you did not
+   build is worth more than a budget spent on it.
+
+7. Use `emit_diff(origin, relpath)` whenever you want to see the
    net change you've made to a specific DeltaPorts file (host-side
    git diff against HEAD, no commits).
 
@@ -453,15 +463,17 @@ In all cases, edit `/work/DeltaPorts/ports/<origin>/` and let
   corrupted and the resulting patch comes out empty or malformed.
 - Use `expected_sha256` on either write tool when you've previously
   read the file.
-- On `dsynth_build` failure, **call `dsynth_log(origin)` immediately**.
-  The real build error is in the per-port log, not in dsynth_build's
-  stdout_tail. Don't grep `/work/DPorts/.../*.log` — those files don't
-  exist; dsynth's logs live under `/work/dsynth/logs/`.
+- On `dsynth_build` or `dsynth_test` failure, **call
+  `dsynth_log(origin)` immediately**. The real build error is in the
+  per-port log, not in the tool's stdout_tail. Don't grep
+  `/work/DPorts/.../*.log` — those files don't exist; dsynth's logs
+  live under `/work/dsynth/logs/`.
 - When listing a directory, use `list_dir(path)`. `get_file` only works
   on regular files (it will say "is a directory" if you pass a dir).
-- **Knowing when to stop:** if you've called `dsynth_build` and it
-  returned `rebuild_ok=true`, you are **done** — emit the final
-  output immediately and stop. Don't keep exploring.
+- **Knowing when to stop:** once `dsynth_build` returned
+  `rebuild_ok=true` and you have confirmed once with `dsynth_test`,
+  you are **done** — emit the final output immediately and stop.
+  Don't keep exploring, and don't re-run either build to be sure.
 - **Knowing when to give up:** if you've tried two distinct approaches
   and both failed at the same point, or you can't find the root cause
   after inspecting the build log, **stop** and emit your final response
@@ -507,7 +519,11 @@ One of: success | failed | gave-up
 The `Rebuild Proof (JSON)` block is **mandatory** in your final
 response. It is parsed mechanically. `rebuild_ok` must be `true` only
 if `dsynth_build` returned `rebuild_ok=true` in your most recent call.
-Otherwise it must be `false`. Emit **only** `rebuild_ok` — the harness
+Otherwise it must be `false`. It tracks the build, not the gate: if
+`dsynth_build` passed and `dsynth_test` did not, `rebuild_ok` is still
+`true` and Patch Log must say the gate refused it and why — that
+combination is exactly what an operator needs to see, so do not hide
+it by reporting `false`. Emit **only** `rebuild_ok` — the harness
 stamps the origin, build command, and timestamp from real data (don't
 author metadata; you have no clock).
 
