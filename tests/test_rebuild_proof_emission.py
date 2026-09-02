@@ -87,7 +87,7 @@ def test_success_proof_keeps_verdict_stamps_metadata(tmp_path: Path):
     datetime.fromisoformat(proof["timestamp_utc"])           # real, parseable
     # build_command = the real env-var-templated form (not "make", not a
     # hardcoded profile); standalone fabricated profile field dropped
-    assert proof["build_command"] == 'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" build cat/port'
+    assert proof["build_command"] == 'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" test cat/port'
     assert "dsynth_profile" not in proof
 
 
@@ -110,5 +110,5 @@ def test_terminal_partial_proof_keeps_verdict_stamps_metadata(tmp_path: Path):
     assert proof["stage"] == "build"                     # non-owned preserved
     assert proof["origin"] == "cat/port"
     # LLM's "make" replaced by the real templated command
-    assert proof["build_command"] == 'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" build cat/port'
+    assert proof["build_command"] == 'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" test cat/port'
     assert "timestamp_utc" in proof

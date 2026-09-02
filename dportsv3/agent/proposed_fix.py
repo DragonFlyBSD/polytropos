@@ -226,7 +226,7 @@ def render_proposed_fix(ctx: ProposedFixCtx) -> str:
     lines.append(
         f"dportsv3 dev-env exec <fresh-env> -- "
         f"dsynth -S -y -p \"$DPORTS_DSYNTH_PROFILE\" "
-        f"build {ctx.origin}"
+        f"test {ctx.origin}"
     )
     lines.append("```")
     lines.append("")

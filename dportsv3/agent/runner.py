@@ -4081,11 +4081,14 @@ def _write_patch_audit_harness(
     # worker.dsynth_build actually runs (and that proposed_fix gives the
     # operator) — the profile is the chroot's $DPORTS_DSYNTH_PROFILE, left
     # unexpanded so the value is honest and runnable, not a hardcoded guess.
+    # The subcommand is `test`, not `build`: that is what dsynth_build runs
+    # now (poly-9sw), and a proof naming a command nobody ran is worse than
+    # no command at all.
     proof_payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
     if origin:
         proof_payload["origin"] = origin
         proof_payload["build_command"] = (
-            f'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" build {origin}'
+            f'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" test {origin}'
         )
     # Drop any standalone fabricated profile field; the profile is the env
     # var embedded in build_command, not a guessable concrete name here.
