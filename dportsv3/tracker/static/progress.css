@@ -1175,6 +1175,14 @@ button.btn:disabled {
   min-height: 0;
 }
 .reader .a-body-inner { padding: 18px 20px 26px; }
+/* Inside the reader, .a-body is the scroller and the frame is already a
+   fixed height, so .diff-view must not cap its own. Its `max-height: 70vh`
+   is for the standalone artifact view, which has no .reader around it.
+   Left in place here it nests a second vertical scrollbar inside the first
+   — and `overflow-x: auto` is what makes that axis scrollable at all, since
+   CSS computes the opposite axis from `visible` to `auto`. Horizontal stays:
+   long diff lines need it in a 1fr column (poly-dpf). */
+.reader .diff-view { max-height: none; }
 .reader .artifact-error {
   color: var(--c-failed, #c03030);
   font-size: 12px; margin-bottom: 10px;
