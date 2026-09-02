@@ -1152,6 +1152,38 @@ class PatchAttemptStep:
         # Refuse on failure rather than proceeding: a compose that did
         # not work means we do not know what is on disk, and the whole
         # point is to not build against an unknown tree.
+        # Before composing: the overlay triage bootstrapped for a port
+        # that had none was written in the shared checkout, and the
+        # worktree this job just cut does not carry untracked files, so
+        # it is not here (poly-451). Re-establish it, or the compose
+        # below composes a port with no overlay and we refuse for a
+        # reason that has nothing to do with the port.
+        # Best-effort, and the compose below is still the gate: a second
+        # refusal path here would only change which message an
+        # unreachable env produces.
+        boot = _worker.ensure_bootstrap_overlay(env, origin)
+        if boot.get("written"):
+            services.activity_log(
+                queue_root, "patch_overlay_bootstrapped",
+                (f"{origin}: re-established type="
+                 f"{boot.get('overlay_type')} bootstrap overlay in this "
+                 f"job's worktree"),
+                job_id=ctx.job_id,
+                extra={"origin": origin,
+                       "overlay_type": boot.get("overlay_type")},
+            )
+        elif boot.get("error"):
+            # Not fatal here, but it is the poly-451 failure recurring,
+            # and the compose error that follows will not name it.
+            services.activity_log(
+                queue_root, "patch_overlay_bootstrap_failed",
+                (f"{origin}: could not establish the bootstrap overlay "
+                 f"({boot.get('reason')}): {boot.get('error')}"),
+                job_id=ctx.job_id,
+                extra={"origin": origin, "reason": boot.get("reason"),
+                       "error": boot.get("error")},
+            )
+
         composed = _worker.materialize_dports(env, origin)
         if not composed.get("ok"):
             msg = (

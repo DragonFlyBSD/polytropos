@@ -1469,6 +1469,90 @@ def _port_subtree_hash(env: str, origin: str) -> str:
     return h.hexdigest()
 
 
+BOOTSTRAP_REASON = (
+    "Step 48 bootstrap: deterministic header; patch authors the body"
+)
+
+
+def read_status_type(env: str, origin: str) -> str | None:
+    """Lowercased STATUS token (port/dport/mask/lock) for a port in the
+    dev-env, or None when STATUS is absent/empty."""
+    try:
+        p = _exec(
+            env, "/bin/sh", "-c",
+            'head -1 "$DELTAPORTS_ROOT/ports/$1/STATUS" 2>/dev/null',
+            "_", origin,
+        )
+    except Exception:
+        return None
+    token = (p.stdout or "").strip().split()[:1]
+    if not token:
+        return None
+    lowered = token[0].lower()
+    return lowered if lowered in {"port", "dport", "mask", "lock"} else None
+
+
+def ensure_bootstrap_overlay(env: str, origin: str) -> dict:
+    """Make sure ``origin`` has its bootstrap header in the tree
+    ``PORTS_DIR`` points at *right now*.
+
+    Triage writes this header, but triage has no worktree: it writes into
+    the shared checkout, untracked. The patch job then cuts a fresh
+    ``git worktree`` and repoints PORTS_DIR at it, and ``worktree add``
+    does not carry untracked files — so the overlay the harness had just
+    created was not in the tree the patch job composed, and the compose
+    refused (poly-451).
+
+    Writing it again here is what makes the patch job responsible for its
+    own starting state rather than for an ordering that spans two
+    modules, which is the same reason the compose itself moved into this
+    preflight. Idempotent: a port that already has an overlay is left
+    alone, so this is a no-op for every port that never needed a
+    bootstrap.
+
+    Best-effort on purpose. The compose immediately after this is the
+    gate, and it already refuses the job with a message operators know;
+    a second refusal path here would only change which message an
+    unreachable env produces. So this never fails the job on its own —
+    it reports what it did in ``written``/``reason`` and lets the
+    compose be the arbiter of whether the tree is usable.
+    """
+    from dportsv3.agent.overlay_state import (  # noqa: PLC0415
+        bootstrap_decision,
+    )
+    from dportsv3.engine import emit  # noqa: PLC0415
+
+    try:
+        facts = probe_overlay_facts(env, origin)
+    except Exception as exc:
+        return {"written": False, "reason": "probe_failed",
+                "error": f"probe_overlay_facts failed: {exc}"[:200]}
+    if facts.overlay_dops:
+        return {"written": False, "reason": "overlay_present"}
+
+    decision = bootstrap_decision(facts, read_status_type(env, origin))
+    # Only "bootstrap" writes. "abort" means the port carries compat
+    # artifacts a stub would silently drop — triage already routes those
+    # to a manual handoff, so reaching here at all is unexpected; leave
+    # the tree alone and let the compose speak for itself.
+    if decision.action != "bootstrap":
+        return {"written": False, "reason": decision.action}
+
+    header = emit.overlay(
+        emit.header(
+            port=origin, type=decision.overlay_type,
+            reason=BOOTSTRAP_REASON,
+        ),
+        [],
+    )
+    res = put_file(env, f"{PORTS_DIR}/ports/{origin}/overlay.dops", header)
+    if res.get("ok") is False:
+        return {"written": False, "reason": "write_failed",
+                "error": (res.get("error") or "put_file failed")[:200]}
+    return {"written": True, "reason": "bootstrapped",
+            "overlay_type": decision.overlay_type}
+
+
 def materialize_dports(env: str, origin: str) -> dict:
     """Regenerate the DPorts tree for ``origin`` using ``reapply`` inside the env.
 

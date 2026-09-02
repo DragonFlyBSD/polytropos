@@ -3603,28 +3603,12 @@ def _maybe_skip_muted_issue(
     return True, f"issue_muted:{issue_key}"
 
 
-_BOOTSTRAP_REASON = (
-    "Step 48 bootstrap: deterministic header; patch authors the body"
-)
-
-
-def _read_status_type(env_name: str, origin: str) -> str | None:
-    """Lowercased STATUS token (port/dport/mask/lock) for a port in the
-    dev-env, or None when STATUS is absent/empty."""
-    from dportsv3.agent import worker
-    try:
-        p = worker._exec(
-            env_name, "/bin/sh", "-c",
-            'head -1 "$DELTAPORTS_ROOT/ports/$1/STATUS" 2>/dev/null',
-            "_", origin,
-        )
-    except Exception:
-        return None
-    token = (p.stdout or "").strip().split()[:1]
-    if not token:
-        return None
-    lowered = token[0].lower()
-    return lowered if lowered in {"port", "dport", "mask", "lock"} else None
+# The bootstrap header and the STATUS reader live in worker now: the
+# patch preflight re-establishes this same header in its own worktree
+# (poly-451), and two spellings of a "deterministic" header that must
+# match byte for byte is exactly the drift worth not having. Read
+# through the function-level `worker` import below rather than a
+# module-level one, which is the discipline the rest of this file keeps.
 
 
 def _ensure_overlay_or_abort(
@@ -3664,7 +3648,7 @@ def _ensure_overlay_or_abort(
             f"probe_overlay_facts({origin!r}) failed: {exc}; proceeding")
         return None
 
-    status_type = _read_status_type(env_name, origin)
+    status_type = worker.read_status_type(env_name, origin)
     decision = bootstrap_decision(facts, status_type)
 
     if decision.action == "proceed":
@@ -3689,7 +3673,8 @@ def _ensure_overlay_or_abort(
     # authors the body. Drop STATUS when the header now carries the type.
     header = emit.overlay(
         emit.header(
-            port=origin, type=decision.overlay_type, reason=_BOOTSTRAP_REASON
+            port=origin, type=decision.overlay_type,
+            reason=worker.BOOTSTRAP_REASON,
         ),
         [],
     )

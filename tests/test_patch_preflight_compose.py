@@ -124,3 +124,47 @@ def test_the_post_reset_log_says_whether_the_reapply_worked() -> None:
     reached anyone."""
     src = _patch_preflight_source()
     assert "reapply_ok=" in src
+
+
+# --- poly-451: the overlay has to be in THIS job's tree ----------------
+
+def test_the_bootstrap_overlay_is_established_before_the_compose() -> None:
+    """Triage writes the bootstrap header in the shared checkout, but
+    this job composes in a worktree `git worktree add` cut fresh — and
+    that does not carry untracked files. Composing first means composing
+    a port whose overlay vanished, and refusing for a reason that has
+    nothing to do with the port (poly-451)."""
+    src = _patch_preflight_source()
+    boot = src.index("_worker.ensure_bootstrap_overlay(env, origin)")
+    compose = src.index("_worker.materialize_dports(env, origin)")
+    assert boot < compose
+
+
+def test_the_bootstrap_comes_after_the_clean_check() -> None:
+    """Writing into a dirty tree before anyone has checked it is dirty
+    would bake the write into someone else's leftovers."""
+    src = _patch_preflight_source()
+    clean = src.index("_worker.assert_port_clean(env, origin)")
+    boot = src.index("_worker.ensure_bootstrap_overlay(env, origin)")
+    assert clean < boot
+
+
+def test_a_failed_bootstrap_is_recorded_but_leaves_the_gate_to_compose() -> None:
+    """Deliberately NOT a second refusal path. The compose below already
+    refuses, with a message operators know; failing here as well would
+    only change which message an unreachable env produces. So say what
+    happened and let the compose arbitrate."""
+    src = _patch_preflight_source()
+    block = src[src.index("_worker.ensure_bootstrap_overlay(env, origin)"):]
+    block = block[:block.index("_worker.materialize_dports(env, origin)")]
+    assert "patch_overlay_bootstrap_failed" in block
+    assert "JobEvent.PATCH_GAVE_UP" not in block, (
+        "the compose is the gate; do not add a second refusal path"
+    )
+
+
+def test_writing_the_overlay_is_recorded() -> None:
+    """This one is invisible by construction — it only fires for ports
+    with no overlay, which are exactly the ports that have never once
+    reached the agent. If it happens, say so."""
+    assert "patch_overlay_bootstrapped" in _patch_preflight_source()
