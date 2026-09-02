@@ -48,6 +48,59 @@ def _insert_before_last_include_line(document) -> int | None:
     return insert_before
 
 
+#: Framework includes that compute ``PORT_OPTIONS`` from the ``OPTIONS_*``
+#: inputs. ``bsd.port.pre.mk`` pulls in ``bsd.port.options.mk``, so either
+#: one closes the window.
+_OPTIONS_COMPUTING_INCLUDES = ("bsd.port.options.mk", "bsd.port.pre.mk")
+
+
+def _first_options_include_line(document) -> int | None:
+    """Line of the first include that computes options, or None.
+
+    None means the port is *terminal-only* — its only framework include
+    is the trailing ``bsd.port.mk`` — and appending at the end is both
+    correct and what has always happened.
+    """
+    for node in document.nodes:
+        if isinstance(node, IncludeNode) and any(
+            name in node.include for name in _OPTIONS_COMPUTING_INCLUDES
+        ):
+            return node.span.line_start
+    return None
+
+
+def _eval_insert_line(document, name: str) -> int | None:
+    """Where a ``mk eval`` assignment to ``name`` has to land (poly-cpd).
+
+    Appending at the end of the body is right for a terminal-only port:
+    the line still precedes ``.include <bsd.port.mk>``, so options are
+    computed afterwards and the assignment counts.
+
+    It is wrong for a *sandwiched* port, one that includes
+    ``bsd.port.options.mk`` or ``bsd.port.pre.mk`` partway down.
+    ``PORT_OPTIONS`` is derived at the point of that include, so an
+    ``OPTIONS_*`` assignment appended after it cannot affect a value
+    already computed — and it fails silently, which is how ~79 overlays
+    came to carry option filtering that does nothing.
+
+    Confirmed in the dsynth builder on devel/libunwind, where the
+    overlay's ``mk eval OPTIONS_DEFINE`` landed after the include and
+    ``Mk/bsd.sanity.mk`` reported the option's own helpers as
+    "incorrectly set after bsd.port.options.mk and are ineffective".
+
+    Only ``OPTIONS_*`` names move. Those are the documented inputs to
+    that include, so for them the current placement is provably wrong.
+    Every other ``mk eval`` keeps today's position, because an
+    assignment can legitimately *want* to read what the framework
+    computed — moving those would break the ones that work today.
+    """
+    if name.startswith("OPTIONS_"):
+        options_line = _first_options_include_line(document)
+        if options_line is not None:
+            return options_line
+    return _insert_before_last_include_line(document)
+
+
 def _logical_tokens(value: str) -> list[str]:
     """Split an assignment value into tokens, treating ``\\`` line
     continuations as joins rather than literal tokens.
@@ -140,8 +193,10 @@ def exec_mk_var_set(
 def exec_mk_var_eval(
     op: PlanOp, context: ApplyContext, txn: FileTransaction
 ) -> ApplyOpResult:
-    # Append a verbatim immediate (`:=`) assignment at the end of the port
-    # Makefile body, reproducing a trailing Makefile.DragonFly fragment. This
+    # Insert a verbatim immediate (`:=`) assignment into the port Makefile
+    # body, reproducing a trailing Makefile.DragonFly fragment — at the end
+    # for a terminal-only port, and before the options-computing include for
+    # an OPTIONS_* name in a sandwiched one (see _eval_insert_line). This
     # is the faithful representation of a self-referential assignment
     # (`VAR:= ${VAR:S/a/b/}`, `${VAR:N...}`, prepend, etc.): immediate
     # expansion sees the fully-accumulated upstream value, and unlike `mk set`
@@ -177,7 +232,7 @@ def exec_mk_var_eval(
 
     text, document = loaded
     replacement = f"{name}:= {value}"
-    insert_before = _insert_before_last_include_line(document)
+    insert_before = _eval_insert_line(document, name)
     if insert_before is None:
         line_count = len(text.splitlines(keepends=False))
         updated = _replace_line_range(
