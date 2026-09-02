@@ -3097,11 +3097,12 @@ def _dsynth_log_path(origin: str) -> str:
 
 def _dsynth_run(env: str, origin: str, subcommand: str,
                 tool: str) -> dict:
-    """Shared body for :func:`dsynth_build` and :func:`dsynth_test`.
+    """Shared body for the dsynth-driving tools.
 
-    ``subcommand`` is dsynth's ("build" or "test"); ``tool`` is the
-    agent-facing name, used only so a refusal names the tool the model
-    actually called.
+    ``subcommand`` is dsynth's; ``tool`` is the agent-facing name,
+    used only so a refusal names the tool the model actually called.
+    Parameterised because there were briefly two of these — see
+    poly-9sw for why there is now one.
     """
     # Stale-compose guard: refuse if substrate state at last
     # successful materialize_dports doesn't match the substrate
@@ -3183,56 +3184,38 @@ def _dsynth_run(env: str, origin: str, subcommand: str,
 
 
 def dsynth_build(env: str, origin: str) -> dict:
-    """Run ``dsynth build <origin>`` inside the chroot.
+    """Run ``dsynth test <origin>`` inside the chroot — build + gate.
 
-    Invokes dsynth directly (not via the ``dbuild`` helper) with:
+    Invokes dsynth directly (not via the ``dbuild`` / ``dtest`` helpers,
+    which are written for humans at a terminal and pass neither flag):
     - ``-S`` to disable the ncurses TUI (otherwise stdout is curses
       escape codes the LLM can't parse)
     - ``-y`` to assume-yes on all prompts (no stdin gymnastics)
+
+    The subcommand is ``test``, not ``build``, and that is the whole
+    point (poly-9sw). ``test`` is what ``verify-fix`` runs — dev-env
+    ``apply-and-build`` invokes ``dtest`` — so building any other way
+    means the loop is proved by something other than the gate it is
+    judged by, which is what poly-8ni was about.
+
+    There was briefly a second tool for this, kept apart on the
+    assumption the gate was expensive. It is not. Measured over six
+    ports, ``test`` costs 103% of ``build`` on one that actually
+    compiles: the same work, plus install / deinstall / check-plist.
+    Since ``test`` also force-rebuilds — removing any existing package
+    so its verdict cannot be contaminated by a cached one — running
+    both meant compiling the port twice to learn 3% more. The port's
+    own test suite is NOT run; there is no ``test`` phase.
 
     The result dict carries ``log_hint``: the in-chroot path to the
     per-port build log dsynth actually wrote, and ``log_flavors`` when
     the port has more than one. On failure, the agent should call
     ``dsynth_log(origin)`` to read it — stdout/stderr_tail here only
     capture the wrapper output, not the actual build error.
-
-    This is the cheap iteration build. It does NOT run the Q/A phases
-    and does NOT set DEVELOPER, so a port can pass here and still be
-    refused by the acceptance gate — see :func:`dsynth_test`.
-
-    Neither tool goes through the dev-env's ``dbuild`` / ``dtest``
-    helpers: those are written for humans at a terminal and pass
-    neither ``-S`` nor ``-y``.
     """
-    return _dsynth_run(env, origin, "build", "dsynth_build")
+    return _dsynth_run(env, origin, "test", "dsynth_build")
 
 
-def dsynth_test(env: str, origin: str) -> dict:
-    """Run ``dsynth test <origin>`` — the acceptance gate (poly-8ni).
-
-    Same guards and log handling as :func:`dsynth_build`; the only
-    difference is dsynth's subcommand. That matters because ``test``
-    is what ``verify-fix`` runs (dev-env ``apply-and-build`` step 3
-    invokes ``dtest``), and it is strictly stricter than ``build``:
-    it force-rebuilds by removing any existing package first, runs the
-    extra Q/A phases (stage-qa, check-plist, the test target), and
-    builds with ``DEVELOPER`` set.
-
-    That last part is the one that bit. DragonFly's
-    ``Mk/bsd.sanity.mk`` gates its whole ``DEV_ERROR`` block on
-    ``.if defined(DEVELOPER)``, so a Makefile defect can be fatal here
-    and invisible to ``dsynth_build``. devel/libunwind reached
-    ``agent_fixed`` on a green ``dsynth_build`` and was then refused by
-    verify at check-sanity, for a pre-existing overlay defect the loop
-    had no way to observe.
-
-    Before this tool existed the agent could not reach the gate it was
-    judged by. It still is not the pass/fail oracle — ``rebuild_ok``
-    from either tool counts — because requiring a green ``test`` would
-    newly fail every port carrying a latent stage-qa or check-plist
-    defect, and how many that is has not been measured.
-    """
-    return _dsynth_run(env, origin, "test", "dsynth_test")
 def _dsynth_log_flavor(path: Path, origin: str) -> str:
     """The flavor a log filename encodes, or "" for an unflavored one."""
     stem = _dsynth_log_stem(origin)

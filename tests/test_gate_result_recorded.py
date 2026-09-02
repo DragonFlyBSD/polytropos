@@ -1,20 +1,19 @@
-"""An observed gate refusal must outlive the attempt that saw it (poly-qkp).
+"""An attempt that never wrote a report must not look like one (poly-qkp).
 
-poly-8ni gave the agent ``dsynth_test`` so the loop could reach the
-acceptance gate. It reached it and then threw the answer away:
-devel_libunwind-20260902-124214Z ran ``dsynth_test`` at turn 22, got a
-refusal, spent turns 24-30 diagnosing it, hit ``max_tool_turns`` and never
-wrote a report. The orphan rescue lifted ``rebuild_ok=true`` from the
-turn-19 ``dsynth_build`` and the bundle resolved ``agent_fixed`` with no
-record that the gate had refused it.
+devel_libunwind-20260902-124214Z hit ``max_tool_turns`` mid-investigation and
+never emitted a final response. The orphan rescue lifted ``rebuild_ok=true``
+from an earlier tool result, and ``analysis/patch.md`` was written from
+whatever commentary accompanied the last tool call — 205 characters of
+mid-reasoning, indistinguishable from a considered report.
 
-Two facts the harness already had, and now keeps:
-  * whether ``dsynth_test`` ran and what it said  -> ``gate_ok``
-  * whether the loop ended with a real report     -> ``report_complete``
+``tool_loop`` now says why it stopped, and ``report_complete`` follows from
+that: only a ``text_only`` stop produced a real report. Recorded by the
+harness, because the failure mode is precisely that the model never gets a
+turn to say so itself.
 
-Both are recorded from the event stream rather than read out of the
-model's prose, because the failure mode is precisely that the model never
-gets a turn to write prose.
+The companion gate field is gone with poly-9sw: there is one build
+tool again, it runs ``dsynth test``, so ``rebuild_ok`` already means the
+port built and passed the gate.
 """
 
 from __future__ import annotations
@@ -94,80 +93,7 @@ def _tier(monkeypatch, iterations=1, tokens=0):
     return Tier(name="ASSIST", max_iterations=iterations, max_tokens=tokens)
 
 
-def test_gate_refusal_survives_a_turn_capped_attempt(monkeypatch):
-    """The libunwind shape end to end: green build, refused gate, no
-    report. rebuild_ok still true — and the refusal is still recorded."""
-    from dportsv3.agent import attempt_loop
-    from dportsv3.agent.llm import Response, Usage
 
-    def fake_run(*args, **kwargs):
-        emit = kwargs["on_event"]
-        emit({"type": "tool_call", "tool": "dsynth_build",
-              "result": {"ok": True, "rebuild_ok": True}})
-        emit({"type": "tool_call", "tool": "dsynth_test",
-              "result": {"ok": False, "rebuild_ok": False}})
-        emit({"type": "loop_stop", "reason": "turn_cap", "turn": 30})
-        # No proof block: the attempt never reached its report.
-        return (Response(text="Let me understand what --enable-tests does"),
-                Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10),
-                True)
-
-    monkeypatch.setattr(attempt_loop.tool_loop, "run", fake_run)
-
-    res = attempt_loop.run(
-        payload="p", system_prompt="s", model="m", env="e",
-        tier=_tier(monkeypatch),
-    )
-
-    # The orphan rescue still fires — that behaviour is unchanged.
-    assert res.status == "success"
-    # But the gate's verdict is no longer lost.
-    assert res.gate_ok is False
-    assert res.report_complete is False
-
-
-def test_gate_pass_is_recorded_too(monkeypatch):
-    """Not just failures: a green gate is worth recording as evidence."""
-    from dportsv3.agent import attempt_loop
-    from dportsv3.agent.llm import Response, Usage
-
-    def fake_run(*args, **kwargs):
-        emit = kwargs["on_event"]
-        emit({"type": "tool_call", "tool": "dsynth_test",
-              "result": {"ok": True, "rebuild_ok": True}})
-        emit({"type": "loop_stop", "reason": "text_only", "turn": 8})
-        return (Response(text='## Rebuild Proof (JSON)\n```json\n'
-                              '{"rebuild_ok": true}\n```'),
-                Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10),
-                True)
-
-    monkeypatch.setattr(attempt_loop.tool_loop, "run", fake_run)
-
-    res = attempt_loop.run(payload="p", system_prompt="s", model="m",
-                           env="e", tier=_tier(monkeypatch))
-
-    assert res.gate_ok is True
-    assert res.report_complete is True
-
-
-def test_gate_absent_when_never_run(monkeypatch):
-    """None, not False — "did not run the gate" is not "gate refused"."""
-    from dportsv3.agent import attempt_loop
-    from dportsv3.agent.llm import Response, Usage
-
-    def fake_run(*args, **kwargs):
-        kwargs["on_event"]({"type": "loop_stop", "reason": "text_only",
-                            "turn": 4})
-        return (Response(text="## Patch Log\nno gate call"),
-                Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10),
-                False)
-
-    monkeypatch.setattr(attempt_loop.tool_loop, "run", fake_run)
-
-    res = attempt_loop.run(payload="p", system_prompt="s", model="m",
-                           env="e", tier=_tier(monkeypatch))
-
-    assert res.gate_ok is None
 
 
 def test_caller_on_event_still_receives_everything(monkeypatch):
@@ -197,41 +123,13 @@ def test_caller_on_event_still_receives_everything(monkeypatch):
     assert "attempt_end" in kinds
 
 
-def test_gate_survives_budget_exhaustion(monkeypatch):
-    """Not just the success path. A gate refusal followed by budget
-    exhaustion is the combination most worth keeping, and the return
-    that carries it is a different one — it was missed on the first
-    pass of this change."""
-    from dportsv3.agent import attempt_loop
-    from dportsv3.agent.llm import Response, Usage
-
-    def fake_run(*args, **kwargs):
-        emit = kwargs["on_event"]
-        emit({"type": "tool_call", "tool": "dsynth_test",
-              "result": {"ok": False, "rebuild_ok": False}})
-        emit({"type": "loop_stop", "reason": "token_budget", "turn": 12})
-        return (Response(text="ran out mid-thought"),
-                Usage(prompt_tokens=500, completion_tokens=0,
-                      total_tokens=500),
-                False)
-
-    monkeypatch.setattr(attempt_loop.tool_loop, "run", fake_run)
-
-    res = attempt_loop.run(payload="p", system_prompt="s", model="m",
-                           env="e", tier=_tier(monkeypatch, tokens=100))
-
-    assert res.status == "budget-exhausted"
-    assert res.gate_ok is False
-    assert res.report_complete is False
-
 
 # --- the artifacts ----------------------------------------------------------
 
 
-def test_proof_artifact_carries_gate_and_report_is_marked(tmp_path,
-                                                          monkeypatch):
-    """rebuild_proof.json gains gate_ok, and an incomplete patch.md says
-    so instead of reading like a considered report."""
+def test_incomplete_report_is_marked(tmp_path, monkeypatch):
+    """An incomplete patch.md says so instead of reading like a
+    considered report."""
     from dportsv3.agent import runner
     from dportsv3.agent.attempt_loop import AttemptInfo, PatchResult
 
@@ -240,7 +138,6 @@ def test_proof_artifact_carries_gate_and_report_is_marked(tmp_path,
         final_text="The picture is getting clearer but has a contradiction",
         attempts=[AttemptInfo(attempt=1, tokens=10, rebuild_ok=True)],
         proof={"rebuild_ok": True, "source": "tool_result"},
-        gate_ok=False,
         report_complete=False,
     )
     bundle_dir = tmp_path / "bundle"
@@ -253,8 +150,7 @@ def test_proof_artifact_carries_gate_and_report_is_marked(tmp_path,
 
     proof = json.loads((bundle_dir / "analysis" / "rebuild_proof.json")
                        .read_text())
-    assert proof["gate_ok"] is False
-    assert proof["rebuild_ok"] is True  # oracle unchanged, on purpose
+    assert proof["rebuild_ok"] is True
 
     md = (bundle_dir / "analysis" / "patch.md").read_text()
     assert "Incomplete — no final report" in md
@@ -292,7 +188,7 @@ def test_incomplete_with_no_text_says_so(tmp_path, monkeypatch):
 
 
 def test_complete_report_is_untouched(tmp_path, monkeypatch):
-    """No marker, and no gate_ok key, when there is nothing to say."""
+    """No marker when there is nothing to say."""
     from dportsv3.agent import runner
     from dportsv3.agent.attempt_loop import AttemptInfo, PatchResult
 
@@ -312,6 +208,44 @@ def test_complete_report_is_untouched(tmp_path, monkeypatch):
     md = (bundle_dir / "analysis" / "patch.md").read_text()
     assert "Incomplete" not in md
     assert md.startswith("## Patch Log")
-    proof = json.loads((bundle_dir / "analysis" / "rebuild_proof.json")
-                       .read_text())
-    assert "gate_ok" not in proof
+    assert (bundle_dir / "analysis" / "rebuild_proof.json").exists()
+
+
+# --- one build, and it is the gate (poly-9sw) --------------------------------
+
+
+def test_dsynth_build_runs_the_test_subcommand(monkeypatch):
+    """There is one build tool and it runs dsynth's `test`, not `build`.
+
+    Two tools meant every successful attempt compiled the port twice:
+    `test` force-rebuilds, so it threw away what `build` had just made.
+    Measured on devel/level-zero, `test` cost 103% of `build` — the same
+    work plus install/deinstall/check-plist — so the second compile
+    bought ~3% of extra signal.
+    """
+    import subprocess
+    from dportsv3.agent import tools, worker
+
+    captured = {}
+
+    def fake_exec(env, *argv, cwd="/work/DeltaPorts", input_text=None,
+                  timeout=None):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(args=argv, returncode=0,
+                                           stdout="", stderr="")
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
+    monkeypatch.setattr(worker, "_dsynth_log_path", lambda o: "/tmp/log")
+    monkeypatch.setattr(worker, "_dsynth_log_candidates", lambda e, o: [])
+    monkeypatch.setattr(worker, "_port_subtree_hash", lambda e, o: "deadbeef")
+    monkeypatch.setitem(worker._MATERIALIZE_STATE,
+                        ("test-env", "devel/foo"), "deadbeef")
+
+    worker.dsynth_build("test-env", "devel/foo")
+
+    cmd = " ".join(str(a) for a in captured["argv"])
+    assert ' test "$1"' in cmd
+    assert ' build "$1"' not in cmd
+    # And the second tool is gone from the registry entirely.
+    assert "dsynth_test" not in tools.names()
+    assert not hasattr(worker, "dsynth_test")

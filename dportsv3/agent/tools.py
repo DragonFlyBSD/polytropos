@@ -166,19 +166,10 @@ _TOOLS: list[dict] = [
           {"origin": _STR, "patches": {"type": "array", "items": {"type": "string"}}},
           ["origin"]),
     _tool("dsynth_build",
-          "Run dsynth -S -y build <origin>. rebuild_ok=true means rc==0. "
+          "Run dsynth -S -y test <origin> — build plus the acceptance-gate "
+          "phases (install, deinstall, check-plist) that verify runs. rebuild_ok=true means rc==0, i.e. it built AND passed the gate. "
           "On failure, call dsynth_log(origin) — the actual build error is in the per-port log, "
           "not in this tool's stdout_tail.",
-          {"origin": _STR}, ["origin"]),
-    _tool("dsynth_test",
-          "Run dsynth -S -y test <origin> — the acceptance gate. Stricter than "
-          "dsynth_build: force-rebuilds, runs the Q/A phases (stage-qa, "
-          "check-plist, the test target) and builds with DEVELOPER set, which "
-          "turns a class of Makefile defects into fatal check-sanity errors "
-          "that dsynth_build never sees. This is what verify runs before an "
-          "operator accepts a fix, so a green dsynth_build is not proof this "
-          "will pass. Slower — iterate with dsynth_build, confirm with this. "
-          "On failure, call dsynth_log(origin).",
           {"origin": _STR}, ["origin"]),
     _tool("dsynth_log",
           "Read the tail of dsynth's per-port build log under "
@@ -265,8 +256,8 @@ def patch_tool_names() -> frozenset[str]:
     ``validate_dops`` + ``dops_reference``, reading with ``grep`` /
     ``get_file``) — plus the build-loop tools convert doesn't need
     (``make_extract`` / ``make_patch`` / ``dupe`` / ``genpatch`` /
-    ``install_patches`` / ``dsynth_build`` / ``dsynth_test`` /
-    ``dsynth_log`` / ``materialize_dports``) and the
+    ``install_patches`` / ``dsynth_build`` / ``dsynth_log`` /
+    ``materialize_dports``) and the
     read-only ``emit_diff`` / ``get_effective_overlay`` views. All of
     these live in the registry, so this is just the full tool set.
     """

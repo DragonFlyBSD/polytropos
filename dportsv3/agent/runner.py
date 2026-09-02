@@ -3964,7 +3964,7 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
             f"origin={args.get('origin', '')} relpath={args.get('relpath', '')} "
             f"diff_bytes={diff_len}{ok_tag}"
         )
-    if tool in ("dsynth_build", "dsynth_test"):
+    if tool == "dsynth_build":
         rb = result.get("rebuild_ok")
         return f"origin={args.get('origin', '')} rebuild_ok={rb}{ok_tag}"
     if tool == "dsynth_log":
@@ -4082,14 +4082,6 @@ def _write_patch_audit_harness(
     # operator) — the profile is the chroot's $DPORTS_DSYNTH_PROFILE, left
     # unexpanded so the value is honest and runnable, not a hardcoded guess.
     proof_payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
-    # The acceptance gate's verdict is code-owned for the same reason the
-    # timestamp is: it is a fact the harness observed, not a claim the
-    # model makes. Recording it here means a refusal survives an attempt
-    # that never got a turn to mention it (poly-qkp). Absent when the
-    # agent never ran dsynth_test.
-    gate_ok = getattr(result, "gate_ok", None)
-    if gate_ok is not None:
-        proof_payload["gate_ok"] = gate_ok
     if origin:
         proof_payload["origin"] = origin
         proof_payload["build_command"] = (

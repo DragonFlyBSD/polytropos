@@ -44,10 +44,6 @@ class PatchResult:
     usage: Usage = field(default_factory=Usage)
     attempts: list[AttemptInfo] = field(default_factory=list)
     proof: dict | None = None  # the final/winning Rebuild Proof JSON (if any)
-    #: Last ``dsynth_test`` result seen, or None if the gate was never
-    #: run. Recorded by the harness rather than read out of the model's
-    #: report, because a turn-capped attempt never writes one (poly-qkp).
-    gate_ok: bool | None = None
     #: False when the loop stopped on the turn or token cap instead of
     #: the model going text-only, i.e. ``final_text`` is the commentary
     #: that accompanied the last tool call, not a report.
@@ -149,10 +145,9 @@ def run(
     prev_text = ""
     final_text = ""
     winning_proof: dict | None = None
-    # Defaults for the needs-help return, which sits outside the attempt
-    # loop: an attempt that raises before these are rebound must not turn
+    # Default for the needs-help return, which sits outside the attempt
+    # loop: an attempt that raises before it is rebound must not turn
     # into a NameError on the way out.
-    gate_ok: bool | None = None
     report_complete = True
 
     iterations = max(1, int(getattr(tier, "max_iterations", 1) or 1))
@@ -197,7 +192,6 @@ def run(
         if budget and remaining <= 0:
             log.warning("attempt_loop: budget already exhausted before attempt %d", attempt_idx)
             return PatchResult(
-                gate_ok=gate_ok,
                 report_complete=report_complete,
                 status="budget-exhausted",
                 final_text=final_text,
@@ -225,7 +219,6 @@ def run(
                 attempt_idx, remaining, _min_attempt_budget(budget),
             )
             return PatchResult(
-                gate_ok=gate_ok,
                 report_complete=report_complete,
                 status="budget-exhausted",
                 final_text=final_text,
@@ -255,17 +248,12 @@ def run(
             except Exception:
                 pass
 
-        # Watch the event stream for the two things the model cannot be
-        # relied on to report: whether it ran the acceptance gate, and
-        # why the loop ended. Both are facts the harness already has.
+        # Watch the event stream for why the loop ended — a fact the
+        # harness has and a turn-capped attempt never gets to report.
         seen: dict = {}
 
         def _observe(ev, _seen=seen):
-            if ev.get("type") == "tool_call" and ev.get("tool") == "dsynth_test":
-                res = ev.get("result")
-                if isinstance(res, dict) and "rebuild_ok" in res:
-                    _seen["gate_ok"] = bool(res.get("rebuild_ok"))
-            elif ev.get("type") == "loop_stop":
+            if ev.get("type") == "loop_stop":
                 _seen["stop_reason"] = ev.get("reason")
             if on_event is not None:
                 on_event(ev)
@@ -305,11 +293,9 @@ def run(
                 "attempt_loop: attempt %d ended by %s: %s",
                 attempt_idx, blocked.tool, blocked.reason)
             return PatchResult(
-                # Whatever the gate said before the block is still worth
-                # keeping. report_complete stays True: unlike a capped
-                # attempt, final_text below is a complete account the
-                # harness wrote itself.
-                gate_ok=seen.get("gate_ok"),
+                # report_complete stays True: unlike a capped attempt,
+                # final_text below is a complete account the harness
+                # wrote itself.
                 status="environment-blocked",
                 final_text=(
                     "## Environment\n\n"
@@ -372,7 +358,6 @@ def run(
             proof = {"rebuild_ok": True, "source": "tool_result"}
             rebuild_ok = True
 
-        gate_ok = seen.get("gate_ok")
         # text_only is the only stop that produced a real report; a turn
         # or token cap leaves final_text as mid-attempt commentary.
         report_complete = seen.get("stop_reason") == "text_only"
@@ -407,7 +392,6 @@ def run(
             log.info("attempt_loop: success on attempt %d", attempt_idx)
             winning_proof = proof
             return PatchResult(
-                gate_ok=gate_ok,
                 report_complete=report_complete,
                 status="success",
                 final_text=final_text,
@@ -422,7 +406,6 @@ def run(
                 attempt_idx, total_usage.billable_tokens, budget,
             )
             return PatchResult(
-                gate_ok=gate_ok,
                 report_complete=report_complete,
                 status="budget-exhausted",
                 final_text=final_text,
@@ -433,7 +416,6 @@ def run(
 
     log.info("attempt_loop: needs-help after %d attempts", iterations)
     return PatchResult(
-        gate_ok=gate_ok,
         report_complete=report_complete,
         status="needs-help",
         final_text=final_text,
