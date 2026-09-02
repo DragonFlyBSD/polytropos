@@ -4014,6 +4014,20 @@ def _write_patch_audit_harness(
     """Write harness-side outputs to the bundle: patch.md, rebuild_proof.json,
     changes.diff (host-side git diff in the env), and patch_audit.json."""
     text = (result.final_text or "").rstrip() + "\n"
+    # A turn- or budget-capped attempt never produced a report: what
+    # `final_text` holds is the commentary that came with the last tool
+    # call. Writing that as patch.md makes an aborted attempt read like
+    # a considered one — devel_libunwind-20260902-124214Z filed 205
+    # characters of mid-reasoning as its report. Say so instead of
+    # dressing it up (poly-qkp).
+    if not getattr(result, "report_complete", True):
+        text = (
+            "> **Incomplete — no final report.** The attempt ended on the "
+            "turn or token cap before the agent wrote one. What follows is "
+            "the commentary that accompanied its last tool call, kept "
+            "because it is the only account of where the attempt had got "
+            "to. It is not a conclusion.\n\n"
+        ) + text
     md_bytes = text.encode("utf-8")
     if bundle_id:
         artifact_store_put(bundle_id, "analysis/patch.md", md_bytes, "text")
@@ -4052,6 +4066,14 @@ def _write_patch_audit_harness(
     # operator) — the profile is the chroot's $DPORTS_DSYNTH_PROFILE, left
     # unexpanded so the value is honest and runnable, not a hardcoded guess.
     proof_payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
+    # The acceptance gate's verdict is code-owned for the same reason the
+    # timestamp is: it is a fact the harness observed, not a claim the
+    # model makes. Recording it here means a refusal survives an attempt
+    # that never got a turn to mention it (poly-qkp). Absent when the
+    # agent never ran dsynth_test.
+    gate_ok = getattr(result, "gate_ok", None)
+    if gate_ok is not None:
+        proof_payload["gate_ok"] = gate_ok
     if origin:
         proof_payload["origin"] = origin
         proof_payload["build_command"] = (

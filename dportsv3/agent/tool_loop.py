@@ -98,10 +98,17 @@ def run(
     the duration of the loop. ``env`` is the dev-env name; every tool
     call is bound to it.
 
-    Returns ``(response, usage, rebuild_ok_seen)``: the final text-only
+    Returns ``(response, usage, rebuild_ok_seen)``: the last
     ``Response``, cumulative ``Usage`` across all turns, and a flag set
     when any tool result in this attempt carried ``rebuild_ok=True``
     (the structured success signal from ``dsynth_build``).
+
+    ``response`` is the last one the model produced, which is the final
+    report only when the loop stopped because the model went text-only.
+    On a turn or budget stop it is whatever commentary accompanied the
+    last tool call — a fragment, not a report. Callers must not present
+    it as one; a ``loop_stop`` event carries the reason so they can
+    tell (poly-qkp).
 
     Two safety caps:
     - ``max_turns``: stop after this many LLM round-trips even if the
@@ -118,6 +125,21 @@ def run(
     final: Response | None = None
     rebuild_ok_seen = False
 
+    def _stop(reason: str, turn: int) -> None:
+        """Emit why the loop ended. Callers use this to tell a real
+        report from the last tool call's commentary."""
+        if on_event is None:
+            return
+        try:
+            on_event({
+                "type": "loop_stop",
+                "attempt": attempt_idx,
+                "turn": turn,
+                "reason": reason,
+            })
+        except Exception:
+            pass  # callback must never break the loop
+
     def _effective_cap() -> int:
         # Grace only kicks in once a tool result has signalled
         # ``rebuild_ok=True``; before that, the budget is the budget.
@@ -129,6 +151,7 @@ def run(
                 "tool_loop: token budget exhausted on turn %d (%d >= %d billable)",
                 turn, total.billable_tokens, _effective_cap(),
             )
+            _stop("token_budget", turn)
             return (final if final is not None else Response(text="")), total, rebuild_ok_seen
 
         response = llm.complete(
@@ -190,10 +213,12 @@ def run(
                     })
                 except Exception:
                     pass
+            _stop("token_budget", turn)
             return response, total, rebuild_ok_seen
 
         if not response.tool_calls:
             log.debug("tool_loop: turn %d returned text-only, stopping", turn)
+            _stop("text_only", turn)
             return response, total, rebuild_ok_seen
 
         log.debug(
@@ -295,4 +320,5 @@ def run(
     log.warning(
         "tool_loop: hit max_turns=%d without a text-only response", max_turns
     )
+    _stop("turn_cap", max_turns)
     return (final if final is not None else Response(text="")), total, rebuild_ok_seen
