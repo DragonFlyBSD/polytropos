@@ -28,6 +28,7 @@ config loader from env var or 0400 file).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -40,6 +41,8 @@ __all__ = ["GitHubProvider"]
 
 
 _API_BASE: Final[str] = "https://api.github.com"
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -239,11 +242,23 @@ class GitHubProvider:
                 status="created",
             )
         finally:
-            git.restore_to_base(
+            # restore_to_base cannot raise -- it runs in a finally and
+            # must not mask the delivery error -- so a failed restore
+            # reports through its return value, and dropping that made
+            # the one failure it exists to warn about silent (poly-eao).
+            # A clone left on the feature branch fails the NEXT Accept,
+            # after this one looked like it succeeded.
+            if not git.restore_to_base(
                 clone_dir,
                 base_branch=base_branch,
                 scope_paths=git.changed_paths(diff_text),
-            )
+            ):
+                _LOG.warning(
+                    "could not restore clone %s to %s; it may still be "
+                    "on %s with the diff applied, and the next delivery "
+                    "will refuse until that is cleaned up",
+                    clone_dir, base_branch, branch_name,
+                )
 
     def pull_request_merge_state(
         self, pr_number: str | int,

@@ -23,6 +23,9 @@ import os
 import re
 import sqlite3
 import textwrap
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +43,60 @@ from .config import (
 )
 
 _LOG = logging.getLogger(__name__)
+
+
+# One delivery at a time. Every delivery drives the same
+# provider.clone_dir through checkout -> apply -> commit -> push ->
+# restore, and Accept is a sync route, so uvicorn runs each request in
+# its own threadpool thread: two Accepts seconds apart overlap in the
+# clone (poly-lt1). The loser was refused by prepare_clean_branch's
+# clean-and-on-base precondition, which is the only thing that stopped
+# its diff being committed onto the winner's branch and force-pushed
+# there.
+#
+# A threading.Lock and not a file lock: deliver() has exactly one caller
+# (the Accept route) and uvicorn.run() is invoked without `workers`, so
+# every delivery is a thread in one process. One lock and not one per
+# clone_dir: a per-target override can name a second clone, but
+# deliveries are operator clicks that take seconds, so serialising
+# across targets costs less than the bookkeeping would.
+_CLONE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _clone_locked() -> Iterator[None]:
+    """Hold the delivery clone for the length of one provider call.
+
+    The whole call, not just its git prologue: the clone stays on the
+    feature branch with the diff applied until ``restore_to_base`` runs
+    in create_review_request's finally, which is after the PR HTTP
+    calls. Releasing any earlier would hand the next delivery a clone
+    that is still mid-flight. local-patch owns no clone and is
+    serialised incidentally; it costs nothing to leave it in.
+
+    Bounded rather than blocking: Starlette's threadpool is finite, so
+    an unbounded wait behind one hung delivery would park request
+    threads until the tracker stops answering anything.
+    ``delivery.git_timeout`` is the coherent bound to wait -- it exists
+    for this same hazard one layer down ("a hung remote would otherwise
+    block the Accept request thread indefinitely") and a healthy
+    delivery finishes in seconds, far inside it.
+
+    Raises ``DeliveryError`` on timeout from inside deliver()'s existing
+    try, so a busy clone is recorded as the same create_failed row as
+    any other provider failure, with a message saying to retry.
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+    timeout = float(settings.get("delivery.git_timeout"))
+    if not _CLONE_LOCK.acquire(timeout=timeout):
+        raise DeliveryError(
+            f"another delivery is using the clone (waited {timeout:g}s); "
+            f"retry once it finishes"
+        )
+    try:
+        yield
+    finally:
+        _CLONE_LOCK.release()
 
 
 @dataclass
@@ -619,19 +676,23 @@ def deliver(
     )
 
     try:
-        result: ReviewRequestResult = provider.create_review_request(
-            clone_dir=clone_path,
-            branch_name=branch,
-            base_branch=cfg.base_branch,
-            title=title,
-            body=body,
-            commit_body=commit_body,
-            labels=list(cfg.labels),
-            diff_text=diff_text,
-            diff_sha256=diff_sha256,
-            draft=cfg.draft,
-            existing_diff_sha256=existing_diff_sha256,
-        )
+        # The lock spans the whole provider call, not just its git
+        # prologue: the window that bit us was between the commit and
+        # the restore that runs in create_review_request's finally.
+        with _clone_locked():
+            result: ReviewRequestResult = provider.create_review_request(
+                clone_dir=clone_path,
+                branch_name=branch,
+                base_branch=cfg.base_branch,
+                title=title,
+                body=body,
+                commit_body=commit_body,
+                labels=list(cfg.labels),
+                diff_text=diff_text,
+                diff_sha256=diff_sha256,
+                draft=cfg.draft,
+                existing_diff_sha256=existing_diff_sha256,
+            )
     except Exception as exc:
         request_id = insert_review_request(
             write_conn,

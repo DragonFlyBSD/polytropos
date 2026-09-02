@@ -14,6 +14,7 @@ network call and no real git operation fires. The tests cover:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,9 @@ class _FakeGit:
     raises_on: str | None = None
     raise_exc: Exception | None = None
     calls: list[str] = field(default_factory=list)
+    # The real restore_to_base returns a bool rather than raising —
+    # it runs in a finally and must not mask the delivery error.
+    restore_ok: bool = True
 
     def _maybe_raise(self, name):
         self.calls.append(name)
@@ -101,8 +105,10 @@ class _FakeGit:
 
     def restore_to_base(self, clone_dir, **kw):
         # Records the call but never raises — mirrors the real
-        # best-effort helper that runs in a finally.
+        # best-effort helper that runs in a finally, which reports
+        # failure through its return value instead.
         self.calls.append("restore_to_base")
+        return self.restore_ok
 
 
 def _make_provider(http=None, git=None):
@@ -492,3 +498,51 @@ def test_short_circuit_falls_through_when_no_open_pr_found():
         "prepare_clean_branch", "apply_diff",
         "commit_diff", "push_branch", "restore_to_base",
     ]
+
+
+# ---------------------------------------------------------------------
+# poly-eao — a failed restore must not be silent
+# ---------------------------------------------------------------------
+
+
+def _restore_http():
+    return _FakeHttp(
+        get_responses=[[]],
+        post_responses=[
+            {"number": 7, "html_url": "https://github.com/o/r/pull/7"},
+            [],
+        ],
+    )
+
+
+def test_failed_restore_is_logged_with_the_branch_it_is_stuck_on(caplog):
+    """restore_to_base runs in a finally and cannot raise, so it reports
+    failure through its return value. Dropping that return made the one
+    failure it exists to warn about invisible: the clone stays on the
+    feature branch and the NEXT delivery is the one that fails, after
+    this one looked like it succeeded."""
+    git = _FakeGit(restore_ok=False)
+    provider = _make_provider(http=_restore_http(), git=git)
+    with caplog.at_level(logging.WARNING, logger="dportsv3.delivery.github"):
+        result = provider.create_review_request(**_common_args())
+
+    # The delivery itself still succeeded — the PR is the load-bearing
+    # artifact and a restore failure must not retract it.
+    assert result.status == "created"
+
+    warnings = [r.getMessage() for r in caplog.records
+                if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1, warnings
+    msg = warnings[0]
+    assert "agentic/devel-foo-20260527" in msg   # where it is stuck
+    assert "master" in msg                       # where it should be
+    assert "next delivery" in msg                # what it costs
+
+
+def test_successful_restore_logs_nothing(caplog):
+    git = _FakeGit()  # restore_ok defaults True
+    provider = _make_provider(http=_restore_http(), git=git)
+    with caplog.at_level(logging.WARNING, logger="dportsv3.delivery.github"):
+        provider.create_review_request(**_common_args())
+    assert [r.getMessage() for r in caplog.records
+            if r.levelno >= logging.WARNING] == []
