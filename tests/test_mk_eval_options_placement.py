@@ -126,6 +126,55 @@ def test_two_options_evals_keep_their_declared_order(tmp_path: Path) -> None:
     assert first < second < lines.index(".include <bsd.port.options.mk>")
 
 
+def test_conditional_options_include_is_not_moved_into_the_block(
+    tmp_path: Path,
+) -> None:
+    """An options include nested in an `.if` is skipped: inserting before
+    it would make the assignment conditional, which is a different silent
+    bug. Measured 16 such ports in the composed 2026Q3 tree, none of them
+    carrying an `mk eval OPTIONS*` overlay — so this preserves the status
+    quo rather than guessing at intent."""
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(
+        "OPTIONS_DEFINE= A\n"
+        ".if ${ARCH} == amd64\n"
+        ".include <bsd.port.options.mk>\n"
+        ".endif\n"
+        ".include <bsd.port.mk>\n"
+    )
+
+    assert _apply(tmp_path, [_eval_op("OPTIONS_DEFINE", "${OPTIONS_DEFINE} B")]).ok
+
+    lines = makefile.read_text().splitlines()
+    assign = lines.index("OPTIONS_DEFINE:= ${OPTIONS_DEFINE} B")
+    assert assign > lines.index(".endif"), (
+        "must fall back to the old placement, not land inside the .if"
+    )
+    assert assign < lines.index(".include <bsd.port.mk>")
+
+
+def test_unconditional_include_after_a_closed_if_still_moves(
+    tmp_path: Path,
+) -> None:
+    """Depth tracking must not be one-way: an `.if/.endif` earlier in the
+    file leaves depth back at 0, so a later top-level include still counts."""
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(
+        "OPTIONS_DEFINE= A\n"
+        ".if ${ARCH} == amd64\n"
+        "CFLAGS+= -m64\n"
+        ".endif\n"
+        ".include <bsd.port.options.mk>\n"
+        ".include <bsd.port.mk>\n"
+    )
+
+    assert _apply(tmp_path, [_eval_op("OPTIONS_DEFINE", "${OPTIONS_DEFINE} B")]).ok
+
+    lines = makefile.read_text().splitlines()
+    assert (lines.index("OPTIONS_DEFINE:= ${OPTIONS_DEFINE} B")
+            < lines.index(".include <bsd.port.options.mk>"))
+
+
 # --- what must NOT change ---------------------------------------------------
 
 

@@ -15,6 +15,7 @@ from dportsv3.engine.apply_common import (
 from dportsv3.engine.fsops import FileTransaction
 from dportsv3.engine.makefile_cst import (
     DirectiveElifNode,
+    DirectiveEndifNode,
     DirectiveIfNode,
     IncludeNode,
     TargetNode,
@@ -55,15 +56,33 @@ _OPTIONS_COMPUTING_INCLUDES = ("bsd.port.options.mk", "bsd.port.pre.mk")
 
 
 def _first_options_include_line(document) -> int | None:
-    """Line of the first include that computes options, or None.
+    """Line of the first *unconditional* include that computes options.
 
-    None means the port is *terminal-only* — its only framework include
-    is the trailing ``bsd.port.mk`` — and appending at the end is both
-    correct and what has always happened.
+    None means there is nothing to insert before: either the port is
+    *terminal-only* — its only framework include is the trailing
+    ``bsd.port.mk`` — or every options include it has sits inside a
+    conditional.
+
+    Conditional ones are skipped deliberately. Inserting immediately
+    before an include nested in an ``.if`` would put the assignment
+    inside that block, so it would apply only when the condition held —
+    a different bug from the one being fixed, and just as quiet.
+    Measured across the composed 2026Q3 tree: 2,523 of 2,539 ports with
+    an options include have it at top level, 16 do not, and none of
+    those 16 carries an ``mk eval OPTIONS*`` overlay. So this costs
+    nothing today and keeps the change from ever making a port worse
+    than it already is — those 16 stay as poly-cpd found them.
     """
+    depth = 0
     for node in document.nodes:
-        if isinstance(node, IncludeNode) and any(
-            name in node.include for name in _OPTIONS_COMPUTING_INCLUDES
+        if isinstance(node, DirectiveIfNode):
+            depth += 1
+        elif isinstance(node, DirectiveEndifNode):
+            depth = max(0, depth - 1)
+        elif (
+            depth == 0
+            and isinstance(node, IncludeNode)
+            and any(n in node.include for n in _OPTIONS_COMPUTING_INCLUDES)
         ):
             return node.span.line_start
     return None
@@ -254,8 +273,12 @@ def exec_mk_var_shell(
     # and assigns its output — distinct from both `mk set` (`=`, recursive)
     # and `mk eval` (`:=`, immediate make-expansion, no shell). The op TYPE
     # declares the intent; the executor renders the value verbatim and never
-    # rewrites the upstream line. Placement mirrors `mk eval` (before the last
-    # include), the faithful spot for a Makefile.DragonFly-injected assignment.
+    # rewrites the upstream line. Placement is before the last include, the
+    # faithful spot for a Makefile.DragonFly-injected assignment. This no
+    # longer mirrors `mk eval`, which moves an OPTIONS_* name ahead of the
+    # options include (poly-cpd); a `!=` assigning an OPTIONS_* variable
+    # would want the same treatment, but no overlay does that today and an
+    # untested path is worse than a documented gap.
     name = op.payload.get("name")
     value = op.payload.get("value")
     if not isinstance(name, str) or not isinstance(value, str):
