@@ -4021,13 +4021,29 @@ def _write_patch_audit_harness(
     # characters of mid-reasoning as its report. Say so instead of
     # dressing it up (poly-qkp).
     if not getattr(result, "report_complete", True):
-        text = (
-            "> **Incomplete — no final report.** The attempt ended on the "
-            "turn or token cap before the agent wrote one. What follows is "
-            "the commentary that accompanied its last tool call, kept "
-            "because it is the only account of where the attempt had got "
-            "to. It is not a conclusion.\n\n"
-        ) + text
+        # The fragment is often empty: a budget stop that lands after the
+        # LLM turn but before tool dispatch leaves a response whose text
+        # is "" because the model was mid-tool-call. Promising commentary
+        # and then showing none reads like a truncation bug, so say which
+        # case this is.
+        if text.strip():
+            note = (
+                "> **Incomplete — no final report.** The attempt ended on "
+                "the turn or token cap before the agent wrote one. What "
+                "follows is the commentary that accompanied its last tool "
+                "call, kept because it is the only account of where the "
+                "attempt had got to. It is not a conclusion."
+            )
+        else:
+            note = (
+                "> **Incomplete — no final report, and nothing to show.** "
+                "The attempt ended on the turn or token cap while the "
+                "agent was mid-tool-call, so it left no closing text at "
+                "all. See `analysis/tool_trace.jsonl` for what it had "
+                "done by then."
+            )
+            text = ""
+        text = note + "\n\n" + text
     md_bytes = text.encode("utf-8")
     if bundle_id:
         artifact_store_put(bundle_id, "analysis/patch.md", md_bytes, "text")

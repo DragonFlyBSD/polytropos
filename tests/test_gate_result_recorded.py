@@ -263,6 +263,34 @@ def test_proof_artifact_carries_gate_and_report_is_marked(tmp_path,
     assert "The picture is getting clearer" in md
 
 
+def test_incomplete_with_no_text_says_so(tmp_path, monkeypatch):
+    """A budget stop landing after the LLM turn but before tool dispatch
+    leaves final_text empty. The marker must not promise commentary it
+    then fails to show — security_trousers-20260902-134121Z rendered as a
+    header followed by nothing."""
+    from dportsv3.agent import runner
+    from dportsv3.agent.attempt_loop import AttemptInfo, PatchResult
+
+    result = PatchResult(
+        status="budget-exhausted",
+        final_text="",
+        attempts=[AttemptInfo(attempt=1, tokens=10, rebuild_ok=False)],
+        proof=None,
+        report_complete=False,
+    )
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "analysis").mkdir(parents=True)
+    monkeypatch.setattr(runner, "artifact_store_put", lambda *a, **kw: None)
+
+    runner._write_patch_audit_harness(bundle_dir, None, result,
+                                      "test/model", "devel/foo")
+
+    md = (bundle_dir / "analysis" / "patch.md").read_text()
+    assert "nothing to show" in md
+    assert "What follows" not in md
+    assert "tool_trace.jsonl" in md
+
+
 def test_complete_report_is_untouched(tmp_path, monkeypatch):
     """No marker, and no gate_ok key, when there is nothing to say."""
     from dportsv3.agent import runner
