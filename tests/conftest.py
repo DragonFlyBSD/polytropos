@@ -2,7 +2,39 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_dir_search(monkeypatch):
+    """Keep the host's real config out of the suite.
+
+    Same hazard as ``_isolate_env_resolver`` below, one layer over:
+    poly-mrl gave ``paths.config_dir`` a filesystem search underneath
+    ``$DPORTSV3_CONFIG_DIR`` — ``<bindir>/../etc/polytropos``, then
+    ``/usr/local/etc/polytropos``. Without this, any test that unsets
+    that variable reads whatever the machine happens to have: green on a
+    laptop with no ``/usr/local/etc/polytropos``, different on the build
+    host that has one, and the difference shows up as an unrelated
+    assertion failing.
+
+    Only ``argv[0]`` is replaced — ``cli.py`` reads ``argv[1:]``. Tests
+    that exercise the search set both of these to what they need, and
+    win because they run after this.
+    """
+    from dportsv3 import paths
+    monkeypatch.setattr(
+        paths, "DEFAULT_CONFIG_DIR",
+        Path("/nonexistent/polytropos-test-isolation/etc/polytropos"),
+    )
+    monkeypatch.setattr(
+        sys, "argv",
+        ["/nonexistent/polytropos-test-isolation/bin/dportsv3",
+         *sys.argv[1:]],
+    )
 
 
 @pytest.fixture(autouse=True)

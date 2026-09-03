@@ -161,3 +161,21 @@ def test_wrapper_claim_decision(tmp_path, contents, claimed):
     out = subprocess.run(["sh", "-c", script], capture_output=True,
                          text=True, env={"PATH": "/bin:/usr/bin"}).stdout
     assert out.strip() == ("CLAIMED" if claimed else "UNCLAIMED")
+
+
+def test_the_suite_cannot_read_the_hosts_real_config(monkeypatch, tmp_path):
+    """Regression on the isolation itself, not on config_dir.
+
+    The search added here reads the filesystem, so an unset variable
+    stopped meaning "no config dir" and started meaning "whatever this
+    machine has in /usr/local/etc/polytropos". conftest neutralises both
+    fallbacks for every test; this proves it, by standing a real
+    directory up where the derivation would look and showing it is still
+    not picked up.
+    """
+    prefix = tmp_path / "usr" / "local"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "etc" / "polytropos").mkdir(parents=True)
+    # No argv/DEFAULT_CONFIG_DIR patching here on purpose: only the
+    # autouse isolation is in effect, so nothing may be found.
+    assert paths.config_dir() is None
