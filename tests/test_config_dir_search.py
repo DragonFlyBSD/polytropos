@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from dports_dev_env import confschema
+
 from dportsv3 import paths
 
 
@@ -29,7 +31,7 @@ def test_the_explicit_variable_still_wins(monkeypatch, tmp_path):
     """A checkout must keep behaving exactly as before: bin/dportsv3
     sets this, and nothing below may override it."""
     monkeypatch.setenv("DPORTSV3_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
     assert paths.config_dir() == tmp_path
 
 
@@ -49,8 +51,8 @@ def test_it_finds_the_config_beside_the_installed_entry_point(
     prefix = tmp_path / "opt" / "pkg"
     (prefix / "bin").mkdir(parents=True)
     (prefix / "etc" / "polytropos").mkdir(parents=True)
-    monkeypatch.setattr(paths.sys, "argv", [str(prefix / "bin" / "dportsv3")])
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
+    monkeypatch.setattr(confschema.sys, "argv", [str(prefix / "bin" / "dportsv3")])
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
 
     assert paths.config_dir() == prefix / "etc" / "polytropos"
 
@@ -72,8 +74,8 @@ def test_the_entry_point_symlink_is_not_resolved(monkeypatch, tmp_path):
     # The wrong answer, made to exist so the test fails loudly if the
     # symlink is ever followed.
     (prefix / "lib" / "polytropos" / "etc" / "polytropos").mkdir(parents=True)
-    monkeypatch.setattr(paths.sys, "argv", [str(link)])
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
+    monkeypatch.setattr(confschema.sys, "argv", [str(link)])
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
 
     assert paths.config_dir() == prefix / "etc" / "polytropos"
 
@@ -81,8 +83,8 @@ def test_the_entry_point_symlink_is_not_resolved(monkeypatch, tmp_path):
 def test_it_falls_back_to_the_documented_default(monkeypatch, tmp_path):
     default = tmp_path / "usr" / "local" / "etc" / "polytropos"
     default.mkdir(parents=True)
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", default)
-    monkeypatch.setattr(paths.sys, "argv", [str(tmp_path / "nowhere" / "x")])
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", default)
+    monkeypatch.setattr(confschema.sys, "argv", [str(tmp_path / "nowhere" / "x")])
 
     assert paths.config_dir() == default
 
@@ -93,22 +95,22 @@ def test_a_derivation_that_misses_falls_through_rather_than_inventing(
     """Running from a source tree, or `python -m`, derives a directory
     that is not there. Naming it would be worse than admitting there is
     no config dir: every setting has a default already."""
-    monkeypatch.setattr(paths.sys, "argv", [str(tmp_path / "src" / "run.py")])
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
+    monkeypatch.setattr(confschema.sys, "argv", [str(tmp_path / "src" / "run.py")])
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
 
     assert paths.config_dir() is None
 
 
 def test_an_empty_argv0_is_survivable(monkeypatch, tmp_path):
-    monkeypatch.setattr(paths.sys, "argv", [""])
-    monkeypatch.setattr(paths, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
+    monkeypatch.setattr(confschema.sys, "argv", [""])
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", tmp_path / "unused")
     assert paths.config_dir() is None
 
 
 def test_the_derived_path_is_prefix_relative_not_hardcoded():
     """The point of deriving: /usr/local is a ports-level choice, so the
     answer has to move with the binary."""
-    assert str(paths._CONFIG_DIR_FROM_BINDIR) == "../etc/polytropos"
+    assert str(confschema._CONFIG_DIR_FROM_BINDIR) == "../etc/polytropos"
 
 
 # --- the wrapper must not claim an empty config/ ----------------------
@@ -179,3 +181,51 @@ def test_the_suite_cannot_read_the_hosts_real_config(monkeypatch, tmp_path):
     # No argv/DEFAULT_CONFIG_DIR patching here on purpose: only the
     # autouse isolation is in effect, so nothing may be found.
     assert paths.config_dir() is None
+
+
+# --- the dev-env reads the same file the same way ---------------------
+
+def test_dev_env_finds_the_config_where_the_generator_does(
+    monkeypatch, tmp_path,
+):
+    """The miss that made the first fix useless to the operator who
+    reported it.
+
+    config_dir() was fixed in dportsv3.paths, but dev_env.settings_path
+    read $DPORTSV3_CONFIG_DIR directly and could not call it — dportsv3
+    imports dports_dev_env and nothing imports back. So a [dev_env]
+    setting in /usr/local/etc/polytropos stayed at its default while the
+    generator's settings in the very same file were honoured, and
+    `dev-env list` went on using /root/.cache/dports-dev.
+    """
+    import tomli_w
+    from dports_dev_env import config as dev_env_config
+
+    etc = tmp_path / "usr" / "local" / "etc" / "polytropos"
+    etc.mkdir(parents=True)
+    (etc / "polytropos.toml").write_bytes(tomli_w.dumps(
+        {"dev_env": {"cache_root": "/build/dports-dev-envs"}}
+    ).encode())
+
+    monkeypatch.delenv("DPORTSV3_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(confschema, "DEFAULT_CONFIG_DIR", etc)
+    dev_env_config.reset_schema()
+    try:
+        assert dev_env_config.settings_path() == etc / "polytropos.toml"
+        cfg = dev_env_config.load_config()
+        assert cfg.cache_root == Path("/build/dports-dev-envs")
+        # and everything derived from it moved too
+        assert cfg.envs_dir == Path("/build/dports-dev-envs/envs")
+    finally:
+        dev_env_config.reset_schema()
+
+
+def test_both_packages_share_one_resolver():
+    """Two copies of the search would let a [dev_env] setting and a
+    generator setting disagree about which file is live — which is the
+    bug, restated."""
+    from dports_dev_env import config as dev_env_config
+    import inspect
+    assert "confschema.config_dir()" in inspect.getsource(
+        dev_env_config.settings_path)
+    assert "confschema.config_dir()" in inspect.getsource(paths.config_dir)

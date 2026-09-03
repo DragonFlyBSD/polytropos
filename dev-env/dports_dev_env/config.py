@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import confschema
 from .confschema import Schema, Setting
 from .errors import ConfigError
 from .runtime_profiles import RuntimeProfile, load_runtime_profile
@@ -103,14 +104,21 @@ _schema_path: Path | None = None
 
 
 def settings_path() -> Path | None:
-    """The shared settings file, via ``$DPORTSV3_CONFIG_DIR``.
+    """The shared settings file, found the same way the generator finds
+    it — ``$DPORTSV3_CONFIG_DIR`` first, then the conventional locations.
 
-    The same variable the generator uses, because it is the same file.
-    This package still owns only its own table, so nothing here has to
-    know what else is in there.
+    The same file, so it has to be the same search. This used to read the
+    variable directly, which meant a ``[dev_env]`` setting in
+    ``/usr/local/etc/polytropos/polytropos.toml`` was ignored while the
+    generator's settings in the very same file were honoured (poly-mrl):
+    ``dev_env.cache_root`` silently stayed at its default and the envs
+    went on being built under ``/root/.cache/dports-dev``.
+
+    This package still owns only its own table; ``confschema.config_dir``
+    knows where the file is and nothing about what is in it.
     """
-    raw = os.environ.get("DPORTSV3_CONFIG_DIR", "").strip()
-    return Path(raw) / "polytropos.toml" if raw else None
+    directory = confschema.config_dir()
+    return directory / "polytropos.toml" if directory is not None else None
 
 
 def schema() -> Schema:

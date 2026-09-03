@@ -32,6 +32,7 @@ it overrides, which is also where the reader will find it.
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,6 +160,81 @@ def _dig(data: dict, path: str) -> Any:
             return _MISSING
         node = node[part]
     return node
+
+
+#: Last-resort config directory, for an install whose entry point tells
+#: us nothing. A documented default rather than the mechanism — the
+#: derivation below is what actually follows a non-default LOCALBASE.
+DEFAULT_CONFIG_DIR = Path("/usr/local/etc/polytropos")
+
+#: Where the config dir sits relative to the directory holding the
+#: installed entry point: ``<prefix>/bin/dportsv3`` -> ``<prefix>/etc/
+#: polytropos``.
+_CONFIG_DIR_FROM_BINDIR = Path("..") / "etc" / "polytropos"
+
+
+def _config_dir_beside_entry_point() -> Path | None:
+    """``<prefix>/etc/polytropos``, derived from where the running entry
+    point lives, or None when that yields nothing usable.
+
+    This is the one derivation that follows LOCALBASE without being
+    told: a port built with ``PREFIX=/opt/pkg`` installs the binary at
+    ``/opt/pkg/bin/dportsv3``, so the answer moves with it and there is
+    nothing for an operator to keep in sync. Supervisor resolves its own
+    config the same way, and lists the absolute path last.
+
+    ``argv[0]`` is deliberately NOT resolved. ``deploy`` links
+    ``<prefix>/bin/dportsv3`` at ``<prefix>/lib/polytropos/bin/dportsv3``,
+    so following the symlink lands in the venv and derives the wrong
+    prefix. The unresolved parent is the whole point.
+
+    Yes, this walks upward, which is the shape the module docstring
+    forbids. The distinction: it walks from the *installed entry point*,
+    a location the packaging system controls, not from ``__file__``
+    inside site-packages guessing at a surrounding repository — which is
+    the walk that broke when this tool moved out of DeltaPorts. The
+    result is used only if it exists, so a bad guess costs nothing.
+    """
+    argv0 = (sys.argv[0] or "").strip()
+    if not argv0:
+        return None
+    try:
+        # abspath normalises without resolving symlinks; see above.
+        bindir = Path(os.path.abspath(argv0)).parent
+    except (OSError, ValueError):
+        return None
+    return Path(os.path.normpath(bindir / _CONFIG_DIR_FROM_BINDIR))
+
+
+def config_dir() -> Path | None:
+    """The operator's live config directory, or None when nothing has one.
+
+    An ordered search, first match wins, which is what every comparable
+    tool does and what this used to lack: ``$DPORTSV3_CONFIG_DIR`` was
+    the only entry, so an unset variable meant "no config exists"
+    anywhere rather than "look in the usual places", and a file sitting
+    in the conventional location was read by nobody and warned about by
+    nothing.
+
+    1. ``$DPORTSV3_CONFIG_DIR`` — explicit, and still wins. ``bin/
+       dportsv3`` sets it to the checkout's ``config/``, so a checkout
+       keeps behaving exactly as before.
+    2. ``<prefix>/etc/polytropos`` beside the installed entry point.
+    3. ``/usr/local/etc/polytropos``, the documented default.
+    4. None — every setting then uses its table default.
+
+    2 and 3 must exist to be chosen: a derivation that misses (running
+    from a source tree, ``python -m``) falls through instead of naming a
+    directory that isn't there.
+    """
+    raw = os.environ.get("DPORTSV3_CONFIG_DIR", "").strip()
+    if raw:
+        return Path(raw)
+    derived = _config_dir_beside_entry_point()
+    for candidate in (derived, DEFAULT_CONFIG_DIR):
+        if candidate is not None and candidate.is_dir():
+            return candidate
+    return None
 
 
 class Schema:

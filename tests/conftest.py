@@ -25,9 +25,9 @@ def _isolate_config_dir_search(monkeypatch):
     that exercise the search set both of these to what they need, and
     win because they run after this.
     """
-    from dportsv3 import paths
+    from dports_dev_env import confschema
     monkeypatch.setattr(
-        paths, "DEFAULT_CONFIG_DIR",
+        confschema, "DEFAULT_CONFIG_DIR",
         Path("/nonexistent/polytropos-test-isolation/etc/polytropos"),
     )
     monkeypatch.setattr(
