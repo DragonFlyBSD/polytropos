@@ -297,10 +297,18 @@ def _cache_meta(model: str) -> dict:
     and so do different ports up to their first divergence.
 
     Retention is documented as a hint, not a guarantee ("the server may
-    evict entries early under load"), so this is opportunistic. Measured
-    survival with the key held flat at 98.9% for at least 20 minutes,
-    against an unkeyed control that missed every single time — attempts
-    are 1-5 minutes apart, so the gap that matters is covered severalfold.
+    evict entries early under load"), and measurement bears that out.
+    Probed at 1, 2, 5, 10, 20 and 30 minutes: 98.9% hit through 20
+    minutes, then gone at 30 — with an unkeyed control that missed every
+    single time. Not a TTL, though: the 10→20m gap was ten minutes and
+    hit, the 20→30m gap was ten minutes and missed. It is eviction under
+    pressure, so treat a hit as opportunistic and never build anything
+    that needs one.
+
+    What it does cover is the case this exists for: attempts within a
+    bundle are 1-5 minutes apart, well inside where the cache held. Reuse
+    across a longer gap — a later batch, the next session — should be
+    assumed absent.
 
     Sent through ``extra_body`` because the SDK on this platform (1.70.0)
     predates both parameters and rejects them as keyword arguments. That
