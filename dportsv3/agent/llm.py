@@ -250,41 +250,6 @@ def _reasoning_meta(value: str, off: bool) -> dict:
     return {"reasoning_effort": _META_EFFORT.get(value, value)}
 
 
-#: How each provider spells CROSS-REQUEST prompt caching. Absent means
-#: "nothing to send": DeepSeek caches automatically with no knob at all
-#: (prefix-only from token 0, 64-token chunks), so an unknown field
-#: there would be the same 400 _reasoning_meta exists to avoid.
-_CACHE_DIALECTS: dict = {}
-
-
-def _cache_kwargs(provider: str, model: str) -> dict:
-    """Provider knobs for reaching the prompt cache across requests.
-
-    Caching is documented as automatic and prefix-based, which reads as
-    "nothing to do". Measured, it is not: the cache is KV state on one
-    backend, and without ``prompt_cache_key`` a request is balanced onto
-    an arbitrary machine whose cache has never seen our prefix. Same
-    prefix, diverging tails, five requests —
-
-        cold, WITH key                 cached=0
-        diverging, WITH key            cached=7537
-        diverging, NO key              cached=0     <- prefix existed
-        diverging, WITH key again      cached=7537  <- proof it existed
-        diverging, DIFFERENT key       cached=0
-
-    So the key has to be on every request that wants the cache, not only
-    the one that populates it (poly-2w6).
-
-    Worth more than the price break: the tier budget counts
-    ``billable = raw - cached``, so a cached prefix is nearly free
-    against the BUDGET. Cold-start size predicted budget exhaustion
-    almost exactly across eleven ports — the three largest all exhausted,
-    six of the seven smallest were all fixed.
-    """
-    dialect = _CACHE_DIALECTS.get(provider)
-    return dialect(model) if dialect else {}
-
-
 def _cache_meta(model: str) -> dict:
     """Meta groups requests by ``prompt_cache_key`` so they route to a
     backend already holding their prefix, and takes a retention hint.
@@ -321,7 +286,39 @@ def _cache_meta(model: str) -> dict:
     }}
 
 
-_CACHE_DIALECTS["meta"] = _cache_meta
+#: How each provider spells CROSS-REQUEST prompt caching. Absent means
+#: "nothing to send": DeepSeek caches automatically with no knob at all
+#: (prefix-only from token 0, 64-token chunks), so an unknown field
+#: there would be the same 400 _reasoning_meta exists to avoid.
+_CACHE_DIALECTS = {"meta": _cache_meta}
+
+
+def _cache_kwargs(provider: str, model: str) -> dict:
+    """Provider knobs for reaching the prompt cache across requests.
+
+    Caching is documented as automatic and prefix-based, which reads as
+    "nothing to do". Measured, it is not: the cache is KV state on one
+    backend, and without ``prompt_cache_key`` a request is balanced onto
+    an arbitrary machine whose cache has never seen our prefix. Same
+    prefix, diverging tails, five requests —
+
+        cold, WITH key                 cached=0
+        diverging, WITH key            cached=7537
+        diverging, NO key              cached=0     <- prefix existed
+        diverging, WITH key again      cached=7537  <- proof it existed
+        diverging, DIFFERENT key       cached=0
+
+    So the key has to be on every request that wants the cache, not only
+    the one that populates it (poly-2w6).
+
+    Worth more than the price break: the tier budget counts
+    ``billable = raw - cached``, so a cached prefix is nearly free
+    against the BUDGET. Cold-start size predicted budget exhaustion
+    almost exactly across eleven ports — the three largest all exhausted,
+    six of the seven smallest were all fixed.
+    """
+    dialect = _CACHE_DIALECTS.get(provider)
+    return dialect(model) if dialect else {}
 
 
 def _merge_call_kwargs(kwargs: dict, extra: dict) -> None:
