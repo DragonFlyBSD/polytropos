@@ -79,6 +79,16 @@ class TriageResult:
     tokens_total: int
     model: str
     schema_version: int = _SCHEMA_VERSION
+    #: ``tokens_total`` re-counts the cached prefix on every turn, so it
+    #: is not the cost -- measured 7-21x higher on real jobs.
+    #: ``tokens_billable`` is uncached prompt + completion, which is what
+    #: the budget counts and what a reader printing one number wants
+    #: (poly-0g0). Defaulted rather than schema-bumped on purpose: a bump
+    #: makes every existing artifact raise PhaseResultVersionMismatch,
+    #: and load_phase_result already fills missing keys from the
+    #: defaults and filters unknown ones.
+    tokens_cached: int = 0
+    tokens_billable: int = 0
 
 
 @dataclass(frozen=True)
@@ -119,6 +129,9 @@ class PatchResult:
     tokens_completion: int
     tokens_total: int
     schema_version: int = 1
+    #: See TriageResult: total is provider traffic, billable is cost.
+    tokens_cached: int = 0
+    tokens_billable: int = 0
 
 
 _T = TypeVar("_T")

@@ -424,9 +424,17 @@
     const consulted = (data.artifacts_included || []).length
       ? (' · consulted: ' + data.artifacts_included.join(', '))
       : '';
-    statusEl.textContent = (u.total_tokens
-      ? ('last turn: ' + u.total_tokens.toLocaleString() + ' tokens')
-      : '') + consulted;
+    // Billable, not total: total re-counts the cached prefix and runs
+    // several times higher, and an unlabelled number invites the reader
+    // to treat it as the cost (poly-0g0). Older replies send no
+    // cached_tokens, in which case billable degrades to total.
+    const billable = u.billable_tokens;
+    statusEl.textContent = (billable !== undefined && billable !== null
+      ? ('last turn: ' + billable.toLocaleString() + ' billable tokens')
+      : (u.total_tokens
+         ? ('last turn: ' + u.total_tokens.toLocaleString()
+            + ' tokens, incl. re-billed cache')
+         : '')) + consulted;
     sendBtn.disabled = false; inputEl.disabled = false; inputEl.focus();
   }
 

@@ -105,7 +105,7 @@
       <summary>
         <strong>{{ g.label }}</strong>
         {% if g.outcome %}<span class="stat-pill {{ g.outcome_cls }}">{{ g.outcome }}</span>{% endif %}
-        <span class="muted">{{ g.rows|length }} events{% if g.tokens %} · {{ '{:,}'.format(g.tokens) }} tokens{% endif %}{% if g.n_tools %} · {{ g.n_tools }} tool call{{ 's' if g.n_tools != 1 else '' }}{% endif %}</span>
+        <span class="muted">{{ g.rows|length }} events{% if g.tokens %} · {{ '{:,}'.format(g.tokens) }} billable tokens{% endif %}{% if g.n_tools %} · {{ g.n_tools }} tool call{{ 's' if g.n_tools != 1 else '' }}{% endif %}</span>
       </summary>
       <table class="tracker-table activity-table">
         <thead>

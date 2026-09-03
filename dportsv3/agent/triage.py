@@ -136,7 +136,14 @@ def run(
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
                     "total_tokens": response.usage.total_tokens,
+                    # Without these, triage reports a 0% cache hit
+                    # whatever the provider did, and every reader that
+                    # derives cost from prompt+completion over-reports
+                    # it. tool_loop emits the same pair (poly-0g0).
+                    "cached_tokens": response.usage.cached_tokens,
+                    "billable_tokens": response.usage.billable_tokens,
                     "cumulative_total_tokens": total_usage.total_tokens,
+                    "cumulative_billable_tokens": total_usage.billable_tokens,
                 })
             except Exception:
                 pass  # callback must never break the loop

@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from dportsv3.agent.attempt_loop import AttemptInfo
 from dportsv3.agent.phase_result import (
     PatchResult,
     TriageResult,
@@ -41,11 +42,17 @@ def disk_bundle(tmp_path):
     return tmp_path
 
 
-def _usage(prompt: int = 0, completion: int = 0, total: int = 0) -> Any:
-    return SimpleNamespace(
+def _usage(prompt: int = 0, completion: int = 0, total: int = 0,
+           cached: int = 0) -> Any:
+    """The real Usage, not a namespace: a hand-rolled double drifts the
+    moment a field is added, and billable_tokens is derived rather than
+    stored, so a stub has to reimplement it to stay honest."""
+    from dportsv3.agent.llm import Usage
+    return Usage(
         prompt_tokens=prompt,
         completion_tokens=completion,
         total_tokens=total,
+        cached_tokens=cached,
     )
 
 
@@ -121,9 +128,14 @@ def test_patch_producer_writes_typed_result(disk_bundle):
             '{"rebuild_ok": true, "origin": "devel/foo"}\n```\n'
         ),
         usage=_usage(prompt=120_000, completion=8_000, total=128_000),
+        # Real AttemptInfo for the same reason _usage builds a real
+        # Usage: a namespace double silently drops fields the producer
+        # reads.
         attempts=[
-            SimpleNamespace(attempt=1, tokens=64_000, rebuild_ok=False),
-            SimpleNamespace(attempt=2, tokens=64_000, rebuild_ok=True),
+            AttemptInfo(attempt=1, tokens=64_000, billable_tokens=32_000,
+                        rebuild_ok=False),
+            AttemptInfo(attempt=2, tokens=64_000, billable_tokens=8_000,
+                        rebuild_ok=True),
         ],
         proof={"rebuild_ok": True, "origin": "devel/foo"},
     )

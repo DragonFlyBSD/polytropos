@@ -340,9 +340,11 @@ def _build_cumulative_token_map(
 
     The runner emits one ``llm_turn`` per assistant message; events
     carry ``prompt_tokens``, ``completion_tokens``, ``total_tokens``,
-    and the runner-summed ``cumulative_total_tokens``. Returning a
-    dict keyed on the 1-indexed turn number lets the session viewer
-    surface "where did the budget bleed?" without re-summing.
+    and the runner-summed ``cumulative_total_tokens`` /
+    ``cumulative_billable_tokens``. Returning a dict keyed on the
+    1-indexed turn number lets the session viewer surface "where did the
+    budget bleed?" without re-summing -- and the budget bleeds in
+    BILLABLE, which is the running total the viewer shows (poly-0g0).
 
     ``attempt=None`` returns an empty map — without an attempt number
     parsed from the session filename we can't filter unambiguously.
@@ -364,6 +366,13 @@ def _build_cumulative_token_map(
             "total_tokens": int(ev.get("total_tokens") or 0),
             "cumulative_total_tokens": int(
                 ev.get("cumulative_total_tokens") or 0
+            ),
+            # Traces recorded before this field fall back to the total,
+            # which is what the viewer showed for all of them anyway.
+            "cumulative_billable_tokens": int(
+                ev.get("cumulative_billable_tokens")
+                if ev.get("cumulative_billable_tokens") is not None
+                else (ev.get("cumulative_total_tokens") or 0)
             ),
         }
     return out
@@ -419,6 +428,9 @@ def session_view_data(
                 if tokens:
                     it["cumulative_total_tokens"] = (
                         tokens["cumulative_total_tokens"]
+                    )
+                    it["cumulative_billable_tokens"] = (
+                        tokens["cumulative_billable_tokens"]
                     )
                     it["prompt_tokens"] = tokens["prompt_tokens"]
     # Aggregate metrics for the top-of-page header.

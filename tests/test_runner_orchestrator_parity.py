@@ -42,6 +42,7 @@ class _StubAttempt:
     attempt: int = 1
     tokens: int = 1000
     rebuild_ok: bool = True
+    billable_tokens: int = 100
 
 
 @dataclass

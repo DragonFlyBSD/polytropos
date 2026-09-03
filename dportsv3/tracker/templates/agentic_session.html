@@ -164,9 +164,9 @@
               <div class="turn-header">
                 <span class="turn-role-pill pill-assistant">assistant</span>
                 <span class="turn-id">turn {{ item.turn }}</span>
-                {% if item.cumulative_total_tokens is defined %}
-                  <span class="turn-byte-badge" title="cumulative tokens through this turn">
-                    Σ {{ '{:,}'.format(item.cumulative_total_tokens) }} tok
+                {% if item.cumulative_billable_tokens is defined %}
+                  <span class="turn-byte-badge" title="cumulative billable (uncached) tokens through this turn — the real running cost">
+                    Σ {{ '{:,}'.format(item.cumulative_billable_tokens) }} tok
                   </span>
                 {% endif %}
                 {% if item.prompt_tokens is defined and item.prompt_tokens %}
@@ -279,9 +279,9 @@
                 {{ item.tool_calls[0].name }}{% if item.tool_calls | length > 1 %}+{{ item.tool_calls | length - 1 }}{% endif %}
               </span>
             {% endif %}
-            {% if item.cumulative_total_tokens is defined %}
-              <span class="toc-bytes" title="cumulative tokens">
-                Σ{{ '{:,}'.format(item.cumulative_total_tokens) }}
+            {% if item.cumulative_billable_tokens is defined %}
+              <span class="toc-bytes" title="cumulative billable tokens">
+                Σ{{ '{:,}'.format(item.cumulative_billable_tokens) }}
               </span>
             {% else %}
               <span class="toc-bytes">{{ '{:,}'.format(item.reasoning_bytes) }}B</span>

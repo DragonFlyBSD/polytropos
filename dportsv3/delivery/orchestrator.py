@@ -432,6 +432,7 @@ def format_pr_body(
     model: str | None,
     attempts: int | None,
     tokens: int | None,
+    tokens_kind: str | None = None,
     verified_at: str | None,
     diff_text: str | None = None,
     patch_summary: str | None = None,
@@ -543,7 +544,15 @@ def format_pr_body(
     if attempts is not None:
         agent_parts.append(f"attempts={attempts}")
     if tokens is not None:
-        agent_parts.append(f"tokens={tokens}")
+        # Say WHICH token count this is. The provider total re-counts the
+        # cached prefix every turn and runs 7-21x the real cost, so an
+        # unqualified "tokens=1852319" on a job that cost 86,141 is
+        # published misinformation (poly-0g0).
+        qualifier = {
+            "billable": " billable",
+            "total": " total, incl. re-billed cache",
+        }.get(tokens_kind or "", "")
+        agent_parts.append(f"tokens={tokens}{qualifier}")
     if agent_parts:
         prov.append("- Agent: " + " ".join(agent_parts))
     sections.append("## Provenance\n\n" + "\n".join(prov))
@@ -562,6 +571,7 @@ def deliver(
     model: str | None,
     attempts: int | None,
     tokens: int | None,
+    tokens_kind: str | None = None,
     write_conn: sqlite3.Connection,
 ) -> DeliveryOutcome:
     """Orchestrate one delivery against the configured provider.
@@ -603,6 +613,7 @@ def deliver(
     body = format_pr_body(
         origin=origin, target=target, operator=operator,
         model=model, attempts=attempts, tokens=tokens,
+        tokens_kind=tokens_kind,
         verified_at=bundle.get("verification_at"),
         diff_text=diff_text,
         patch_summary=patch_summary,

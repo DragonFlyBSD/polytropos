@@ -32,7 +32,11 @@ def group_activity_by_attempt(
     - ``kind``   — "attempt" or "setup".
     - ``outcome``/``outcome_cls`` — from the attempt_end ``rebuild_ok``
       (passed→built, failed→failed); None when the attempt has no end.
-    - ``tokens`` — sum of llm_turn total_tokens in the group.
+    - ``tokens`` — sum of llm_turn BILLABLE tokens in the group: the
+      group header sits directly above a table whose own column is
+      "Cum (billable)", and summing the provider total there made the
+      same attempt read 19x apart on one screen (poly-0g0). Rows that
+      predate the field fall back to their total.
     - ``open``   — the last group defaults open (the most recent / relevant);
       every header shows its outcome so the operator can open the others.
     """
@@ -59,8 +63,12 @@ def group_activity_by_attempt(
             cur = _new("setup", "Triage / setup")
 
         cur["rows"].append(a)
-        if stage == "llm_turn":
-            cur["tokens"] += extra.get("total_tokens") or 0
+        if stage.endswith("llm_turn"):
+            billable = extra.get("billable_tokens")
+            cur["tokens"] += (
+                billable if billable is not None
+                else (extra.get("total_tokens") or 0)
+            )
         elif stage.startswith("tool:"):
             cur["n_tools"] += 1
         elif stage == "attempt_end":

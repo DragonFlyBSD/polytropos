@@ -1138,11 +1138,31 @@ def test_build_cumulative_token_map_filters_by_attempt() -> None:
     assert m1 == {1: {
         "prompt_tokens": 100, "completion_tokens": 10,
         "total_tokens": 110, "cumulative_total_tokens": 110,
+        # No cumulative_billable_tokens on these events, so it falls
+        # back to the total — what the viewer showed for every row
+        # before the field existed (poly-0g0).
+        "cumulative_billable_tokens": 110,
     }}
     m2 = _build_cumulative_token_map(trace, attempt=2)
     assert m2[1]["cumulative_total_tokens"] == 220
     # No attempt → empty map (can't unambiguously filter).
     assert _build_cumulative_token_map(trace, attempt=None) == {}
+
+
+def test_cumulative_token_map_prefers_billable_when_present() -> None:
+    """The session view's running total is the one the budget gate
+    enforces on, so a trace carrying billable must not be shown the
+    re-billed total (poly-0g0)."""
+    from dportsv3.tracker.render.sessions import _build_cumulative_token_map
+    trace = [
+        {"type": "llm_turn", "attempt": 1, "turn": 1,
+         "prompt_tokens": 34000, "completion_tokens": 200,
+         "total_tokens": 34200, "cumulative_total_tokens": 68000,
+         "cumulative_billable_tokens": 3400},
+    ]
+    m = _build_cumulative_token_map(trace, attempt=1)
+    assert m[1]["cumulative_billable_tokens"] == 3400
+    assert m[1]["cumulative_total_tokens"] == 68000
 
 
 def test_session_view_tool_call_anchors(client: TestClient) -> None:

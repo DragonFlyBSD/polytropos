@@ -732,12 +732,22 @@ class PriorAttemptsSection:
                 lines.append(f"- {key}: {data[key]}")
         usage = data.get("tokens_used")
         if isinstance(usage, dict):
-            lines.append(
-                "- tokens: "
-                f"prompt={usage.get('prompt', 0)} "
-                f"completion={usage.get('completion', 0)} "
-                f"total={usage.get('total', 0)}"
-            )
+            # Lead with billable: it is what the budget counts, and it is
+            # the number the model should reason about when deciding how
+            # much room a retry has. `total` re-counts the cached prefix
+            # every turn and runs 7-21x higher, so presenting it alone
+            # told the agent it had spent far more than it had
+            # (poly-0g0). Older audits carry no billable field.
+            parts = [
+                f"prompt={usage.get('prompt', 0)}",
+                f"completion={usage.get('completion', 0)}",
+            ]
+            if usage.get("cached") is not None:
+                parts.append(f"cached={usage.get('cached', 0)}")
+            if usage.get("billable") is not None:
+                parts.insert(0, f"billable={usage['billable']}")
+            parts.append(f"total={usage.get('total', 0)} (incl. re-billed cache)")
+            lines.append("- tokens: " + " ".join(parts))
         attempts = data.get("attempts")
         if isinstance(attempts, list):
             lines.append(f"- attempts: {len(attempts)}")
@@ -784,10 +794,15 @@ class PriorAttemptsSection:
                 )
                 continue
             if event_type == "attempt_end":
+                # attempt_start above reports billable; reporting the
+                # provider total here put two units on adjacent lines
+                # under the same word (poly-0g0).
+                billable = event.get("billable_tokens")
+                spend = billable if billable is not None else event.get("tokens", "?")
                 lines.append(
                     f"- attempt_end {event.get('attempt', '?')}: "
                     f"compiled={event.get('rebuild_ok', '?')} "
-                    f"tokens={event.get('tokens', '?')}"
+                    f"tokens={spend}"
                 )
                 continue
             if event_type == "tool_call":

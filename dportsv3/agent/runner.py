@@ -3026,6 +3026,8 @@ def _write_triage_audit_harness(
         tokens_prompt=result.usage.prompt_tokens,
         tokens_completion=result.usage.completion_tokens,
         tokens_total=result.usage.total_tokens,
+        tokens_cached=result.usage.cached_tokens,
+        tokens_billable=result.usage.billable_tokens,
         model=model,
     )
 
@@ -4087,13 +4089,22 @@ def _write_patch_audit_harness(
     audit = {
         "status": result.status,
         "model": model,
+        # ``total`` re-counts the cached prefix on every turn, so it runs
+        # 7-21x the real cost (measured across 14 jobs). ``billable`` is
+        # what the budget enforces on and what the run actually cost;
+        # readers that print one number want that one. Both are here
+        # because the ratio between them is what a working prompt cache
+        # looks like (poly-0g0).
         "tokens_used": {
             "prompt": result.usage.prompt_tokens,
             "completion": result.usage.completion_tokens,
+            "cached": result.usage.cached_tokens,
+            "billable": result.usage.billable_tokens,
             "total": result.usage.total_tokens,
         },
         "attempts": [
-            {"attempt": a.attempt, "tokens": a.tokens, "rebuild_ok": a.rebuild_ok}
+            {"attempt": a.attempt, "tokens": a.tokens,
+             "billable_tokens": a.billable_tokens, "rebuild_ok": a.rebuild_ok}
             for a in result.attempts
         ],
         "via": "dportsv3.agent.patch",
@@ -4119,6 +4130,8 @@ def _write_patch_audit_harness(
         tokens_prompt=result.usage.prompt_tokens,
         tokens_completion=result.usage.completion_tokens,
         tokens_total=result.usage.total_tokens,
+        tokens_cached=result.usage.cached_tokens,
+        tokens_billable=result.usage.billable_tokens,
     )
     if bundle_id:
         write_phase_result(bundle_id, "patch", typed)

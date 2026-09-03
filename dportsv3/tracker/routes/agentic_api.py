@@ -387,6 +387,10 @@ def register(app, ctx):
                 "prompt_tokens": resp.usage.prompt_tokens,
                 "completion_tokens": resp.usage.completion_tokens,
                 "total_tokens": resp.usage.total_tokens,
+                # Without these the panel cannot tell traffic from cost,
+                # and total re-counts the cached prefix (poly-0g0).
+                "cached_tokens": resp.usage.cached_tokens,
+                "billable_tokens": resp.usage.billable_tokens,
             },
         }
 

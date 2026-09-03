@@ -327,9 +327,11 @@ class TriageStep:
                 f"triage T{ev.get('turn')} "
                 f"(snippet_round={ev.get('snippet_round')}) "
                 f"in={ev.get('prompt_tokens')} "
+                f"(cached={ev.get('cached_tokens') or 0}) "
                 f"out={ev.get('completion_tokens')} "
+                f"billable={ev.get('billable_tokens')} "
                 f"total={ev.get('total_tokens')} "
-                f"cumulative={ev.get('cumulative_total_tokens')}",
+                f"cum_billable={ev.get('cumulative_billable_tokens')}",
                 job_id=ctx.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )

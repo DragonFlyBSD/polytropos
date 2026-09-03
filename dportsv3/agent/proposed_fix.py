@@ -50,12 +50,18 @@ class ProposedFixCtx:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    #: What the run actually cost: uncached prompt + completion.
+    #: ``total_tokens`` re-counts the cached prefix every turn and reads
+    #: 7-21x higher on measured jobs, so the Cost section leads with this
+    #: one (poly-0g0).
+    billable_tokens: int = 0
     # Triage cost, read separately from analysis/triage_result.json
     # (typed ``TriageResult``, Step 36-2). The operator-facing "true"
     # cost is triage + patch.
     triage_prompt_tokens: int = 0
     triage_completion_tokens: int = 0
     triage_total_tokens: int = 0
+    triage_billable_tokens: int = 0
 
     # Diff
     diff_bytes: int = 0
@@ -136,16 +142,30 @@ def render_proposed_fix(ctx: ProposedFixCtx) -> str:
     # Triage and patch are separate LLM jobs; the "true" full-run
     # cost is the sum.
     combined_total = ctx.total_tokens + ctx.triage_total_tokens
+    combined_billable = ctx.billable_tokens + ctx.triage_billable_tokens
     lines.append("## Cost")
     lines.append("")
     lines.append(f"- Model: `{ctx.model or 'unknown'}`")
+    # Billable is the cost; total is provider traffic that re-counts the
+    # cached prefix on every turn and runs 7-21x higher on measured
+    # jobs. Leading with total is what made this section unusable for
+    # the scale estimate it exists to support (poly-0g0). Bundles
+    # written before that carry no billable figure, so the qualified
+    # total is all there is to show.
     lines.append(f"- Patch — prompt: {ctx.prompt_tokens:,}, "
                  f"completion: {ctx.completion_tokens:,}, "
-                 f"total: {ctx.total_tokens:,}")
+                 f"total: {ctx.total_tokens:,} (incl. re-billed cache)")
     if ctx.triage_total_tokens:
         lines.append(f"- Triage — prompt: {ctx.triage_prompt_tokens:,}, "
                      f"completion: {ctx.triage_completion_tokens:,}, "
-                     f"total: {ctx.triage_total_tokens:,}")
+                     f"total: {ctx.triage_total_tokens:,} "
+                     f"(incl. re-billed cache)")
+    if combined_billable:
+        lines.append(f"- **Billable (real cost, triage + patch): "
+                     f"{combined_billable:,}**")
+        lines.append(f"- Combined total, incl. re-billed cache: "
+                     f"{combined_total:,}")
+    elif ctx.triage_total_tokens:
         lines.append(f"- **Combined total (triage + patch): "
                      f"{combined_total:,}**")
     else:
@@ -279,6 +299,7 @@ def build_proposed_fix_ctx(
     prompt_tokens = 0
     completion_tokens = 0
     total_tokens = 0
+    billable_tokens = 0
     attempts_total = 0
     rebuild_ok = True
     status = "success"
@@ -289,6 +310,7 @@ def build_proposed_fix_ctx(
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
             total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+            billable_tokens = int(getattr(usage, "billable_tokens", 0) or 0)
         attempts = getattr(patch_result, "attempts", []) or []
         attempts_total = len(attempts)
         status = str(getattr(patch_result, "status", "") or "success")
@@ -308,6 +330,8 @@ def build_proposed_fix_ctx(
                     prompt_tokens = int(tu.get("prompt", 0) or 0)
                     completion_tokens = int(tu.get("completion", 0) or 0)
                     total_tokens = int(tu.get("total", 0) or 0)
+                    # Audits written before poly-0g0 carry no billable.
+                    billable_tokens = int(tu.get("billable", 0) or 0)
                 attempts_total = len(audit.get("attempts") or [])
             except Exception:
                 pass
@@ -350,6 +374,7 @@ def build_proposed_fix_ctx(
     triage_prompt_tokens = 0
     triage_completion_tokens = 0
     triage_total_tokens = 0
+    triage_billable_tokens = 0
     if read_bundle_text is not None:
         triage_json = read_bundle_text(
             bundle_dir, bundle_id or None,
@@ -363,6 +388,9 @@ def build_proposed_fix_ctx(
                     tdoc.get("tokens_completion", 0) or 0
                 )
                 triage_total_tokens = int(tdoc.get("tokens_total", 0) or 0)
+                triage_billable_tokens = int(
+                    tdoc.get("tokens_billable", 0) or 0
+                )
             except Exception:
                 pass
 
@@ -389,9 +417,11 @@ def build_proposed_fix_ctx(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        billable_tokens=billable_tokens,
         triage_prompt_tokens=triage_prompt_tokens,
         triage_completion_tokens=triage_completion_tokens,
         triage_total_tokens=triage_total_tokens,
+        triage_billable_tokens=triage_billable_tokens,
         diff_bytes=diff_bytes,
         files_touched=files_touched,
         summary=summary,

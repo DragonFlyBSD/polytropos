@@ -229,8 +229,11 @@ def token_usage_for_port(
     extra ``jobs`` count instead of ``largest_turn`` (the per-turn
     detail is more useful one job at a time on the job page).
     """
-    clauses = ["j.origin = ?", "al.stage = ?"]
-    params: list[Any] = [origin, "llm_turn"]
+    # LIKE, matching token_usage_for_job: the two cards summed
+    # different row sets, so a prefix-namespaced stage (convert:llm_turn)
+    # would appear in one and not the other (poly-0g0).
+    clauses = ["j.origin = ?", "al.stage LIKE ?"]
+    params: list[Any] = [origin, "%llm_turn"]
     if target is not None:
         clauses.append("j.target = ?")
         params.append(target)
@@ -246,12 +249,15 @@ def token_usage_for_port(
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
+            "cached_tokens": 0,
+            "billable_tokens": 0,
             "llm_turns": 0,
             "jobs": 0,
         }
     prompt_sum = 0
     completion_sum = 0
     total_sum = 0
+    cached_sum = 0
     jobs_seen: set[str] = set()
     for row in rows:
         raw = row[0] if not hasattr(row, "keys") else row["extra_json"]
@@ -269,11 +275,16 @@ def token_usage_for_port(
         prompt_sum += int(extra.get("prompt_tokens") or 0)
         completion_sum += int(extra.get("completion_tokens") or 0)
         total_sum += int(extra.get("total_tokens") or 0)
+        cached_sum += int(extra.get("cached_tokens") or 0)
+    # Same definition as token_usage_for_job, so the port card and the
+    # job card can be compared. Clamped for the same reason.
     return {
         "has_data": True,
         "prompt_tokens": prompt_sum,
         "completion_tokens": completion_sum,
         "total_tokens": total_sum,
+        "cached_tokens": cached_sum,
+        "billable_tokens": max(0, prompt_sum - cached_sum) + completion_sum,
         "llm_turns": len(rows),
         "jobs": len(jobs_seen),
     }

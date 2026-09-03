@@ -128,7 +128,13 @@
             {% if ev.type == 'attempt_start' %}
               tokens {{ ev.tokens_used_so_far or 0 }}/{{ ev.budget or '?' }}
             {% elif ev.type == 'attempt_end' %}
-              tokens={{ ev.tokens or '—' }}
+              {# The attempt_start line above reports billable, so this
+                 one must too or the same attempt reads 19x apart on one
+                 screen. Falls back to the total for traces recorded
+                 before attempt_end carried it (poly-0g0). #}
+              tokens={{ ev.billable_tokens if ev.billable_tokens is defined
+                        and ev.billable_tokens is not none
+                        else (ev.tokens or '—') }}
             {% elif ev.args is mapping %}
               {{ ev.args.origin or ev.args.path or ev.args.relpath or '' }}
             {% else %}
@@ -157,7 +163,13 @@
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.completion_tokens) }}</div>
       </div>
       <div class="tracker-card">
-        <div style="color:var(--text-dim);font-size:11px;">Total</div>
+        <div style="color:var(--text-dim);font-size:11px;">Billable (real cost)</div>
+        <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.billable_tokens or 0) }}</div>
+      </div>
+      <div class="tracker-card">
+        {# Total re-counts the cached prefix every turn, so it runs
+           7-21x billable. Kept, but never unlabelled (poly-0g0). #}
+        <div style="color:var(--text-dim);font-size:11px;">Total, incl. re-billed cache</div>
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.total_tokens) }}</div>
       </div>
     </div>

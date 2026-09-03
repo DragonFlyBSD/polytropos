@@ -301,7 +301,16 @@ def build_handoff_ctx(
         patch_status = str(getattr(patch_result, "status", "") or "")
         usage = getattr(patch_result, "usage", None)
         if usage is not None:
-            tokens_used = int(getattr(usage, "total_tokens", 0) or 0)
+            # Billable, not total: total re-counts the cached prefix
+            # every turn and reads 7-21x the real cost (poly-0g0). Fall
+            # back to total for a usage object that predates the field,
+            # since reporting 0 tokens used would be worse than
+            # reporting the inflated one.
+            billable = getattr(usage, "billable_tokens", None)
+            tokens_used = int(
+                (billable if billable is not None
+                 else getattr(usage, "total_tokens", 0)) or 0
+            )
     elif read_bundle_text is not None:
         audit_text = read_bundle_text(
             bundle_dir, bundle_id or None, "analysis/patch_audit.json",
@@ -313,7 +322,11 @@ def build_handoff_ctx(
                 patch_status = str(audit.get("status") or "")
                 tu = audit.get("tokens_used") or {}
                 if isinstance(tu, dict):
-                    tokens_used = int(tu.get("total", 0) or 0)
+                    # Audits written before poly-0g0 carry only total.
+                    tokens_used = int(
+                        (tu.get("billable") if tu.get("billable") is not None
+                         else tu.get("total", 0)) or 0
+                    )
             except Exception:
                 pass
 

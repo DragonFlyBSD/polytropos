@@ -32,9 +32,16 @@ log = logging.getLogger(__name__)
 @dataclass
 class AttemptInfo:
     attempt: int  # 1-indexed
+    #: Provider-reported total, which re-counts the cached prefix every
+    #: turn. Kept because it is the honest wire number, but it is not
+    #: the cost -- see ``billable_tokens`` (poly-0g0).
     tokens: int
     rebuild_ok: bool
     proof: dict | None = None  # parsed Rebuild Proof JSON for this attempt
+    #: Uncached prompt + completion: what this attempt actually cost and
+    #: what the budget gate counted. Defaults to 0 for callers that
+    #: construct an AttemptInfo without it.
+    billable_tokens: int = 0
 
 
 @dataclass
@@ -372,6 +379,7 @@ def run(
             AttemptInfo(
                 attempt=attempt_idx,
                 tokens=attempt_usage.total_tokens,
+                billable_tokens=attempt_usage.billable_tokens,
                 rebuild_ok=rebuild_ok,
                 proof=proof,
             )
@@ -383,7 +391,14 @@ def run(
                     "type": "attempt_end",
                     "attempt": attempt_idx,
                     "rebuild_ok": rebuild_ok,
+                    # `tokens` is the provider total, which re-counts the
+                    # cached prefix every turn. The attempt_start above
+                    # reports billable, so a display that reads one field
+                    # from each shows the same attempt 19x apart. Carry
+                    # both, named for what they are (poly-0g0).
                     "tokens": attempt_usage.total_tokens,
+                    "billable_tokens": attempt_usage.billable_tokens,
+                    "cached_tokens": attempt_usage.cached_tokens,
                 })
             except Exception:
                 pass

@@ -168,7 +168,7 @@ def register(app, ctx):
             except OSError:
                 return None
 
-        model = attempts = tokens = None
+        model = attempts = tokens = tokens_kind = None
         audit_text = _read_artifact_text("analysis/patch_audit.json")
         if audit_text:
             try:
@@ -179,7 +179,17 @@ def register(app, ctx):
                 if isinstance(raw_attempts, list):
                     attempts = len(raw_attempts)
                 tu = audit_data.get("tokens_used") or {}
-                tokens = tu.get("total") if isinstance(tu, dict) else None
+                if isinstance(tu, dict):
+                    # Prefer what the run actually cost. `total` is the
+                    # provider figure that re-counts the cached prefix
+                    # every turn -- 7-21x higher on measured jobs -- and
+                    # audits written before poly-0g0 carry only that, so
+                    # fall back to it and say so rather than publishing
+                    # it as if it were the cost.
+                    if tu.get("billable") is not None:
+                        tokens, tokens_kind = tu.get("billable"), "billable"
+                    else:
+                        tokens, tokens_kind = tu.get("total"), "total"
             except Exception:
                 pass
 
@@ -195,6 +205,7 @@ def register(app, ctx):
                 triage_md=triage_md,
                 patch_md=patch_md,
                 model=model, attempts=attempts, tokens=tokens,
+                tokens_kind=tokens_kind,
                 write_conn=write_conn,
             )
         except Exception as exc:
