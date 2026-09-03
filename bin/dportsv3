@@ -21,7 +21,17 @@ DEV_ENV_LOCK_DIR="$DEV_ENV_DIR/.venv.lock"
 # directory themselves. Everything downstream resolves config through
 # $DPORTSV3_CONFIG_DIR, so setting it here is what makes a plain `git clone`
 # behave like a configured install without any code guessing at paths.
-if [ -z "${DPORTSV3_CONFIG_DIR:-}" ] && [ -d "$SELF_DIR/config" ]; then
+#
+# Only when that directory actually holds configuration, though. config/
+# ships empty on purpose, and claiming an empty one used to mask a real
+# install: on a host with both a checkout and /usr/local/etc/polytropos,
+# this variable pointed at a directory with no polytropos.toml, so the
+# settings file nobody had edited won over the one the operator had, and
+# every value silently came from the table defaults (poly-mrl). Leaving
+# it unset lets paths.config_dir() search the conventional locations.
+if [ -z "${DPORTSV3_CONFIG_DIR:-}" ] &&
+   { [ -f "$SELF_DIR/config/polytropos.toml" ] ||
+     [ -d "$SELF_DIR/config/secrets" ]; }; then
     DPORTSV3_CONFIG_DIR="$SELF_DIR/config"
     export DPORTSV3_CONFIG_DIR
 fi

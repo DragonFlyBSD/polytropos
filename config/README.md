@@ -17,9 +17,18 @@ dportsv3 config sample > config/polytropos.toml
 
 ## How the tool finds this directory
 
-Through `$DPORTSV3_CONFIG_DIR`, and only through it. `bin/dportsv3` sets that
-variable to this directory when the operator has not set it themselves, which
-is what makes a plain checkout behave like a configured install.
+Through `$DPORTSV3_CONFIG_DIR` first. `bin/dportsv3` sets that variable to this
+directory when the operator has not set it themselves — but only when this
+directory actually holds configuration (a `polytropos.toml`, or `secrets/`).
+An empty `config/` is left unclaimed, because claiming it used to mask a real
+install: on a host with both a checkout and `/usr/local/etc/polytropos`, the
+settings file nobody had edited won over the one the operator had.
+
+When nothing sets the variable, `paths.config_dir()` searches, first match
+wins: `<prefix>/etc/polytropos` beside the installed entry point — which is
+how a non-default `LOCALBASE` is followed with nothing to configure — then
+`/usr/local/etc/polytropos`. Both must exist to be chosen; otherwise there is
+no config dir and every setting uses its default.
 
 Nothing in the Python packages searches for a surrounding repository. It used
 to — several modules walked a fixed number of parent directories up to find
@@ -27,8 +36,9 @@ to — several modules walked a fixed number of parent directories up to find
 checkout. `dportsv3/paths.py` is the single resolver now.
 
 Running the tool without the wrapper (a bare `python -m dportsv3`, a service
-unit, a container) means setting `DPORTSV3_CONFIG_DIR` yourself, or accepting
-the packaged defaults.
+unit, a container) means setting `DPORTSV3_CONFIG_DIR` yourself, or relying on
+the search above — a `python -m` run derives nothing usable and falls through
+to the packaged defaults.
 
 ## Files
 
