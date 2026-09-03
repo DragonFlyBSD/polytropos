@@ -65,19 +65,33 @@ def test_attempt_start_logs_one_row():
     msg = d._log.entries[0][1]
     assert "attempt 1/3" in msg
     assert "devel/foo" in msg
-    assert "tokens used 0/30000" in msg
+    # Cumulative billable, not this attempt's, and not the total: the
+    # word "tokens" alone meant three different things (poly-cwi).
+    assert "billable so far 0/30000" in msg
 
 
 def test_attempt_end_logs_one_row_with_rebuild_ok():
     d = _make_dispatcher()
-    d({"type": "attempt_end",
-       "attempt": 1, "rebuild_ok": True, "tokens": 1234})
+    d({"type": "attempt_end", "attempt": 1, "rebuild_ok": True,
+       "tokens": 1234, "billable_tokens": 200})
     stages = [e[0] for e in d._log.entries]
     assert stages == ["attempt_end"]
     msg = d._log.entries[0][1]
     assert "attempt 1 for devel/foo" in msg
     assert "rebuild_ok=True" in msg
-    assert "tokens=1234" in msg
+    assert "billable=200 total=1234" in msg
+
+
+def test_attempt_end_without_billable_says_total_rather_than_guessing():
+    """A trace older than billable_tokens has only the total. Printing it
+    under "billable" would be the mislabelling poly-cwi exists to stop, so
+    the term is dropped instead."""
+    d = _make_dispatcher()
+    d({"type": "attempt_end", "attempt": 1, "rebuild_ok": False,
+       "tokens": 1234})
+    msg = d._log.entries[0][1]
+    assert "total=1234" in msg
+    assert "billable" not in msg
 
 
 def test_tool_call_logs_with_tool_prefixed_stage_and_summary():

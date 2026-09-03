@@ -202,7 +202,8 @@ def test_with_prior_attempts(tmp_path, monkeypatch):
             return (
                 '{"status":"budget-exhausted","model":"test/model",'
                 '"tokens_used":{"prompt":10,"completion":2,"total":12},'
-                '"attempts":[{"attempt":1,"tokens":12,"rebuild_ok":false}],'
+                '"attempts":[{"attempt":1,"tokens":12,'
+                '"billable_tokens":8,"rebuild_ok":false}],'
                 '"via":"dportsv3.agent.patch"}'
             )
         if bid == "past-a" and relpath == "analysis/changes.diff":
@@ -236,7 +237,9 @@ def test_with_prior_attempts(tmp_path, monkeypatch):
     assert "#### Patch Audit Summary" in actual
     assert "- status: budget-exhausted" in actual
     assert "- tokens: prompt=10 completion=2 total=12" in actual
-    assert "attempt=1 tokens=12 compiled=False" in actual
+    # The attempts list carries both; the summary used to render only
+    # the total, telling the agent an attempt cost 21x what it did.
+    assert "attempt=1 billable=8 total=12 compiled=False" in actual
     assert "- last_attempt_compiled: False" in actual
     # poly-9u2: the diff is named and counted, never reproduced.
     assert "#### Files Changed" in actual

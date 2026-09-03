@@ -38,6 +38,33 @@ from .step import Step, StepCtx, StepOutcome, StepReadiness
 # -----------------------------------------------------------------------------
 
 
+def _usage_spend(usage) -> str:
+    """Both quantities of a finished phase, each named.
+
+    The completion message closes out the job and sits beside a status;
+    printing the provider total there under a bare "tokens" read as a
+    budget overrun of 15x on a run that stopped at 274,983 of 300,000
+    billable (poly-cwi).
+    """
+    return (f"billable={usage.billable_tokens}, "
+            f"total={usage.total_tokens}")
+
+
+def _attempt_spend(ev: dict) -> str:
+    """This attempt's spend, naming only the quantities it actually has.
+
+    A trace recorded before attempt_end carried ``billable_tokens`` has
+    the total and nothing else. Falling back to printing that total under
+    "billable" would be the precise mislabelling this is here to stop, so
+    the term is dropped instead — the same choice the PR body makes when
+    it cannot tell which quantity it holds (poly-cwi, poly-0g0).
+    """
+    billable = ev.get("billable_tokens")
+    if billable is None:
+        return f"total={ev.get('tokens')}"
+    return f"billable={billable} total={ev.get('tokens')}"
+
+
 @dataclass
 class PatchEventDispatcher:
     """Named callable that routes ``harness_patch.run`` events.
@@ -114,7 +141,7 @@ class PatchEventDispatcher:
             self.activity_log(
                 self.queue_root, "attempt_start",
                 f"attempt {ev.get('attempt')}/{ev.get('iterations')} for "
-                f"{self.origin} (tokens used "
+                f"{self.origin} (billable so far "
                 f"{ev.get('tokens_used_so_far')}/{ev.get('budget')})",
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
@@ -156,7 +183,7 @@ class PatchEventDispatcher:
             self.activity_log(
                 self.queue_root, "attempt_end",
                 f"attempt {ev.get('attempt')} for {self.origin}: "
-                f"rebuild_ok={ev.get('rebuild_ok')} tokens={ev.get('tokens')}",
+                f"rebuild_ok={ev.get('rebuild_ok')} {_attempt_spend(ev)}",
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
@@ -372,7 +399,7 @@ class TriageStep:
         services.activity_log(
             queue_root, "api_call_complete",
             f"Harness triage response received for {origin} "
-            f"(rounds={result.snippet_rounds}, tokens={result.usage.total_tokens})",
+            f"(rounds={result.snippet_rounds}, {_usage_spend(result.usage)})",
             job_id=ctx.job_id, duration_ms=duration_ms,
         )
 
@@ -1271,7 +1298,7 @@ class PatchAttemptStep:
         services.activity_log(
             queue_root, "api_call_complete",
             f"Harness patch finished for {origin} (status={result.status}, "
-            f"attempts={len(result.attempts)}, tokens={result.usage.total_tokens})",
+            f"attempts={len(result.attempts)}, {_usage_spend(result.usage)})",
             job_id=ctx.job_id, duration_ms=duration_ms,
         )
 

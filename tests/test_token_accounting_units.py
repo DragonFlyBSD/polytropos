@@ -401,3 +401,115 @@ def test_the_handoff_falls_back_to_total_for_a_usage_without_billable():
         patch_result=_Result(),
     )
     assert ctx.tokens_used == 999
+
+
+# --- poly-cwi: the message strings, which are read, not just stored ----
+#
+# poly-0g0 fixed the structured fields and the templates that read them.
+# The MESSAGE built alongside each row is what _activity_row.html renders
+# verbatim for non-llm_turn rows, what lands in runner.log, and — for the
+# context.py pair — what the model itself is told it has spent. Seven of
+# them printed a count under a bare "tokens", in two different scopes.
+
+
+def _dispatch(event: dict) -> str:
+    """One event through the real dispatcher; return its logged message."""
+    from pathlib import Path
+
+    from dportsv3.agent.steps import PatchEventDispatcher
+
+    entries: list[str] = []
+    d = PatchEventDispatcher(
+        queue_root=Path("/tmp/x"), job_id="j", origin="devel/foo",
+        activity_log=lambda _r, _s, message, **kw: entries.append(message),
+        looks_env_suspicious=lambda res: False,
+        invalidate_health_cache=lambda: None,
+        summarize_tool_call=lambda tool, args, res: "",
+    )
+    d(event)
+    return entries[0]
+
+
+def test_attempt_start_marks_its_figure_cumulative():
+    """tokens_used_so_far is total_usage.billable_tokens — every attempt
+    so far, not this one. attempt_end reports this attempt. Naming the
+    unit alone would still invite comparing 198,207 against 76,776."""
+    msg = _dispatch({"type": "attempt_start", "attempt": 3, "iterations": 4,
+                     "tokens_used_so_far": 198_207, "budget": 300_000})
+    assert "billable so far 198207/300000" in msg
+
+
+def test_attempt_end_names_both_quantities():
+    msg = _dispatch({"type": "attempt_end", "attempt": 3, "rebuild_ok": False,
+                     "tokens": 1_540_341, "billable_tokens": 76_776})
+    assert "billable=76776 total=1540341" in msg
+
+
+def test_attempt_end_omits_billable_rather_than_filing_a_total_under_it():
+    msg = _dispatch({"type": "attempt_end", "attempt": 1,
+                     "rebuild_ok": False, "tokens": 1_540_341})
+    assert "total=1540341" in msg
+    assert "billable" not in msg
+
+
+# --- what the agent is told it spent ----------------------------------
+
+def _prior():
+    from dportsv3.agent.context import PriorAttemptsSection
+    return PriorAttemptsSection()
+
+
+def test_the_agent_sees_billable_for_each_prior_attempt():
+    """runner writes both into the attempts list; the summary rendered
+    only `tokens`, so a retry was told attempt 1 cost 1,141,455 when it
+    cost 121,768."""
+    out = _prior()._audit_summary(json.dumps({
+        "status": "budget-exhausted",
+        "tokens_used": {"prompt": 1_116_299, "completion": 25_156,
+                        "cached": 1_019_687, "billable": 121_768,
+                        "total": 1_141_455},
+        "attempts": [{"attempt": 1, "tokens": 1_141_455,
+                      "billable_tokens": 121_768, "rebuild_ok": False}],
+    }))
+    assert "attempt=1 billable=121768 total=1141455" in out
+
+
+def test_the_trace_summary_separates_cumulative_from_per_attempt():
+    trace = "\n".join(json.dumps(e) for e in [
+        {"type": "attempt_start", "attempt": 3,
+         "tokens_used_so_far": 198_207, "budget": 300_000},
+        {"type": "attempt_end", "attempt": 3, "rebuild_ok": False,
+         "tokens": 1_540_341, "billable_tokens": 76_776},
+    ])
+    out = _prior()._tool_trace_summary(trace)
+    assert "billable so far 198207/300000" in out
+    # Anchored on the preceding field: a re-added "tokens=" prefix would
+    # still contain "billable=76776" and slip through a bare substring.
+    assert "compiled=False billable=76776" in out
+
+
+def test_the_trace_summary_says_total_when_billable_is_absent():
+    trace = json.dumps({"type": "attempt_end", "attempt": 1,
+                        "rebuild_ok": False, "tokens": 1_540_341})
+    out = _prior()._tool_trace_summary(trace)
+    assert "compiled=False total=1540341" in out
+    assert "billable" not in out
+
+
+def test_the_completion_messages_name_both_quantities():
+    """The line that closes out a phase. On alsa-plugins it read
+    'status=budget-exhausted, attempts=3, tokens=4567261' beside a
+    300,000 budget the job never came near — it stopped at 274,983
+    billable."""
+    from dportsv3.agent.steps import _usage_spend
+    assert _usage_spend(CACHED) == "billable=208, total=34881"
+
+
+def test_no_completion_message_prints_a_bare_provider_total():
+    """Both completion messages route through _usage_spend. This is the
+    exact pre-fix form; if either call site regrows it, the message is
+    back to one word for two quantities."""
+    import inspect
+    from dportsv3.agent import steps
+    src = inspect.getsource(steps)
+    assert "tokens={result.usage.total_tokens}" not in src

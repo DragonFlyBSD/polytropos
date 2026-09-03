@@ -756,7 +756,8 @@ class PriorAttemptsSection:
                     lines.append(
                         "  - "
                         f"attempt={attempt.get('attempt', '?')} "
-                        f"tokens={attempt.get('tokens', '?')} "
+                        f"billable={attempt.get('billable_tokens', '?')} "
+                        f"total={attempt.get('tokens', '?')} "
                         f"compiled={attempt.get('rebuild_ok', '?')}"
                     )
             if attempts and isinstance(attempts[-1], dict):
@@ -790,19 +791,22 @@ class PriorAttemptsSection:
                 budget = event.get("budget", "?")
                 lines.append(
                     f"- attempt_start {event.get('attempt', '?')}: "
-                    f"tokens={used}/{budget}"
+                    f"billable so far {used}/{budget}"
                 )
                 continue
             if event_type == "attempt_end":
                 # attempt_start above reports billable; reporting the
                 # provider total here put two units on adjacent lines
-                # under the same word (poly-0g0).
+                # under the same word (poly-0g0). Name which one this is,
+                # and when the trace predates billable_tokens say total
+                # rather than filing the total under "billable"
+                # (poly-cwi).
                 billable = event.get("billable_tokens")
-                spend = billable if billable is not None else event.get("tokens", "?")
+                spend = (f"billable={billable}" if billable is not None
+                         else f"total={event.get('tokens', '?')}")
                 lines.append(
                     f"- attempt_end {event.get('attempt', '?')}: "
-                    f"compiled={event.get('rebuild_ok', '?')} "
-                    f"tokens={spend}"
+                    f"compiled={event.get('rebuild_ok', '?')} {spend}"
                 )
                 continue
             if event_type == "tool_call":
