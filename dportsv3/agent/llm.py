@@ -250,6 +250,92 @@ def _reasoning_meta(value: str, off: bool) -> dict:
     return {"reasoning_effort": _META_EFFORT.get(value, value)}
 
 
+#: How each provider spells CROSS-REQUEST prompt caching. Absent means
+#: "nothing to send": DeepSeek caches automatically with no knob at all
+#: (prefix-only from token 0, 64-token chunks), so an unknown field
+#: there would be the same 400 _reasoning_meta exists to avoid.
+_CACHE_DIALECTS: dict = {}
+
+
+def _cache_kwargs(provider: str, model: str) -> dict:
+    """Provider knobs for reaching the prompt cache across requests.
+
+    Caching is documented as automatic and prefix-based, which reads as
+    "nothing to do". Measured, it is not: the cache is KV state on one
+    backend, and without ``prompt_cache_key`` a request is balanced onto
+    an arbitrary machine whose cache has never seen our prefix. Same
+    prefix, diverging tails, five requests —
+
+        cold, WITH key                 cached=0
+        diverging, WITH key            cached=7537
+        diverging, NO key              cached=0     <- prefix existed
+        diverging, WITH key again      cached=7537  <- proof it existed
+        diverging, DIFFERENT key       cached=0
+
+    So the key has to be on every request that wants the cache, not only
+    the one that populates it (poly-2w6).
+
+    Worth more than the price break: the tier budget counts
+    ``billable = raw - cached``, so a cached prefix is nearly free
+    against the BUDGET. Cold-start size predicted budget exhaustion
+    almost exactly across eleven ports — the three largest all exhausted,
+    six of the seven smallest were all fixed.
+    """
+    dialect = _CACHE_DIALECTS.get(provider)
+    return dialect(model) if dialect else {}
+
+
+def _cache_meta(model: str) -> dict:
+    """Meta groups requests by ``prompt_cache_key`` so they route to a
+    backend already holding their prefix, and takes a retention hint.
+
+    The key is DERIVED, never stored. It is a routing hint rather than a
+    handle — there is no object to expire and nothing a saved key could
+    refer to — so the model id it is scoped by is enough. Everything
+    talking to one model routes together, which at one-job-at-a-time
+    volume is exactly what we want: a bundle's attempts share a prefix,
+    and so do different ports up to their first divergence.
+
+    Retention is documented as a hint, not a guarantee ("the server may
+    evict entries early under load"), so this is opportunistic. Measured
+    survival with the key held flat at 98.9% for at least 20 minutes,
+    against an unkeyed control that missed every single time — attempts
+    are 1-5 minutes apart, so the gap that matters is covered severalfold.
+
+    Sent through ``extra_body`` because the SDK on this platform (1.70.0)
+    predates both parameters and rejects them as keyword arguments. That
+    is what makes the merge in ``_merge_call_kwargs`` load-bearing rather
+    than tidy.
+    """
+    return {"extra_body": {
+        "prompt_cache_key": f"polytropos-{model}",
+        "prompt_cache_retention": "24h",
+    }}
+
+
+_CACHE_DIALECTS["meta"] = _cache_meta
+
+
+def _merge_call_kwargs(kwargs: dict, extra: dict) -> None:
+    """``kwargs.update(extra)``, except ``extra_body`` is merged.
+
+    Both dialect tables can return an ``extra_body``: the DeepSeek
+    reasoning form sends ``thinking`` there, nvidia sends
+    ``chat_template_kwargs``, and Meta's cache controls go there too
+    because the SDK is too old to take them as kwargs. A plain update()
+    would let whichever ran second silently drop the other's payload —
+    and losing ``thinking: disabled`` would quietly restore the ~50% of
+    billable spend reasoning control exists to cut (poly-r1g).
+    """
+    for key, value in extra.items():
+        if (key == "extra_body"
+                and isinstance(kwargs.get(key), dict)
+                and isinstance(value, dict)):
+            kwargs[key] = {**kwargs[key], **value}
+        else:
+            kwargs[key] = value
+
+
 #: How each provider spells thinking mode. Anything absent falls back
 #: to the DeepSeek form above.
 _REASONING_DIALECTS = {"nvidia": _reasoning_nvidia, "meta": _reasoning_meta}
@@ -646,7 +732,12 @@ def _complete_openai(
         kwargs["timeout"] = timeout
     if temperature is not None:
         kwargs["temperature"] = temperature
-    kwargs.update(_reasoning_kwargs(reasoning, provider))
+    _merge_call_kwargs(kwargs, _reasoning_kwargs(reasoning, provider))
+    # SDK path only. litellm 1.65.0 forwards extra_body as a literal
+    # top-level JSON key rather than unpacking it (see the module
+    # docstring), so sending cache controls down that path would put a
+    # junk field on the wire instead of reaching the cache.
+    _merge_call_kwargs(kwargs, _cache_kwargs(provider, kwargs["model"]))
 
     # max_retries is explicit because the SDK's default is 2 and the
     # ladders would otherwise multiply: 6 staged retries over a silent
