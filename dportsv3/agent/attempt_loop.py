@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import llm, prompts, tool_loop, tools, worker
+from . import llm, prompts, tool_loop, worker
 from .llm import Usage
 
 log = logging.getLogger(__name__)
@@ -247,83 +247,6 @@ def run(
                 })
             except Exception:
                 pass
-
-        # The provider matches only the most-recently-used prefix for
-        # our cache key, and the previous attempt left a ~110k-token
-        # chain as that entry — so this attempt's first request shares
-        # only [system, payload] with it, matches nothing, and re-pays
-        # the whole cold start. Re-sending that opening is an exact
-        # repeat, which hits regardless of recency, and it makes the
-        # prefix current again so the request below extends it.
-        # Measured at 31,096 billable tokens saved for a cost of 20
-        # (poly-b05).
-        #
-        # Unconditional for a retry rather than gated on how big the
-        # last attempt grew: when the miss would not have happened the
-        # re-prime is an exact repeat costing ~20 tokens, which is
-        # cheaper than any threshold anyone could tune.
-        if attempt_idx > 1:
-            primed = llm.prime_cache(
-                base_messages,
-                model=model,
-                # The same schemas tool_loop will send, so the request
-                # is what attempt 1 actually opened with rather than an
-                # approximation of it.
-                tools=tools.schemas(only=tool_whitelist),
-                api_base=api_base,
-                api_key=api_key,
-                custom_llm_provider=custom_llm_provider,
-                timeout=timeout,
-                reasoning=reasoning,
-            )
-            # None means it did not happen — wrong provider, or it
-            # failed. prime_cache never raises, so the attempt below
-            # runs exactly as it did before this existed.
-            if primed is not None:
-                # Charged to the budget like any other request: ~20
-                # billable when it works, and a full cold start when it
-                # does not, which is precisely the leak the budget has
-                # to be able to see.
-                total_usage.add(primed)
-                remaining = (
-                    (budget - total_usage.billable_tokens) if budget else 0
-                )
-                # A re-prime that MISSED costs a whole cold start, and
-                # tool_loop reads max_tokens=0 as "no cap" — so a
-                # remaining that has just been spent down to nothing
-                # would uncap the attempt rather than stop it.
-                if budget and remaining <= 0:
-                    log.warning(
-                        "attempt_loop: cache re-prime for attempt %d spent "
-                        "the last %d billable tokens; not starting it",
-                        attempt_idx, primed.billable_tokens,
-                    )
-                    return PatchResult(
-                        report_complete=report_complete,
-                        status="budget-exhausted",
-                        final_text=final_text,
-                        usage=total_usage,
-                        attempts=attempts,
-                        proof=None,
-                    )
-                log.info(
-                    "attempt_loop: cache re-prime for attempt %d: "
-                    "prompt=%d cached=%d billable=%d",
-                    attempt_idx, primed.prompt_tokens, primed.cached_tokens,
-                    primed.billable_tokens,
-                )
-                if on_event is not None:
-                    try:
-                        on_event({
-                            "type": "cache_reprime",
-                            "attempt": attempt_idx,
-                            "prompt_tokens": primed.prompt_tokens,
-                            "cached_tokens": primed.cached_tokens,
-                            "completion_tokens": primed.completion_tokens,
-                            "billable_tokens": primed.billable_tokens,
-                        })
-                    except Exception:
-                        pass
 
         # Watch the event stream for why the loop ended — a fact the
         # harness has and a turn-capped attempt never gets to report.

@@ -160,19 +160,6 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
-        elif et == "cache_reprime":
-            # The gain, per run, rather than inferred from the bead
-            # that measured it: if a provider change kills the trick,
-            # cached drops to 0 here and the row says so (poly-b05).
-            self.activity_log(
-                self.queue_root, "cache_reprime",
-                f"attempt {ev.get('attempt')} re-primed the prompt cache: "
-                f"in={ev.get('prompt_tokens')} "
-                f"(cached={ev.get('cached_tokens')}) "
-                f"billable={ev.get('billable_tokens')}",
-                job_id=self.job_id,
-                extra={k: v for k, v in ev.items() if k != "type"},
-            )
         elif et == "llm_turn":
             # Per-LLM-round telemetry. The "prompt" share usually
             # dominates because conversation history compounds with
