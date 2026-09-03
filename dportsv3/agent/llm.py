@@ -321,6 +321,22 @@ def _cache_kwargs(provider: str, model: str) -> dict:
     return dialect(model) if dialect else {}
 
 
+def supports_prompt_cache(model: str, *,
+                          custom_llm_provider: str | None = None,
+                          api_base: str | None = None) -> bool:
+    """True when requests for this model carry cross-request cache controls.
+
+    Both halves matter. The provider needs an entry in
+    ``_CACHE_DIALECTS``, and the request has to take the SDK path —
+    litellm 1.65.0 puts ``extra_body`` on the wire as a literal field
+    instead of unpacking it, so on that path the key never reaches the
+    endpoint however the dialect is spelled.
+    """
+    if not _use_openai_sdk(model, custom_llm_provider, api_base):
+        return False
+    return _provider_of(model, custom_llm_provider) in _CACHE_DIALECTS
+
+
 def _merge_call_kwargs(kwargs: dict, extra: dict) -> None:
     """``kwargs.update(extra)``, except ``extra_body`` is merged.
 
@@ -706,6 +722,89 @@ def complete(
             attempt += 1
 
 
+#: Wall-clock ceiling for one re-prime. It is a throwaway request that
+#: sits on the critical path of an attempt which has not started yet, so
+#: it gets a tight bound of its own rather than the attempt's timeout: a
+#: re-prime that hangs must cost seconds, not ten minutes of the job.
+_PRIME_TIMEOUT = 60
+
+
+def prime_cache(
+    messages: list[dict],
+    *,
+    model: str,
+    tools: list[dict] | None = None,
+    api_base: str | None = None,
+    api_key: str | None = None,
+    custom_llm_provider: str | None = None,
+    timeout: int | None = None,
+    reasoning: str | None = None,
+) -> Usage | None:
+    """Make ``messages`` the most-recently-used prefix for our cache key.
+
+    The provider matches a request against only the MOST-RECENTLY-USED
+    prefix for a ``prompt_cache_key``, not against every prefix it
+    holds. So once an attempt has grown its conversation to ~110k
+    tokens, that chain is the match target, and the next attempt — which
+    shares only the opening ``[system, payload]`` — matches nothing and
+    re-pays its entire cold start. The opening is still cached; it is
+    simply not what the lookup compares against.
+
+    Sending the opening again is an exact repeat, which hits regardless
+    of recency, and it puts that prefix back at the head of the queue so
+    the attempt's real first request extends it. Measured by replaying a
+    real 30-turn transcript, two arms on separate keys (poly-b05):
+
+        no re-prime, attempt 2 turn 1  prompt=31269 cached=    0 -> 31439 billable
+        re-prime (max_tokens=1)        prompt=31172 cached=31153 ->    20 billable
+        then attempt 2 turn 1          prompt=31269 cached=31217 ->   323 billable
+
+    Returns its own ``Usage`` so the caller can charge it to the budget
+    and log the gain, or ``None`` when no re-prime happened. It NEVER
+    raises: this is an optimisation and nothing may depend on it.
+    Most-recently-used matching is inferred from measurement rather than
+    documented, and there is a measured regime where the key goes cold
+    and stays cold (poly-2w6), so a caller must still size its budget as
+    though the cache were absent.
+
+    Goes straight to the SDK path rather than through ``complete()``:
+    the staged retry ladder exists to protect turns already spent, and
+    spending minutes of it on a request whose whole value is being cheap
+    would defeat the purpose. ``supports_prompt_cache`` has already
+    established the SDK path applies.
+    """
+    if not messages:
+        return None
+    try:
+        # Inside the try, not before it: "never raises" has to hold for
+        # every step, and this one reads settings.
+        if not supports_prompt_cache(
+                model, custom_llm_provider=custom_llm_provider,
+                api_base=api_base):
+            return None
+        response = _complete_openai(
+            messages,
+            model=model,
+            tools=tools,
+            api_base=api_base,
+            api_key=api_key,
+            custom_llm_provider=custom_llm_provider,
+            timeout=min(timeout or _PRIME_TIMEOUT, _PRIME_TIMEOUT),
+            temperature=None,
+            reasoning=reasoning,
+            # The completion is discarded, so cap it at one token.
+            # Measured: reasoning does not run past the cap — the arm
+            # above emitted exactly one output token.
+            max_tokens=1,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        # DEBUG on purpose: a failed re-prime changes nothing about the
+        # attempt, and a WARNING here would report a non-event.
+        _LOG.debug("llm: cache re-prime failed, ignored: %s", str(exc)[:200])
+        return None
+    return response.usage
+
+
 def _complete_openai(
     messages: list[dict],
     *,
@@ -717,8 +816,13 @@ def _complete_openai(
     timeout: int | None,
     temperature: float | None,
     reasoning: str | None,
+    max_tokens: int | None = None,
 ) -> Response:
-    """Talk to an OpenAI-compatible endpoint with the openai SDK."""
+    """Talk to an OpenAI-compatible endpoint with the openai SDK.
+
+    ``max_tokens`` caps the completion. Only ``prime_cache`` sets it —
+    a throwaway request wants the prefix on the wire and nothing back.
+    """
     from openai import OpenAI
 
     provider = _provider_of(model, custom_llm_provider)
@@ -737,6 +841,8 @@ def _complete_openai(
         kwargs["timeout"] = timeout
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     _merge_call_kwargs(kwargs, _reasoning_kwargs(reasoning, provider))
     # SDK path only. litellm 1.65.0 forwards extra_body as a literal
     # top-level JSON key rather than unpacking it (see the module
