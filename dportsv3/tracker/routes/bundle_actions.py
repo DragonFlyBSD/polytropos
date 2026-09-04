@@ -447,6 +447,158 @@ def register(app, ctx):
             "delivery": delivery,
         }
 
+    @app.post("/api/bundles/{bundle_id}/deliver")
+    def api_bundle_deliver(
+        bundle_id: str, body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Re-run the delivery side effect on an accepted bundle whose
+        PR was never opened (poly-86t).
+
+        Accept commits the decision and then delivers. When the
+        provider leg fails -- most often poly-lt1's clone race -- the
+        bundle is left accurate and unactionable: it IS accepted, and
+        accept refuses to run again because ``accepted`` is terminal.
+        The only exit was ``/reopen``, which retracts a judgement that
+        was never wrong, re-runs the whole accept path, and re-races
+        the same clone.
+
+        This changes no resolution and emits no ``bundle_accepted``.
+        The decision already happened; only its side effect is retried.
+        It reuses ``_accept_delivery_step`` unchanged and writes the
+        same ``delivery_complete`` activity row accept writes, so the
+        bundle's ribbon reads as one continuous story, plus its own
+        ``bundle_delivery_retried`` event so a retry stays
+        distinguishable from the first attempt.
+
+        409 when the bundle is not accepted, or when its newest
+        delivery row is not ``create_failed`` -- there is nothing to
+        retry, and re-delivering an open PR is the orchestrator's job
+        via its own idempotency, not an operator button's.
+
+        Deliberately does NOT inspect the error text to decide whether
+        a retry is worthwhile. Three of the seventeen stranded rows
+        measured on 2026-09-04 were not the clone race
+        (GitApplyConflict, GitCommitError, GitWrongBranch) and will
+        fail the same way again -- but a retry is cheap, records a
+        fresh row with the same error, and is more honest than a gate
+        guessing which provider errors are transient.
+        """
+        with _conn() as conn:
+            row = get_bundle(conn, bundle_id)
+            latest = (
+                latest_review_request_for_bundle(conn, bundle_id)
+                if row is not None else None
+            )
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown bundle: {bundle_id}",
+            )
+        if not fix_state.action_allowed(
+            "deliver", row.get("resolution"), row.get("verification_status")
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Retry delivery requires an accepted bundle; "
+                    f"current resolution: {row.get('resolution')!r}"
+                ),
+            )
+        if latest is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No delivery has been attempted for this bundle; "
+                    "nothing to retry"
+                ),
+            )
+        if latest.get("status") != "create_failed":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Retry delivery applies to a failed delivery; "
+                    f"newest delivery status is {latest.get('status')!r}"
+                ),
+            )
+
+        prior_error = latest.get("error")
+        write_conn = sqlite3.connect(
+            str(app.state.db_path), check_same_thread=False,
+            isolation_level=None,
+        )
+        write_conn.row_factory = sqlite3.Row
+        try:
+            delivery = _accept_delivery_step(
+                bundle=row,
+                request_body=(body or {}),
+                write_conn=write_conn,
+            )
+            d_status = (delivery or {}).get("status", "unknown")
+            d_skip = (delivery or {}).get("skip_reason")
+            d_url = (delivery or {}).get("url")
+            d_err = (delivery or {}).get("error")
+            d_provider = (delivery or {}).get("provider")
+            if d_status in ("created", "updated"):
+                d_msg = (
+                    f"delivery retry {d_status} for {bundle_id} "
+                    f"(provider={d_provider}, url={d_url or 'n/a'})"
+                )
+                _LOG.info(d_msg)
+            elif d_status == "create_failed":
+                d_msg = (
+                    f"delivery retry FAILED for {bundle_id}: "
+                    f"{d_err or 'unspecified error'}"
+                )
+                _LOG.error(d_msg)
+            elif d_status == "skipped":
+                # A retry can legitimately land here -- delivery may
+                # have been switched off since the accept. Report it
+                # rather than dressing it as success or failure.
+                d_msg = (
+                    f"delivery retry skipped for {bundle_id}: "
+                    f"{d_skip or 'unknown'}"
+                )
+                _LOG.info(d_msg)
+            else:
+                d_msg = (
+                    f"delivery retry for {bundle_id} returned "
+                    f"unrecognized status={d_status!r}"
+                )
+                _LOG.warning(d_msg)
+
+            from dportsv3.artifact_store import emit_event  # noqa: PLC0415
+            emit_event(write_conn, "bundle_delivery_retried", {
+                "bundle_id": bundle_id,
+                "status": d_status,
+                "provider": d_provider,
+                "url": d_url,
+                "error": d_err,
+                "prior_error": prior_error,
+            })
+            _activity_log(
+                write_conn, "delivery_complete", d_msg,
+                bundle_id=bundle_id,
+                extra={
+                    "bundle_id": bundle_id,
+                    "status": d_status,
+                    "skip_reason": d_skip,
+                    "provider": d_provider,
+                    "url": d_url,
+                    "error": d_err,
+                    "retry": True,
+                    "prior_error": prior_error,
+                },
+            )
+        finally:
+            write_conn.close()
+
+        return {
+            "ok": True,
+            "bundle_id": bundle_id,
+            "resolution": row.get("resolution"),
+            "prior_error": prior_error,
+            "delivery": delivery,
+        }
+
     @app.post("/api/bundles/{bundle_id}/reject")
     def api_bundle_reject(
         bundle_id: str, body: dict[str, Any],

@@ -1071,6 +1071,33 @@ PR-status polling (out of scope for 11d entirely) would slot
 in as a runner-side ``process_delivery_status`` poll loop —
 parallel to ``process_user_context_updates`` / ``process_verify_requests``.
 
+###### Retrying a delivery that failed (poly-86t)
+
+Accept commits ``resolution='accepted'`` and then delivers. A
+provider failure leaves the bundle accurate and unactionable: it
+IS accepted, and accept refuses to run again because ``accepted``
+is terminal. Reopen was the only exit, and it retracts a decision
+that was never wrong while re-running the whole accept path.
+
+- Bundle detail page's Delivery card gains a "Retry delivery"
+  button, shown only when the newest delivery row is
+  ``create_failed`` and the bundle is ``accepted``. The card
+  already renders the row's ``error`` directly above it, so an
+  operator can see whether this was the clone race (poly-lt1,
+  retryable) or a conflict (not).
+- New endpoint: ``POST /api/bundles/{id}/deliver``, no body.
+  409s when the bundle is not accepted, when no delivery was ever
+  attempted, or when the newest delivery did not fail.
+- Changes no resolution and emits no ``bundle_accepted`` — the
+  decision already happened; only its side effect is retried. It
+  writes the same ``delivery_complete`` activity row accept
+  writes (with ``retry: true`` and the ``prior_error``), plus a
+  ``bundle_delivery_retried`` event.
+- Deliberately does not inspect the error text to decide whether
+  a retry is worthwhile: a retry is cheap and records a fresh row
+  with the same error, which beats a gate guessing which provider
+  errors are transient.
+
 ##### Out of scope for 11d
 
 - Auto-merging PRs after CI passes. That stays a human call.

@@ -63,6 +63,23 @@
          terminal. The buttons are absent on terminal/failed rows.
          Operators who need to undo a terminal can reopen the
          bundle (Step 28d) and re-Accept. #}
+      {# poly-86t: a failed delivery leaves the bundle accepted with no
+         PR, and accept is terminal so it cannot be re-run. This retries
+         only the side effect -- the decision above it stands. The error
+         is rendered directly above, so an operator can see whether this
+         was the clone race (retryable) or a conflict (not). #}
+      {% if dr.status == 'create_failed' and bundle.resolution == 'accepted' %}
+      <div class="btn-group" style="margin-top:8px;">
+        <button id="op-retry-delivery" type="button" class="btn btn-success"
+                data-bundle="{{ bundle.bundle_id }}"
+                style="font-size:12px;padding:4px 10px;"
+                title="Re-open the pull request for this already-accepted fix. Does not change the accept decision.">
+          Retry delivery
+        </button>
+        <span id="op-retry-delivery-status"
+              style="color:var(--text-dim);font-size:11px;"></span>
+      </div>
+      {% endif %}
       {% if dr.status in ('created', 'updated') %}
       <div class="btn-group" style="margin-top:8px;">
         <button id="op-mark-merged" type="button" class="btn btn-success"

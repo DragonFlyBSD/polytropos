@@ -59,6 +59,11 @@ def _expected_allowed(action: str, r: str | None, v: str | None) -> bool:
         return r == "operator_owned"
     if action == "reopen":
         return r in _TERMINAL
+    if action == "deliver":
+        # Only the resolution. Whether there is a FAILED delivery to
+        # retry lives in bundle_review_requests, which this signature
+        # cannot see, so the endpoint checks that and 409s (poly-86t).
+        return r == "accepted"
     raise AssertionError(action)
 
 

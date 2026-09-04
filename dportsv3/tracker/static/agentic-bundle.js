@@ -327,6 +327,52 @@
   );
 })();
 
+// --- Retry a failed delivery (poly-86t) ---
+// Separate IIFE from the mark-merged pair above: that block returns early
+// when its buttons are absent, and the two never render together --
+// mark-merged shows on created/updated, this shows on create_failed.
+(function () {
+  const btn = document.getElementById('op-retry-delivery');
+  const statusEl = document.getElementById('op-retry-delivery-status');
+  if (!btn || !statusEl) { return; }
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    statusEl.textContent = 'delivering…';
+    let resp, data;
+    try {
+      resp = await fetch(
+        '/api/bundles/' + encodeURIComponent(btn.dataset.bundle) + '/deliver',
+        {method: 'POST',
+         headers: {'Content-Type': 'application/json'},
+         body: '{}'}
+      );
+      data = await resp.json();
+    } catch (exc) {
+      statusEl.textContent = 'error: ' + exc;
+      btn.disabled = false;
+      return;
+    }
+    if (!resp.ok) {
+      statusEl.textContent = 'error: ' + (data.detail || resp.status);
+      btn.disabled = false;
+      return;
+    }
+    // The endpoint is best-effort like accept's delivery leg: a 200 says
+    // the retry ran, not that it succeeded. Report which.
+    const d = data.delivery || {};
+    if (d.status === 'created' || d.status === 'updated') {
+      statusEl.textContent = d.status + ' — reloading';
+      setTimeout(() => location.reload(), 400);
+    } else if (d.status === 'skipped') {
+      statusEl.textContent = 'skipped: ' + (d.skip_reason || 'unknown');
+      btn.disabled = false;
+    } else {
+      statusEl.textContent = 'failed: ' + (d.error || d.status || 'unknown');
+      btn.disabled = false;
+    }
+  });
+})();
+
 // --- Fix-review chat ---
 (function () {
   const bundleId = (window.DP_BUNDLE || {}).bundleId;

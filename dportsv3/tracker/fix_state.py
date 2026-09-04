@@ -101,6 +101,17 @@ ACTION_ALLOWED: dict[str, Callable[[str | None, str | None], bool]] = {
     "retry": lambda r, v: r not in TERMINAL_RESOLUTIONS,
     "release": lambda r, v: r == RESOLUTION_OPERATOR_OWNED,
     "reopen": lambda r, v: r in TERMINAL_RESOLUTIONS,
+    # Re-run the delivery side effect on a bundle whose accept
+    # succeeded and whose PR did not. Accept commits the decision
+    # first and delivers second, so a provider failure leaves the
+    # bundle accurate (it IS accepted) and unactionable (accept is
+    # terminal, and only reopen acts on terminal). This gate is
+    # deliberately just the resolution: whether there is a failed
+    # delivery to retry needs the newest bundle_review_requests row,
+    # which this signature cannot see, so the endpoint checks it and
+    # 409s -- the same allowed-vs-surface split described above
+    # (poly-86t).
+    "deliver": lambda r, v: r == RESOLUTION_ACCEPTED,
 }
 
 
