@@ -16,7 +16,7 @@ def run(
     api_key: str | None = None,
     custom_llm_provider: str | None = None,
     timeout: int = 600,
-    max_tool_turns: int = 30,
+    max_tool_turns: int | None = None,
     on_event=None,
     origin: str | None = None,
     session_dump=None,
@@ -37,6 +37,15 @@ def run(
     plus the build-loop tools — the surface returned by
     :func:`tools.patch_tool_names`.
     """
+    if max_tool_turns is None:
+        # Read here rather than as a default argument so the value is
+        # resolved per call, not once at import: settings are cached per
+        # process and a default would freeze whatever was loaded first.
+        # An explicit argument still wins — the manual harnesses and the
+        # tests pass their own (poly-lvw).
+        from dportsv3 import settings  # noqa: PLC0415 — import cycle
+        max_tool_turns = int(settings.get("runner.max_tool_turns"))
+
     return attempt_loop.run(
         payload,
         tier=tier,

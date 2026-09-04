@@ -97,6 +97,22 @@
 # How long a dev-env health probe is trusted before re-running.
 #health_cache_seconds = 60
 
+# LLM round-trips one patch attempt may take before the loop
+# stops it. Was a hardcoded 30 in patch.py (poly-lvw).
+#
+# Matched to the budget the tier already grants rather than
+# picked round: measured ~2.7k billable per turn, so ASSIST's
+# 600k over 4 iterations is ~150k an attempt, about 55 turns. At
+# 30 an attempt could only ever spend ~80k of that, which is how
+# a run that hit the turn cap three times still left 150k
+# unspent.
+#
+# This does not unbound the loop. max_tokens still binds and
+# still stops an attempt first when spend is the real
+# constraint; raising this only stops the loop ending BELOW the
+# ceiling it was given.
+#max_tool_turns = 50
+
 # A retry needs this fraction of the budget still available to be
 # worth starting. Clamped to 0.0-1.0.
 #min_attempt_budget_fraction = 0.25
@@ -238,9 +254,10 @@
 # thing stopping the loop from finishing.
 #
 # The turn and attempt caps still apply — policy.tiers'
-# max_iterations and the patch harness's 30 tool turns — so a
-# runaway loop is still bounded. Expect long jobs: at the
-# measured 10-30s per turn an attempt can run 5-15 minutes.
+# max_iterations and runner.max_tool_turns — so a runaway loop
+# is still bounded. Expect long jobs: at the measured 10-30s per
+# turn, an attempt runs that cap times 10-30s, so raising
+# runner.max_tool_turns lengthens jobs proportionally.
 #free_tier = false
 
 # low rather than off, so a quality regression is a smaller step to

@@ -196,6 +196,23 @@ SETTINGS: list[Setting] = [
     Setting("runner.health_cache_seconds", "int", 60,
             "How long a dev-env health probe is trusted before re-running."),
     Setting(
+        "runner.max_tool_turns", "int", 50,
+        "LLM round-trips one patch attempt may take before the loop\n"
+        "stops it. Was a hardcoded 30 in patch.py (poly-lvw).\n"
+        "\n"
+        "Matched to the budget the tier already grants rather than\n"
+        "picked round: measured ~2.7k billable per turn, so ASSIST's\n"
+        "600k over 4 iterations is ~150k an attempt, about 55 turns. At\n"
+        "30 an attempt could only ever spend ~80k of that, which is how\n"
+        "a run that hit the turn cap three times still left 150k\n"
+        "unspent.\n"
+        "\n"
+        "This does not unbound the loop. max_tokens still binds and\n"
+        "still stops an attempt first when spend is the real\n"
+        "constraint; raising this only stops the loop ending BELOW the\n"
+        "ceiling it was given.",
+    ),
+    Setting(
         "runner.min_attempt_budget_fraction", "float", 0.25,
         "A retry needs this fraction of the budget still available to be\n"
         "worth starting. Clamped to 0.0-1.0.",
@@ -345,9 +362,10 @@ SETTINGS: list[Setting] = [
         "thing stopping the loop from finishing.\n"
         "\n"
         "The turn and attempt caps still apply — policy.tiers'\n"
-        "max_iterations and the patch harness's 30 tool turns — so a\n"
-        "runaway loop is still bounded. Expect long jobs: at the\n"
-        "measured 10-30s per turn an attempt can run 5-15 minutes.",
+        "max_iterations and runner.max_tool_turns — so a runaway loop\n"
+        "is still bounded. Expect long jobs: at the measured 10-30s per\n"
+        "turn, an attempt runs that cap times 10-30s, so raising\n"
+        "runner.max_tool_turns lengthens jobs proportionally.",
     ),
     Setting(
         "llm.patch.reasoning", "str", "low",

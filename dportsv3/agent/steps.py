@@ -839,8 +839,8 @@ def _lift_budget_if_free(tier):
     tier's 120k that is about 7.6 turns against 31, and every patch
     attempt died there in the middle of sensible work.
 
-    Only the token budget goes. ``max_tool_turns`` (30, from patch.py)
-    and ``tier.max_iterations`` still bound the loop — without them
+    Only the token budget goes. ``runner.max_tool_turns`` and
+    ``tier.max_iterations`` still bound the loop — without them
     "unlimited" would mean exactly that.
     """
     if not settings.get("llm.patch.free_tier"):
