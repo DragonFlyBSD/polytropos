@@ -77,17 +77,22 @@ class _RecordingProvider:
 
 
 @pytest.fixture
-def git_timeout(monkeypatch):
-    """Override only delivery.git_timeout. _clone_locked imports
+def clone_wait(monkeypatch):
+    """Override only delivery.clone_wait_timeout. _clone_locked imports
     settings inside the function, so orch.settings is not the name it
     reads — patch the module attribute, and delegate every other key to
-    the real table so nothing else in deliver() is disturbed."""
+    the real table so nothing else in deliver() is disturbed.
+
+    Was delivery.git_timeout until the two were split: that one bounds a
+    single git subprocess, this one bounds how long an Accept waits for
+    the shared clone, and conflating them meant a bulk accept lost the
+    tail of its queue to a 60s wall (poly-lt1)."""
     from dportsv3 import settings as settings_mod
     real = settings_mod.get
 
     def _set(value: float):
         def fake(key, *a, **k):
-            if key == "delivery.git_timeout":
+            if key == "delivery.clone_wait_timeout":
                 return value
             return real(key, *a, **k)
         monkeypatch.setattr(settings_mod, "get", fake)
@@ -130,8 +135,8 @@ def _deliver(cfg, provider, monkeypatch, operator="op"):
 
 # --- the lock itself -------------------------------------------------
 
-def test_clone_lock_blocks_a_second_holder_and_names_the_wait(git_timeout):
-    git_timeout(0.05)
+def test_clone_lock_blocks_a_second_holder_and_names_the_wait(clone_wait):
+    clone_wait(0.05)
     with orch._clone_locked():
         with pytest.raises(DeliveryError) as exc:
             with orch._clone_locked():
@@ -141,8 +146,8 @@ def test_clone_lock_blocks_a_second_holder_and_names_the_wait(git_timeout):
     assert "retry" in msg
 
 
-def test_clone_lock_releases_when_the_body_raises(git_timeout):
-    git_timeout(0.05)
+def test_clone_lock_releases_when_the_body_raises(clone_wait):
+    clone_wait(0.05)
     with pytest.raises(RuntimeError):
         with orch._clone_locked():
             raise RuntimeError("provider blew up")
@@ -154,12 +159,12 @@ def test_clone_lock_releases_when_the_body_raises(git_timeout):
 # --- the wiring ------------------------------------------------------
 
 def test_deliver_holds_the_lock_across_the_provider_call(
-    monkeypatch, stub_queries, git_timeout,
+    monkeypatch, stub_queries, clone_wait,
 ):
     """The whole provider call, not just its git prologue: the window
     that bit us was between the commit and the restore that runs in
     create_review_request's finally."""
-    git_timeout(5.0)
+    clone_wait(5.0)
     provider = _RecordingProvider()
     outcome = _deliver(_cfg(), provider, monkeypatch)
     assert outcome.status == "created"
@@ -167,12 +172,12 @@ def test_deliver_holds_the_lock_across_the_provider_call(
 
 
 def test_two_concurrent_deliveries_never_overlap_in_the_provider(
-    monkeypatch, stub_queries, git_timeout,
+    monkeypatch, stub_queries, clone_wait,
 ):
     release = threading.Event()
     provider = _RecordingProvider(barrier=release)
     monkeypatch.setattr(orch, "build_provider", lambda c: provider)
-    git_timeout(5.0)
+    clone_wait(5.0)
     cfg = _cfg()
     outcomes: list = []
 
@@ -207,12 +212,12 @@ def test_two_concurrent_deliveries_never_overlap_in_the_provider(
 
 
 def test_a_busy_clone_is_recorded_as_create_failed_not_an_exception(
-    monkeypatch, stub_queries, git_timeout,
+    monkeypatch, stub_queries, clone_wait,
 ):
     """The timeout raises inside deliver()'s existing try, so the
     operator gets the same create_failed row as any provider failure —
     with a message that says to retry, rather than a 500."""
-    git_timeout(0.05)
+    clone_wait(0.05)
     provider = _RecordingProvider()
     with orch._clone_locked():           # someone else holds it
         outcome = _deliver(_cfg(), provider, monkeypatch)
@@ -279,14 +284,14 @@ class _FakeHttpPerCall:
 
 
 def test_two_real_deliveries_do_not_wedge_the_clone(
-    monkeypatch, stub_queries, git_timeout, real_clone,
+    monkeypatch, stub_queries, clone_wait, real_clone,
 ):
     """The 2026-09-02 incident end to end: real git, one clone, two
     Accepts started together. Both must land, and the clone must be
     back on master and clean afterwards."""
     from dportsv3.delivery.github import GitHubProvider
 
-    git_timeout(30.0)
+    clone_wait(30.0)
     http = _FakeHttpPerCall()
     monkeypatch.setattr(
         orch, "build_provider",
@@ -339,3 +344,60 @@ def test_two_real_deliveries_do_not_wedge_the_clone(
     ).stdout.strip()
     assert head == "master", f"clone left on {head}"
     assert dirty == "", f"clone left dirty: {dirty}"
+
+
+# --- the wait is its own quantity (poly-lt1) --------------------------
+
+def test_the_clone_wait_is_not_the_git_subprocess_timeout():
+    """They were one knob, and that cost 14 deliveries.
+
+    Measured 2026-09-04: deliveries serialise cleanly at 6.6-8.2s each,
+    so a 60s wait serves about eight. An operator accepting ~26 in one
+    sitting had the tail recorded as create_failed -- provider failures
+    the provider never saw. Raising the wait through git_timeout would
+    have loosened every git subprocess bound at the same time, which is
+    a different hazard with a different right answer.
+    """
+    from dportsv3 import settings
+    wait = float(settings.get("delivery.clone_wait_timeout"))
+    git = float(settings.get("delivery.git_timeout"))
+    assert wait > git, (
+        "the clone wait must outlast a single git call, or an Accept "
+        "gives up while the delivery ahead of it is still legitimately "
+        "running"
+    )
+    # ~7s per delivery: the default should absorb a bulk accept rather
+    # than the eight the old shared value allowed.
+    assert wait / 8.0 >= 30, "default should queue tens, not a handful"
+
+
+def test_the_lock_reads_the_clone_wait_setting(clone_wait, monkeypatch):
+    """Behavioural: the bound actually consulted is the new one. A
+    revert to git_timeout would leave this passing only by coincidence,
+    so pin it by making the two differ and holding the lock."""
+    import threading
+    from dportsv3.delivery import orchestrator as orch
+    from dportsv3.delivery import DeliveryError
+
+    clone_wait(0.05)          # the setting under test
+    orch._CLONE_LOCK.acquire()
+    try:
+        t0 = threading.Event()
+        err: list[Exception] = []
+
+        def _second():
+            try:
+                with orch._clone_locked():
+                    pass
+            except Exception as exc:      # noqa: BLE001
+                err.append(exc)
+            t0.set()
+
+        threading.Thread(target=_second, daemon=True).start()
+        assert t0.wait(timeout=10), "second holder never returned"
+        assert err and isinstance(err[0], DeliveryError)
+        assert "another delivery is using the clone" in str(err[0])
+        # 0.05s, not the 300s default and not git_timeout's 60s.
+        assert "0.05s" in str(err[0])
+    finally:
+        orch._CLONE_LOCK.release()

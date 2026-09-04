@@ -498,6 +498,18 @@ SETTINGS: list[Setting] = [
         "Seconds before a git subprocess is abandoned. A hung remote would\n"
         "otherwise block the Accept request thread indefinitely.",
     ),
+    Setting(
+        "delivery.clone_wait_timeout", "float", 300.0,
+        "Seconds an Accept waits for the shared delivery clone before\n"
+        "giving up. Deliveries are serialised on that clone and take about\n"
+        "seven seconds each, so this bounds how deep a queue an operator\n"
+        "can build by accepting in bulk: at the default, roughly forty.\n"
+        "It used to borrow delivery.git_timeout, which is a bound on one\n"
+        "git subprocess -- a different quantity that happened to share a\n"
+        "number, so raising the wait also loosened every git call.\n"
+        "Bounded rather than unlimited because each waiting Accept holds a\n"
+        "Starlette threadpool thread (anyio's default limiter is 40).",
+    ),
 ]
 
 

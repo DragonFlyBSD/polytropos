@@ -358,3 +358,14 @@
 # Seconds before a git subprocess is abandoned. A hung remote would
 # otherwise block the Accept request thread indefinitely.
 #git_timeout = 60.0
+
+# Seconds an Accept waits for the shared delivery clone before
+# giving up. Deliveries are serialised on that clone and take about
+# seven seconds each, so this bounds how deep a queue an operator
+# can build by accepting in bulk: at the default, roughly forty.
+# It used to borrow delivery.git_timeout, which is a bound on one
+# git subprocess -- a different quantity that happened to share a
+# number, so raising the wait also loosened every git call.
+# Bounded rather than unlimited because each waiting Accept holds a
+# Starlette threadpool thread (anyio's default limiter is 40).
+#clone_wait_timeout = 300.0

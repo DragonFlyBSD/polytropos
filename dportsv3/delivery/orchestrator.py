@@ -77,17 +77,25 @@ def _clone_locked() -> Iterator[None]:
     Bounded rather than blocking: Starlette's threadpool is finite, so
     an unbounded wait behind one hung delivery would park request
     threads until the tracker stops answering anything.
-    ``delivery.git_timeout`` is the coherent bound to wait -- it exists
-    for this same hazard one layer down ("a hung remote would otherwise
-    block the Accept request thread indefinitely") and a healthy
-    delivery finishes in seconds, far inside it.
+
+    The bound is ``delivery.clone_wait_timeout``, not
+    ``delivery.git_timeout``. Those were the same knob until an operator
+    accepting ~26 bundles in one sitting lost 14 of them: measured
+    2026-09-04, deliveries serialise cleanly at 6.6-8.2s each, so a 60s
+    wait serves about eight and everything behind that is recorded as a
+    provider failure it never reached. git_timeout is a bound on a
+    single git subprocess -- a different quantity that happened to share
+    a number, so raising the wait through it would also have loosened
+    every git call.
 
     Raises ``DeliveryError`` on timeout from inside deliver()'s existing
     try, so a busy clone is recorded as the same create_failed row as
-    any other provider failure, with a message saying to retry.
+    any other provider failure, with a message saying to retry. That
+    label is wrong -- nothing failed, the delivery was never attempted
+    -- and is tracked separately; this only moves the wall.
     """
     from dportsv3 import settings  # noqa: PLC0415
-    timeout = float(settings.get("delivery.git_timeout"))
+    timeout = float(settings.get("delivery.clone_wait_timeout"))
     if not _CLONE_LOCK.acquire(timeout=timeout):
         raise DeliveryError(
             f"another delivery is using the clone (waited {timeout:g}s); "
