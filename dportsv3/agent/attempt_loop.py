@@ -100,18 +100,244 @@ def _min_attempt_budget(budget: int) -> int:
     return int(budget * frac)
 
 
-def _failure_context_message(attempt_idx: int, prev_text: str) -> dict:
-    """Build the user message that nudges the LLM into a retry."""
-    snippet = prev_text[-2000:] if len(prev_text) > 2000 else prev_text
-    parts = [
-        f"Previous attempt #{attempt_idx} did not succeed.\n",
-        f"Tail of your prior response:\n```\n{snippet}\n```\n",
-    ]
+#: Tools whose call means "the previous attempt looked at this".
+#: ``grep`` is deliberately not here — its ``path`` is usually a whole
+#: tree, so listing it as a file read is misleading, and the pattern is
+#: the half worth carrying. See ``_searches``.
+_READ_TOOLS = ("get_file", "list_dir", "get_effective_overlay")
+#: Tools whose call means "the previous attempt changed this".
+_WRITE_TOOLS = ("put_file", "edit_file", "apply_intent", "install_patches",
+                "genpatch", "make_patch")
+#: Tools that prove or disprove a fix.
+_PROOF_TOOLS = ("dsynth_build", "dsynth_test")
+
+#: Cap on the carried diff. Measured diffs run 0.3-2.2KB, so this
+#: rarely bites; when it does the message says so.
+_MAX_CARRIED_DIFF = 4000
+
+
+def _targets(tool_log: list[dict], tools: tuple[str, ...], limit: int) -> list[str]:
+    """Distinct ``path``/``origin`` arguments the previous attempt passed.
+
+    Capped at ``limit`` and, when it truncates, says so — a list the
+    model reads as exhaustive when it is not would send it looking for
+    the missing entries, which is the re-derivation this exists to stop.
+    """
+    out: list[str] = []
+    for ev in tool_log:
+        if ev.get("tool") not in tools:
+            continue
+        args = ev.get("args") or {}
+        target = args.get("path") or args.get("relpath") or args.get("origin")
+        if not target:
+            continue
+        target = str(target)
+        if target not in out:
+            out.append(target)
+    if len(out) > limit:
+        extra = len(out) - limit
+        return out[:limit] + [f"… and {extra} more"]
+    return out
+
+
+def _searches(tool_log: list[dict], limit: int = 8) -> list[str]:
+    """What the previous attempt grepped for, pattern first.
+
+    Exact-arg repeats of ``grep`` are rare (2% of retry calls) because
+    the model rewords the pattern between attempts — searching
+    ``glib-2.86.4`` and then ``glib-2.86`` over the same tree. Carrying
+    the patterns is what stops that; carrying the paths would not.
+    """
+    out: list[str] = []
+    for ev in tool_log:
+        if ev.get("tool") != "grep":
+            continue
+        args = ev.get("args") or {}
+        pattern = args.get("pattern")
+        if not pattern:
+            continue
+        entry = f"{pattern!r} under {args.get('path', '?')}"
+        if entry not in out:
+            out.append(entry)
+    if len(out) > limit:
+        return out[:limit] + [f"… and {len(out) - limit} more"]
+    return out
+
+
+#: ``loop_stop`` reasons, in words the model can act on. A bare
+#: ``turn_cap`` tells it nothing; "ran out of tool turns" tells it to be
+#: more direct this time.
+_STOP_REASONS = {
+    "turn_cap": "it ran out of tool turns before reaching a conclusion",
+    "token_budget": "it ran out of token budget",
+    "text_only": "it finished and wrote a report, but the fix was not proven",
+}
+
+
+def _last_proof_failure(tool_log: list[dict]) -> str:
+    """The error tail of the last build the previous attempt ran, if any."""
+    for ev in reversed(tool_log):
+        if ev.get("tool") not in _PROOF_TOOLS:
+            continue
+        result = ev.get("result")
+        if not isinstance(result, dict):
+            continue
+        if result.get("rebuild_ok") is True or result.get("ok") is True:
+            return ""
+        tail = (
+            result.get("error")
+            or result.get("stderr_tail")
+            or result.get("stdout_tail")
+            or result.get("summary")
+            or ""
+        )
+        return str(tail)[-600:].strip()
+    return ""
+
+
+def _current_diff(env: str | None, origin: str | None) -> str | None:
+    """The overlay diff that survived into this retry.
+
+    ``reset_attempt_workspace`` clears the WRKDIR and genpatch-out but
+    never touches ``ports/<origin>/``, so a retry inherits the previous
+    attempt's edits. Measured: the diff grows across attempts (0b, then
+    1694b, 2116b, 2204b on one four-attempt job). The model could not
+    tell, so it spent a turn on ``emit_diff`` rediscovering it —
+    handing it over costs the harness a pure read and no turn at all.
+
+    Returns ``None`` when the diff could not be read at all, which is
+    not the same as an empty diff: claiming "nothing changed" on a
+    failed read would contradict the tool log right above it.
+    """
+    if not env or not origin:
+        return None
+    try:
+        from . import worker  # noqa: PLC0415 — avoid an import cycle at module load
+        result = worker.emit_diff(env, origin, "")
+    except Exception as exc:  # noqa: BLE001 — a retry must not die on its own preamble
+        log.warning("attempt_loop: could not read the carried diff: %s", exc)
+        return None
+    if not isinstance(result, dict) or result.get("ok") is False:
+        return None
+    diff = str(result.get("diff") or "")
+    if len(diff) > _MAX_CARRIED_DIFF:
+        # Say so rather than handing over a diff that ends mid-hunk and
+        # reads as complete.
+        return diff[:_MAX_CARRIED_DIFF] + "\n… diff truncated, run `emit_diff` for the rest"
+    return diff
+
+
+def _failure_context_message(
+    attempt_idx: int,
+    prev_text: str,
+    *,
+    env: str | None = None,
+    origin: str | None = None,
+    tool_log: list[dict] | None = None,
+    stop_reason: str | None = None,
+) -> dict:
+    """Build the user message that opens a retry.
+
+    A retry is a continuation, not a restart, but nothing told the model
+    that: it re-derived state the previous attempt already had, and
+    ~52% of a retry's file reads repeated a read an earlier attempt had
+    already made (poly-5e1). This message hands over what the harness
+    knows — what was looked at, what was changed, why the build failed,
+    and the diff still on disk — so the retry opens where the last one
+    stopped instead of re-walking it.
+
+    Built by the harness rather than asked of the model on purpose: 73
+    of 89 measured attempts ended on a turn or token cap and never got
+    a turn in which to write a handoff note.
+
+    On inlining the diff, against poly-9u2 ("a prior attempt is a
+    record, not a recipe"): that bead is about a *different bundle's*
+    diff, reproduced under ``Rebuild Status: success``, which the agent
+    copied. Three things separate this from that. The diff here belongs
+    to this job and is still on disk; it is labelled as a hypothesis
+    that failed, not as a success; and the model reaches it anyway by
+    calling ``emit_diff`` on turn 2, so withholding it buys no safety
+    and costs a turn. The residual anchoring risk is real, which is
+    what the closing section exists to counter — keep them together.
+    """
+    tool_log = tool_log or []
+    parts = [f"Previous attempt #{attempt_idx} did not succeed.\n"]
+
+    if stop_reason:
+        parts.append(
+            f"It stopped because {_STOP_REASONS.get(stop_reason, stop_reason)}.\n"
+        )
+
+    read = _targets(tool_log, _READ_TOOLS, limit=20)
+    searched = _searches(tool_log)
+    changed = _targets(tool_log, _WRITE_TOOLS, limit=12)
+    if read or searched or changed:
+        parts.append("## What that attempt already did\n")
+        if read:
+            parts.append("Looked at:\n" + "".join(f"- {t}\n" for t in read))
+        if searched:
+            parts.append("Searched for:\n" + "".join(f"- {t}\n" for t in searched))
+        if changed:
+            parts.append("Changed:\n" + "".join(f"- {t}\n" for t in changed))
+
+    failure = _last_proof_failure(tool_log)
+    if failure:
+        parts.append(f"Its last build failed with:\n```\n{failure}\n```\n")
+
+    diff = _current_diff(env, origin)
+    parts.append("## What survived into this attempt\n")
     parts.append(
-        "Inspect what went wrong, adjust your approach, and try again. "
-        "If you've tried the same idea twice and it failed both times, "
-        "describe the obstacle in your Patch Log and stop — don't burn "
-        "the budget thrashing."
+        "The scratch was reset — the WRKDIR under /work/obj and "
+        "/work/genpatch-out are gone, so re-run `make_extract` and "
+        "`materialize_dports` when you need them. The overlay under "
+        "`ports/<origin>/` was **not** reset.\n"
+    )
+    if diff:
+        parts.append(f"Its current diff:\n```diff\n{diff}\n```\n")
+    elif diff == "" and not changed:
+        parts.append(
+            "The previous attempt left no changes on disk at all, so "
+            "there is nothing to build on — start from the port as it "
+            "stands.\n"
+        )
+    else:
+        # Either the diff could not be read, or it read empty while the
+        # tool log shows writes. Both mean "look for yourself" — never
+        # assert that nothing changed over the top of the Changed list.
+        parts.append(
+            "The overlay diff could not be read here — run `emit_diff` "
+            "to see the current state before you change anything.\n"
+        )
+
+    snippet = prev_text[-2000:] if len(prev_text) > 2000 else prev_text
+    if snippet:
+        parts.append(f"## Tail of your prior response\n```\n{snippet}\n```\n")
+
+    # The point of handing the diff over is to save the retry from
+    # re-deriving it — not to commit the retry to defending it. Say so
+    # explicitly, or carrying the work forward just buys more thrash:
+    # one measured job ran three attempts producing a 0-byte diff
+    # before the fourth wrote anything.
+    subject = "That diff is" if diff else "The approach above is"
+    parts.append(
+        "## Before you continue\n"
+        "Treat everything above as evidence, not as progress. "
+        f"{subject} a hypothesis that has now failed — it is not a "
+        "foundation you have to defend, and you are not obliged to "
+        "build on it. "
+        "Reverting it and trying something genuinely different is a "
+        "legitimate move, and often the right one.\n\n"
+        "Ask first: is this approach failing because of a detail I got "
+        "wrong, or because it was never going to work? If the same idea "
+        "has now failed the same way twice, it is the second — change "
+        "the idea rather than the details.\n\n"
+        "And if you conclude that no patch can fix this here — the "
+        "breakage is upstream, in the environment, or in a dependency — "
+        "write that in your Patch Log and stop. A clear account of why "
+        "the obvious fix does not work is a genuinely better result "
+        "than a third variation on it: an operator can act on the "
+        "first and cannot act on the second. Stopping with a good "
+        "explanation is a success, not a give-up."
     )
     return {"role": "user", "content": "\n".join(parts)}
 
@@ -150,6 +376,14 @@ def run(
     total_usage = Usage()
     attempts: list[AttemptInfo] = []
     prev_text = ""
+    # What the previous attempt looked at, changed and proved. Carried
+    # so the retry's opening message can hand it over instead of making
+    # the model re-derive it (poly-5e1). Deliberately only the
+    # immediately-previous attempt: the diff below accumulates across
+    # all of them, but every attempt's tool log would grow the message
+    # without bound.
+    prev_tools: list[dict] = []
+    prev_stop: str | None = None
     final_text = ""
     winning_proof: dict | None = None
     # Default for the needs-help return, which sits outside the attempt
@@ -184,7 +418,14 @@ def run(
             messages = list(base_messages)
         else:
             messages = list(base_messages) + [
-                _failure_context_message(attempt_idx - 1, prev_text)
+                _failure_context_message(
+                    attempt_idx - 1,
+                    prev_text,
+                    env=env,
+                    origin=origin,
+                    tool_log=prev_tools,
+                    stop_reason=prev_stop,
+                )
             ]
 
         # Remaining tokens this attempt is allowed to consume.
@@ -258,10 +499,13 @@ def run(
         # Watch the event stream for why the loop ended — a fact the
         # harness has and a turn-capped attempt never gets to report.
         seen: dict = {}
+        this_attempt_tools: list[dict] = []
 
-        def _observe(ev, _seen=seen):
+        def _observe(ev, _seen=seen, _tools=this_attempt_tools):
             if ev.get("type") == "loop_stop":
                 _seen["stop_reason"] = ev.get("reason")
+            if ev.get("type") == "tool_call":
+                _tools.append(ev)
             if on_event is not None:
                 on_event(ev)
 
@@ -318,6 +562,8 @@ def run(
         total_usage.add(attempt_usage)
         prev_text = response.text or ""
         final_text = prev_text
+        prev_tools = this_attempt_tools
+        prev_stop = seen.get("stop_reason")
 
         # Optional full-session dump (gated by DP_HARNESS_DUMP_SESSION
         # at the callback's construction site). messages is the final
