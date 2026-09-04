@@ -58,7 +58,13 @@
         Note: <code>{{ dr.note }}</code>
       </div>
       {% endif %}
-      {# Step 11d-5: Mark-merged / Mark-closed buttons. The status
+      {# Ids are deliberately dp- not op-: agentic-bundle.js auto-wires
+         every button[id^="op-"] to POST /api/bundles/{id}/<suffix>, and
+         these two post to /delivery/status through their own handler.
+         Under an op- prefix both listeners fire and the derived
+         /mark-merged 404s into the operator-actions status line.
+
+         Step 11d-5: Mark-merged / Mark-closed buttons. The status
          machine is one-way: created/updated → merged/closed →
          terminal. The buttons are absent on terminal/failed rows.
          Operators who need to undo a terminal can reopen the
@@ -69,32 +75,34 @@
          is rendered directly above, so an operator can see whether this
          was the clone race (retryable) or a conflict (not). #}
       {% if dr.status == 'create_failed' and bundle.resolution == 'accepted' %}
+      {# The id is load-bearing: agentic-bundle.js auto-wires every
+         button[id^="op-"] to POST /api/bundles/{id}/<id minus "op-">.
+         So `op-deliver` IS the route binding -- renaming it silently
+         repoints the button at an endpoint that does not exist. #}
       <div class="btn-group" style="margin-top:8px;">
-        <button id="op-retry-delivery" type="button" class="btn btn-success"
+        <button id="op-deliver" type="button" class="btn btn-success"
                 data-bundle="{{ bundle.bundle_id }}"
                 style="font-size:12px;padding:4px 10px;"
                 title="Re-open the pull request for this already-accepted fix. Does not change the accept decision.">
           Retry delivery
         </button>
-        <span id="op-retry-delivery-status"
-              style="color:var(--text-dim);font-size:11px;"></span>
       </div>
       {% endif %}
       {% if dr.status in ('created', 'updated') %}
       <div class="btn-group" style="margin-top:8px;">
-        <button id="op-mark-merged" type="button" class="btn btn-success"
+        <button id="dp-mark-merged" type="button" class="btn btn-success"
                 data-bundle="{{ bundle.bundle_id }}"
                 style="font-size:12px;padding:4px 10px;"
                 title="Mark this delivery as merged upstream — bridge to a future PR-status polling step">
           Mark merged
         </button>
-        <button id="op-mark-closed" type="button" class="btn btn-ghost"
+        <button id="dp-mark-closed" type="button" class="btn btn-ghost"
                 data-bundle="{{ bundle.bundle_id }}"
                 style="font-size:12px;padding:4px 10px;"
                 title="Mark this delivery as closed without merge (rejected, superseded, etc.)">
           Mark closed
         </button>
-        <span id="op-delivery-status"
+        <span id="dp-delivery-status"
               style="color:var(--text-dim);font-size:11px;"></span>
       </div>
       {% endif %}

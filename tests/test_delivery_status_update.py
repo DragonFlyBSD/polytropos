@@ -405,8 +405,13 @@ def test_buttons_render_on_actionable_status(client, deployment, status):
     conn.close()
 
     body = client.get(f"/agentic/bundles/b-ui-{status}").text
-    assert 'id="op-mark-merged"' in body
-    assert 'id="op-mark-closed"' in body
+    # dp-, not op-: agentic-bundle.js auto-wires button[id^="op-"] to
+    # POST /api/bundles/{id}/<suffix>, and these post to
+    # /delivery/status through their own handler. Under op- both
+    # listeners fired and the derived /mark-merged 404'd. See
+    # test_delivery_retry_endpoint's op-prefix invariant.
+    assert 'id="dp-mark-merged"' in body
+    assert 'id="dp-mark-closed"' in body
 
 
 @pytest.mark.parametrize("status", ["merged", "closed", "create_failed"])
@@ -418,8 +423,8 @@ def test_buttons_absent_on_terminal_status(client, deployment, status):
     conn.close()
 
     body = client.get(f"/agentic/bundles/b-uit-{status}").text
-    assert 'id="op-mark-merged"' not in body
-    assert 'id="op-mark-closed"' not in body
+    assert 'id="dp-mark-merged"' not in body
+    assert 'id="dp-mark-closed"' not in body
 
 
 def test_buttons_absent_without_delivery_row(client, deployment):
@@ -428,8 +433,8 @@ def test_buttons_absent_without_delivery_row(client, deployment):
     conn.commit()
     conn.close()
     body = client.get("/agentic/bundles/b-ui-none").text
-    assert 'id="op-mark-merged"' not in body
-    assert 'id="op-mark-closed"' not in body
+    assert 'id="dp-mark-merged"' not in body
+    assert 'id="dp-mark-closed"' not in body
 
 
 def test_note_renders_under_note_label(client, deployment):

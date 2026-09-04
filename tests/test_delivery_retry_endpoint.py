@@ -210,3 +210,60 @@ def test_delivery_off_reports_skipped_rather_than_success(client, deployment):
     body = client.post("/api/bundles/b-1/deliver").json()
     assert body["delivery"]["status"] == "skipped"
     assert body["delivery"]["skip_reason"] == "no_config"
+
+
+# --- the id prefix is a route binding ---------------------------------
+
+def test_every_op_prefixed_button_maps_to_a_real_endpoint(deployment):
+    """agentic-bundle.js auto-wires every ``button[id^="op-"]``:
+
+        const action = btn.id.replace('op-', '');
+        dpOpAction(action, btn.dataset.bundle);
+
+    so the id IS the route. A button named ``op-retry-delivery`` posts to
+    ``/api/bundles/{id}/retry-delivery`` whether or not anyone wrote that
+    endpoint — it 404s into the operator-actions status line, which is
+    how this was found. Two pre-existing buttons (mark-merged,
+    mark-closed) had the same collision and post via their own handler,
+    so they were renamed off the prefix rather than given routes.
+    """
+    import re
+    from pathlib import Path
+
+    tpl = Path(__file__).resolve().parents[1] / "dportsv3/tracker/templates"
+    ids: set[str] = set()
+    for f in tpl.glob("*.html"):
+        ids.update(
+            m.group(1) for m in
+            re.finditer(r'<button[^>]*\bid="(op-[a-z0-9-]+)"', f.read_text())
+        )
+    assert ids, "expected to find op-* buttons"
+
+    paths = {
+        r.path for r in deployment["app"].routes if hasattr(r, "path")
+    }
+    missing = sorted(
+        f"{bid} -> /api/bundles/{{bundle_id}}/{bid.replace('op-', '', 1)}"
+        for bid in ids
+        if f"/api/bundles/{{bundle_id}}/{bid.replace('op-', '', 1)}"
+        not in paths
+    )
+    assert not missing, (
+        "op-prefixed buttons with no matching endpoint (they will 404 on "
+        "click): " + "; ".join(missing)
+    )
+
+
+def test_the_retry_button_is_the_one_the_generic_handler_can_reach(deployment):
+    """Guards the specific rename: the endpoint is /deliver, so the
+    button must be op-deliver. Renaming either side alone silently
+    repoints the button at a route that does not exist."""
+    from pathlib import Path
+    card = (
+        Path(__file__).resolve().parents[1]
+        / "dportsv3/tracker/templates/_bundle_delivery.html"
+    ).read_text()
+    assert 'id="op-deliver"' in card
+    assert "/api/bundles/{bundle_id}/deliver" in {
+        r.path for r in deployment["app"].routes if hasattr(r, "path")
+    }

@@ -166,6 +166,36 @@
           (d.status || 'unknown') + ' — reloading';
         setTimeout(() => location.reload(), 800);
       }
+    } else if (action === 'deliver') {
+      // poly-86t: retrying the delivery of an already-accepted bundle.
+      // Same reporting rules as accept's delivery leg -- a 200 says the
+      // retry ran, not that it worked -- but no "accepted" prefix,
+      // because this action deliberately does not touch the decision.
+      const d = data.delivery || {};
+      if (d.status === 'created' || d.status === 'updated') {
+        const where = d.url
+          ? ' → ' + d.url
+          : (d.provider ? ' (' + d.provider + ')' : '');
+        statusEl.innerHTML =
+          'delivery ' + d.status + where + ' — reloading';
+        setTimeout(() => location.reload(), 1200);
+      } else if (d.status === 'skipped') {
+        statusEl.textContent =
+          'delivery skipped: ' + (d.skip_reason || 'unknown');
+        restorePreClickEnabled(preState);
+      } else if (d.status === 'create_failed') {
+        // No reload: three of the stranded rows fail on a conflict
+        // rather than the clone race and will fail identically every
+        // time, so the error has to stick where the operator can read
+        // it against the one already shown on the card.
+        statusEl.textContent =
+          'delivery FAILED again: ' + (d.error || 'unspecified error');
+        restorePreClickEnabled(preState);
+      } else {
+        statusEl.textContent =
+          'delivery: ' + (d.status || 'unknown') + ' — reloading';
+        setTimeout(() => location.reload(), 800);
+      }
     } else {
       statusEl.textContent = action + ' OK — reloading';
       setTimeout(() => location.reload(), 400);
@@ -282,7 +312,7 @@
 
 // --- Delivery mark-merged / mark-closed ---
 (function () {
-  const statusEl = document.getElementById('op-delivery-status');
+  const statusEl = document.getElementById('dp-delivery-status');
   if (!statusEl) { return; }
   async function dpMarkStatus(newStatus, bundleId) {
     const note = prompt(
@@ -293,8 +323,8 @@
     const body = {status: newStatus};
     if (note) { body.note = note; }
     statusEl.textContent = 'updating…';
-    const merged = document.getElementById('op-mark-merged');
-    const closed = document.getElementById('op-mark-closed');
+    const merged = document.getElementById('dp-mark-merged');
+    const closed = document.getElementById('dp-mark-closed');
     merged.disabled = true; closed.disabled = true;
     let resp, data;
     try {
@@ -319,58 +349,12 @@
     statusEl.textContent = newStatus + ' — reloading';
     setTimeout(() => location.reload(), 400);
   }
-  document.getElementById('op-mark-merged').addEventListener(
+  document.getElementById('dp-mark-merged').addEventListener(
     'click', (e) => dpMarkStatus('merged', e.target.dataset.bundle)
   );
-  document.getElementById('op-mark-closed').addEventListener(
+  document.getElementById('dp-mark-closed').addEventListener(
     'click', (e) => dpMarkStatus('closed', e.target.dataset.bundle)
   );
-})();
-
-// --- Retry a failed delivery (poly-86t) ---
-// Separate IIFE from the mark-merged pair above: that block returns early
-// when its buttons are absent, and the two never render together --
-// mark-merged shows on created/updated, this shows on create_failed.
-(function () {
-  const btn = document.getElementById('op-retry-delivery');
-  const statusEl = document.getElementById('op-retry-delivery-status');
-  if (!btn || !statusEl) { return; }
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    statusEl.textContent = 'delivering…';
-    let resp, data;
-    try {
-      resp = await fetch(
-        '/api/bundles/' + encodeURIComponent(btn.dataset.bundle) + '/deliver',
-        {method: 'POST',
-         headers: {'Content-Type': 'application/json'},
-         body: '{}'}
-      );
-      data = await resp.json();
-    } catch (exc) {
-      statusEl.textContent = 'error: ' + exc;
-      btn.disabled = false;
-      return;
-    }
-    if (!resp.ok) {
-      statusEl.textContent = 'error: ' + (data.detail || resp.status);
-      btn.disabled = false;
-      return;
-    }
-    // The endpoint is best-effort like accept's delivery leg: a 200 says
-    // the retry ran, not that it succeeded. Report which.
-    const d = data.delivery || {};
-    if (d.status === 'created' || d.status === 'updated') {
-      statusEl.textContent = d.status + ' — reloading';
-      setTimeout(() => location.reload(), 400);
-    } else if (d.status === 'skipped') {
-      statusEl.textContent = 'skipped: ' + (d.skip_reason || 'unknown');
-      btn.disabled = false;
-    } else {
-      statusEl.textContent = 'failed: ' + (d.error || d.status || 'unknown');
-      btn.disabled = false;
-    }
-  });
 })();
 
 // --- Fix-review chat ---
