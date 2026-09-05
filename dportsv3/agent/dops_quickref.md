@@ -142,6 +142,11 @@ text line-insert-after file Makefile \
 text replace-once file configure.ac \
      from "AC_DEFINE(HAVE_FREEBSD)" \
      to   "AC_DEFINE(HAVE_FREEBSDLIKE)"
+
+# pkg-plist is an ordinary file in the port tree, so the same ops edit
+# it. Disabling an option usually means dropping the entries it would
+# have installed — one line-remove each, matched EXACTLY.
+text line-remove file pkg-plist exact "%%LLD%%llvm%%LLVM_SUFFIX%%/bin/ld"
 ```
 
 `text replace-once` is the single most useful op for converting
@@ -233,6 +238,8 @@ branches).
 | Inserting a whole `.if DragonFly ... .endif` block | `mk block set condition "..."` |
 | Framework patch logic that doesn't reduce to mk/text | `patch apply diffs/X.diff` (only for `diffs/`, not `dragonfly/`) |
 | Upstream-source patch (anything under `dragonfly/`) | `file materialize dragonfly/X -> dragonfly/X` (stage, do NOT patch) |
+| Dropping pkg-plist entries for an option you disabled | `text line-remove file pkg-plist exact "<line>"`, one per entry |
+| Adding a pkg-plist entry | `text line-insert-after file pkg-plist anchor "<line>" line "<new>"` |
 
 ## Choosing ops by artifact domain
 
@@ -251,6 +258,12 @@ or regenerating a deferred `diffs/Makefile.diff` patch. Pick by the patch's
 - Genuinely complex (multi-hunk, conditional logic) → fall back
   to `patch apply diffs/X.diff` (engine applies against
   compose-materialized framework files in `port_root` — works).
+- `pkg-plist` edits → `text line-remove` / `text line-insert-after`,
+  one op per line. Prefer these to a `diffs/pkg-plist.diff`: plists are
+  thousands of lines and churn every release, so a context diff drifts,
+  while an exact line match fails naming the line it could not find.
+  Deltas here are nearly always pure deletions — the entries an option
+  you turned off would have installed.
 
 **Upstream-source patches (`dragonfly/*`):**
 - Default → `file materialize dragonfly/X -> dragonfly/X`. ALWAYS stage;
