@@ -73,6 +73,86 @@ def test_digits_embedded_in_identifiers_survive():
         compute_fingerprint("ImportError: python311 module missing\n")
 
 
+# --- distilled errors.txt (poly-awz) ---------------------------------------
+
+def _distilled(*candidates: str, tail: str = "some tail line") -> str:
+    """One errors.txt in the shape distill_log() actually writes."""
+    body = "\n".join(candidates)
+    return (
+        "== Summary ==\n"
+        "logfile: /work/dsynth/logs/devel___llvm19.log\n"
+        "\n"
+        "== First error candidates (max 60 matches) ==\n"
+        f"{body}\n"
+        "\n"
+        "== Error blocks (context +/-2, truncated later) ==\n"
+        "12:some context\n"
+        "\n"
+        "== Tail (last 200 lines) ==\n"
+        f"{tail}\n"
+    )
+
+
+def test_banner_is_not_the_fingerprint():
+    """The distiller writes '== Summary ==' first, so the old
+    first-non-empty-line rule hashed a constant for every failure in the
+    tree: 28 bundles over 19 origins shared one signature."""
+    norm = normalize_error(_distilled("1234:configure: error: no acceptable C compiler"))
+    assert norm == "configure: error: no acceptable C compiler"
+    assert "Summary" not in norm
+
+
+def test_two_failures_in_one_origin_stay_distinct():
+    """The property poly-awz says is broken: llvm19@default failed at
+    configure and llvm19@lite at build, and both fingerprinted alike."""
+    configure = _distilled("1234:configure: error: no acceptable C compiler")
+    build = _distilled("87:ld: error: undefined symbol: backtrace_symbols_fd")
+    assert compute_fingerprint(configure) != compute_fingerprint(build)
+
+
+def test_grep_line_number_prefix_is_stripped():
+    """grep -n prefixes each hit with its line number in the source log.
+    _LONG_INT only reduces 3+ digit runs, so without stripping, the same
+    failure at line 87 and line 1234 would split into two signatures."""
+    near = _distilled("87:configure: error: no acceptable C compiler")
+    far = _distilled("1234:configure: error: no acceptable C compiler")
+    assert normalize_error(near) == normalize_error(far)
+    assert compute_fingerprint(near) == compute_fingerprint(far)
+
+
+def test_tail_noise_does_not_reach_the_signature():
+    """Only the candidate section is load-bearing; the tail varies run to
+    run and must not move the fingerprint."""
+    a = _distilled("5:CMake Error: could not find OpenSSL", tail="gmake[2]: *** [all] Error 2")
+    b = _distilled("5:CMake Error: could not find OpenSSL", tail="totally different tail")
+    assert compute_fingerprint(a) == compute_fingerprint(b)
+
+
+def test_distilled_without_candidates_has_no_fingerprint():
+    """A phase the distiller has no pattern for (fetch, patch) yields an
+    empty candidate section. That is 'no root cause', not a shared
+    constant -- issue_key collapses these per (target, origin)."""
+    empty = (
+        "== Summary ==\n"
+        "logfile: /work/dsynth/logs/lang___rust.log\n"
+        "\n"
+        "== First error candidates (max 60 matches) ==\n"
+        "\n"
+        "== Error blocks (context +/-2, truncated later) ==\n"
+        "\n"
+        "== Tail (last 200 lines) ==\n"
+        "=> Fetching rustc-1.85.1-src.tar.xz\n"
+    )
+    assert normalize_error(empty) is None
+    assert compute_fingerprint(empty) is None
+
+
+def test_missing_log_keyvalue_file_still_fingerprints():
+    """When the log is unreadable the hook writes a key/value file with no
+    section banners. That shape keeps the first-non-empty-line rule."""
+    assert normalize_error("missing_log=1\nlogfile=/work/x.log\n") == "missing_log=1"
+
+
 # --- ingest stamping -------------------------------------------------------
 
 

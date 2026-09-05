@@ -41,22 +41,75 @@ _LINECOL = re.compile(r":\d+(?::\d+)?(?=:|\s|\)|,|$)")
 _LONG_INT = re.compile(r"\b\d{3,}\b")
 _WS = re.compile(r"\s+")
 
+# The failure hook's distiller (dports_dev_env dsynth-hooks/hook_common.sh,
+# distill_log) does not write the root-cause line first. It writes
+# banner-delimited sections:
+#
+#     == Summary ==
+#     logfile: /work/dsynth/logs/devel___json-glib.log
+#
+#     == First error candidates (max 60 matches) ==
+#     1234:configure: error: C compiler cannot create executables
+#     ...
+#     == Error blocks (context +/-2, truncated later) ==
+#     == Tail (last 200 lines) ==
+#
+# So "the first non-empty line" is the literal "== Summary ==" for every
+# failure in the tree. Measured on a 317-package build: 28 bundles, 19
+# origins, ONE distinct signature (poly-awz). The root cause is the first
+# entry under "First error candidates".
+_SECTION_HEAD = re.compile(r"^==\s.*\s==$")
+_CANDIDATES_HEAD = re.compile(r"^==\s*First error candidates\b")
+# grep -n prefixes every hit with its line number in the source log. That is
+# incidental, and _LONG_INT only reduces runs of 3+ digits, so a two-digit
+# line number would otherwise split one failure into several signatures.
+_GREP_LINENO = re.compile(r"^\d+:")
+
+
+def _root_cause_line(text: str) -> str | None:
+    """The line to fingerprint, from either shape of ``logs/errors.txt``.
+
+    Distilled output is section-delimited (see ``_SECTION_HEAD``): take the
+    first entry under "First error candidates" and strip grep's line-number
+    prefix. Anything else — the ``missing_log=1`` key/value file the hook
+    writes when the log is unreadable, or a caller passing a raw error line
+    — keeps the original "first non-empty line" rule.
+    """
+    lines = text.splitlines()
+    in_candidates = False
+    distilled = False
+    for raw in lines:
+        stripped = raw.strip()
+        if _SECTION_HEAD.match(stripped):
+            distilled = True
+            in_candidates = bool(_CANDIDATES_HEAD.match(stripped))
+            continue
+        if in_candidates and stripped:
+            return _GREP_LINENO.sub("", stripped, count=1).strip() or None
+    if distilled:
+        # Distilled, but no candidate matched: a failure phase the
+        # distiller has no pattern for (fetch, patch — poly-m8m). There is
+        # no root-cause line, and saying so is right. issue_key collapses
+        # signatureless failures for one (target, origin) into a single
+        # fallback issue instead of inventing a shared constant.
+        return None
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return None
+
 
 def normalize_error(text: str | None) -> str | None:
-    """Return the canonicalized root-cause line of ``text`` (the first
-    non-empty line of ``logs/errors.txt``), or ``None`` if empty.
+    """Return the canonicalized root-cause line of ``text``, or ``None``
+    when it carries no usable one.
 
     The returned string is what gets hashed; it is deterministic and
     stable across builds of the same failure.
     """
     if not text:
         return None
-    line = ""
-    for raw in text.splitlines():
-        stripped = raw.strip()
-        if stripped:
-            line = stripped
-            break
+    line = _root_cause_line(text)
     if not line:
         return None
     line = _HEX_ADDR.sub("0xADDR", line)
