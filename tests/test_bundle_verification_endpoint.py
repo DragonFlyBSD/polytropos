@@ -231,6 +231,62 @@ def test_bundle_detail_renders_verify_failed_status(client, seeded_db):
     assert "verify failed" in body  # projected fix_status label
 
 
+def test_a_failed_verification_persists_its_exit_code_and_reason(
+    client, seeded_db,
+):
+    """dsynth_exit used to be accepted, documented as 'kept for audit', and
+    then forwarded only into the SSE payload -- so nothing could query or
+    render it and an operator saw THAT verification failed, never why."""
+    resp = client.post(
+        "/api/bundles/b-failed/verification",
+        json={"ok": False, "applied_diff_sha256": "b" * 64,
+              "dsynth_exit": 1,
+              "reason": "dsynth exited 1: check-sanity refused the port"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["verification_exit_code"] == 1
+    conn = sqlite3.connect(str(seeded_db))
+    row = conn.execute(
+        "SELECT verification_exit_code, verification_reason FROM bundles "
+        "WHERE bundle_id = 'b-failed'").fetchone()
+    conn.close()
+    assert row[0] == 1
+    assert "check-sanity" in row[1]
+
+
+def test_a_reason_is_bounded(client, seeded_db):
+    """The column holds a reason, not a log."""
+    client.post(
+        "/api/bundles/b-failed/verification",
+        json={"ok": False, "applied_diff_sha256": None,
+              "reason": "x" * 9000},
+    )
+
+    conn = sqlite3.connect(str(seeded_db))
+    stored = conn.execute(
+        "SELECT verification_reason FROM bundles WHERE bundle_id = 'b-failed'"
+    ).fetchone()[0]
+    conn.close()
+    assert len(stored) == 2000
+
+
+def test_a_failed_bundle_does_not_claim_it_was_verified(client, seeded_db):
+    """verification_at is written on BOTH outcomes, so a summary keyed on it
+    printed 'verified <timestamp>' two lines from the red 'verify failed'
+    pill -- and the timestamped one looked authoritative."""
+    _set_resolution(seeded_db, "b-failed", "agent_fixed")
+    client.post(
+        "/api/bundles/b-failed/verification",
+        json={"ok": False, "applied_diff_sha256": "b" * 64, "dsynth_exit": 1},
+    )
+
+    body = client.get("/agentic/bundles/b-failed").text
+
+    assert ">verified<" not in body
+    assert "verify failed" in body
+
+
 def test_bundle_detail_omits_status_row_when_unset(client, seeded_db):
     """A fresh, untriaged bundle (no resolution, no verification) shows no
     status row in its summary."""

@@ -8,8 +8,15 @@
       <span><span class="k">result</span>
         <span class="stat-pill {% if bundle.result == 'fail' or bundle.result == 'failure' %}failed{% else %}built{% endif %}">{{ bundle.result }}</span>
       </span>
-      {% if bundle.verification_at %}
+      {# Gate on the STATUS, not the timestamp: verification_at is written on
+         both outcomes, so keying on it printed "verified <ts>" two lines from
+         the red "verify failed" pill -- and the wrong one looked
+         authoritative because it carried a time. #}
+      {% if bundle.verification_status == 'verified' %}
       <span><span class="k">verified</span> {{ bundle.verification_at }}</span>
+      {% elif bundle.verification_status == 'verification_failed' %}
+      <span><span class="k">verify failed</span> {{ bundle.verification_at }}
+        {%- if bundle.verification_exit_code is not none %} <span class="k">exit</span> {{ bundle.verification_exit_code }}{% endif %}</span>
       {% endif %}
       {% if dops_state %}
       <span><span class="k">dops</span>

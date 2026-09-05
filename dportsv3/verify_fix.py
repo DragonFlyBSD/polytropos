@@ -43,6 +43,10 @@ from dportsv3.common.endpoints import DEFAULT_TRACKER_URL, tracker_url
 
 
 DIFF_RELPATH = "analysis/changes.diff"
+# The durable copy of a failed verification's build log. The endpoint's
+# docstring named this path as something a later slice "may" upload; it never
+# landed, which is why a failed verify kept no evidence at all.
+VERIFICATION_LOG_RELPATH = "analysis/verification.log"
 
 
 def _tracker_url() -> str:
@@ -68,6 +72,52 @@ def _post_json(url: str, body: dict, timeout: int = 10) -> dict:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.load(resp)
+
+
+def _put_artifact(url: str, bundle_id: str, relpath: str, data: bytes,
+                  timeout: int = 30) -> None:
+    """Upload one bundle artifact through the ingest endpoint."""
+    req = urllib.request.Request(
+        url, data=data, method="POST",
+        headers={
+            "Content-Type": "application/octet-stream",
+            "X-Bundle-Id": bundle_id,
+            "X-Relpath": relpath,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout):
+        pass
+
+
+# Cap on the reason text stored beside verification_status. Enough for a
+# check-sanity refusal or a linker error, far short of a log.
+_REASON_MAX = 1200
+
+
+def _failure_reason(ab: dict) -> str | None:
+    """A short, human-first explanation of why verification failed.
+
+    apply-and-build reports which stage refused (apply, reapply, dsynth)
+    and a tail of stderr, so the reason is read off the result rather than
+    guessed. The one that motivated this said check-sanity rejected the
+    port over ineffective options helpers -- nothing to do with the fix
+    under test -- and finding that out took an ssh session and a log the
+    next build would have overwritten.
+    """
+    if ab.get("ok"):
+        return None
+    stage = None
+    for key, label in (("apply_exit", "git apply"),
+                       ("reapply_exit", "reapply"),
+                       ("dsynth_exit", "dsynth")):
+        code = ab.get(key)
+        if code:
+            stage = f"{label} exited {code}"
+            break
+    tail = (ab.get("stderr_tail") or "").strip()
+    if stage and tail:
+        return f"{stage}: {tail}"[:_REASON_MAX]
+    return (stage or tail or None) if (stage or tail) else None
 
 
 class VerifyFixError(RuntimeError):
@@ -171,6 +221,7 @@ def run_verify_fix(
     _get_json=_get_json,
     _get_bytes=_get_bytes,
     _post_json=_post_json,
+    _put_artifact=_put_artifact,
     _apply_and_build=_default_apply_and_build,
 ) -> VerifyResult:
     """Run the orchestrator end-to-end.
@@ -244,7 +295,29 @@ def run_verify_fix(
         "ok": ok,
         "applied_diff_sha256": ab.get("applied_diff_sha256") or diff_sha,
         "dsynth_exit": ab.get("dsynth_exit"),
+        "reason": _failure_reason(ab),
     }
+
+    # Upload the build log BEFORE reporting the verdict, and only on
+    # failure. Until now the only copies were perishable: this log is
+    # deleted on success and overwritten on the next run, and dsynth's
+    # per-port log is overwritten by the next build of that origin, so by
+    # the time anyone asked why a verification failed the answer was gone.
+    # Best-effort -- a failed upload must not lose the verdict itself.
+    if not ok:
+        log_src = ab.get("log_path")
+        if log_src:
+            try:
+                _put_artifact(
+                    f"{base}/v1/artifacts/put", bundle_id,
+                    VERIFICATION_LOG_RELPATH,
+                    Path(log_src).read_bytes(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(
+                    f"warning: failed to upload {VERIFICATION_LOG_RELPATH}: "
+                    f"{exc}\n"
+                )
     posted = False
     try:
         _post_json(f"{base}/api/bundles/{urllib.parse.quote(bundle_id)}"

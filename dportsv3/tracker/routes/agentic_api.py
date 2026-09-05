@@ -408,19 +408,25 @@ def register(app, ctx):
               "ok": bool,                          # required
               "applied_diff_sha256": "<hex>"|null, # required (forensics)
               "verified_at": "<iso>"|null,         # optional; server fills
-              "dsynth_exit": int|null,             # optional, kept for audit
+              "dsynth_exit": int|null,             # optional; persisted
+              "reason": "<short text>"|null,       # optional; persisted
             }
 
-        Updates three columns on bundles: verification_status (set to
+        Updates five columns on bundles: verification_status (set to
         'verified' or 'verification_failed'), verification_at,
-        verification_applied_diff_sha256. Emits a bundle_verified
-        event so the SSE stream picks it up. Idempotent: re-POSTing
-        with a different applied_diff_sha256 overwrites — the column
-        records the *last* verification attempt, not a history.
+        verification_applied_diff_sha256, verification_exit_code and
+        verification_reason. Emits a bundle_verified event so the SSE
+        stream picks it up. Idempotent: re-POSTing with a different
+        applied_diff_sha256 overwrites — the columns record the *last*
+        verification attempt, not a history.
 
-        The dsynth log itself is not stored here — Slice 3 may upload
-        it as a bundle artifact (e.g. analysis/verification.log) via
-        the artifact-store endpoint independently.
+        ``dsynth_exit`` and ``reason`` used to be accepted and dropped
+        (the exit code reached only the SSE payload), so a failed
+        verification recorded no reason anywhere and an operator could
+        see THAT it failed and never why. The full log is uploaded
+        separately as analysis/verification.log by the orchestrator;
+        these two columns are what the bundle page reads so it can say
+        what happened without fetching an artifact.
         """
         from datetime import datetime, timezone  # noqa: PLC0415
 
@@ -448,6 +454,10 @@ def register(app, ctx):
             datetime.now(timezone.utc).isoformat()
         )
         applied_diff_sha = body.get("applied_diff_sha256")
+        dsynth_exit = body.get("dsynth_exit")
+        reason = body.get("reason")
+        if reason is not None:
+            reason = str(reason)[:2000]
 
         write_conn = sqlite3.connect(
             str(app.state.db_path), check_same_thread=False,
@@ -460,10 +470,12 @@ def register(app, ctx):
                        verification_status = ?,
                        verification_at = ?,
                        verification_applied_diff_sha256 = ?,
+                       verification_exit_code = ?,
+                       verification_reason = ?,
                        last_seen_at = ?
                    WHERE bundle_id = ?""",
                 (status, verified_at, applied_diff_sha,
-                 verified_at, bundle_id),
+                 dsynth_exit, reason, verified_at, bundle_id),
             )
             from dportsv3.artifact_store import emit_event  # noqa: PLC0415
             emit_event(write_conn, "bundle_verified", {
@@ -471,7 +483,8 @@ def register(app, ctx):
                 "verification_status": status,
                 "verification_at": verified_at,
                 "applied_diff_sha256": applied_diff_sha,
-                "dsynth_exit": body.get("dsynth_exit"),
+                "dsynth_exit": dsynth_exit,
+                "reason": reason,
             })
         finally:
             write_conn.close()
@@ -482,6 +495,8 @@ def register(app, ctx):
             "verification_status": status,
             "verification_at": verified_at,
             "applied_diff_sha256": applied_diff_sha,
+            "verification_exit_code": dsynth_exit,
+            "verification_reason": reason,
         }
 
     @app.post("/api/bundles/{bundle_id}/verify")

@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS bundles (
     verification_status TEXT,
     verification_at TEXT,
     verification_applied_diff_sha256 TEXT,
+    -- Why a verification failed. Without these the only record of a failed
+    -- verify was two perishable copies of a log -- the dev-env apply-and-build
+    -- log, deleted on success and overwritten on the next run, and dsynth's
+    -- per-port log, overwritten by the next build of that origin. Establishing
+    -- why one port failed took an ssh session and a log the next build would
+    -- have destroyed. The durable copy is analysis/verification.log, uploaded
+    -- by the orchestrator on failure; these two say enough to triage without
+    -- fetching it.
+    verification_exit_code INTEGER,
+    verification_reason TEXT,
     -- operator accept / reject
     accepted_at TEXT,
     accepted_by TEXT,
@@ -488,6 +498,8 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
+    "ALTER TABLE bundles ADD COLUMN verification_exit_code INTEGER",
+    "ALTER TABLE bundles ADD COLUMN verification_reason TEXT",
     "ALTER TABLE bundles ADD COLUMN issue_key TEXT",
 )
 

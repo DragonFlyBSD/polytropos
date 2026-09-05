@@ -8,6 +8,7 @@ no real tracker, env, or chroot is needed.
 from __future__ import annotations
 
 import hashlib
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,14 @@ def _stub_get_diff(diff_bytes: bytes):
     return _get_bytes
 
 
+def _stub_put(captures: list):
+    def _put_artifact(url: str, bundle_id: str, relpath: str, data: bytes,
+                      timeout: int = 30):
+        captures.append({"url": url, "bundle_id": bundle_id,
+                         "relpath": relpath, "data": data})
+    return _put_artifact
+
+
 def _stub_post(captures: list):
     def _post_json(url: str, body: dict, timeout: int = 10):
         captures.append((url, body))
@@ -86,6 +95,7 @@ def test_verify_fix_verified_posts_ok_true():
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(diff),
         _post_json=_stub_post(posts),
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
 
@@ -102,6 +112,7 @@ def test_verify_fix_verified_posts_ok_true():
     assert url == "http://t/api/bundles/b-1/verification"
     assert body == {
         "ok": True, "applied_diff_sha256": expected_sha, "dsynth_exit": 0,
+        "reason": None,
     }
 
 
@@ -118,6 +129,7 @@ def test_verify_fix_failed_posts_ok_false():
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(diff),
         _post_json=_stub_post(posts),
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
 
@@ -125,6 +137,106 @@ def test_verify_fix_failed_posts_ok_false():
     assert result.dsynth_exit == 1
     _, body = posts[0]
     assert body["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# A failed verification has to leave evidence (poly-9az)
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_verification_uploads_a_durable_log():
+    """Both copies of the build log are perishable: this one is deleted on
+    success and overwritten on the next run, and dsynth's per-port log is
+    overwritten by the next build of that origin. Working out why one port
+    failed took an ssh session and a log the next build would have
+    destroyed."""
+    diff = b"--- a/x\n+++ b/x\n"
+    log = tempfile.NamedTemporaryFile(suffix=".log", delete=False)
+    log.write(b"===>  Building devel/foo\ncheck-sanity: refused\n")
+    log.close()
+    fake_ab, _ = _fake_ab_factory(result_fields={
+        "ok": False, "dsynth_exit": 1, "log_path": log.name,
+    })
+    puts: list = []
+
+    verify_fix.run_verify_fix(
+        bundle_id="b-1", env="verify-env", tracker_url="http://t",
+        _get_json=_stub_get_bundle(),
+        _get_bytes=_stub_get_diff(diff),
+        _post_json=_stub_post([]),
+        _put_artifact=_stub_put(puts),
+        _apply_and_build=fake_ab,
+    )
+
+    assert len(puts) == 1
+    assert puts[0]["relpath"] == verify_fix.VERIFICATION_LOG_RELPATH
+    assert puts[0]["bundle_id"] == "b-1"
+    assert b"check-sanity: refused" in puts[0]["data"]
+    assert puts[0]["url"] == "http://t/v1/artifacts/put"
+
+
+def test_a_passing_verification_uploads_nothing():
+    """The log is only interesting when it explains a refusal."""
+    diff = b"--- a/x\n+++ b/x\n"
+    fake_ab, _ = _fake_ab_factory(result_fields={"ok": True})
+    puts: list = []
+
+    verify_fix.run_verify_fix(
+        bundle_id="b-1", env="verify-env", tracker_url="http://t",
+        _get_json=_stub_get_bundle(),
+        _get_bytes=_stub_get_diff(diff),
+        _post_json=_stub_post([]),
+        _put_artifact=_stub_put(puts),
+        _apply_and_build=fake_ab,
+    )
+
+    assert puts == []
+
+
+def test_a_failed_upload_does_not_lose_the_verdict():
+    """Best-effort: the verdict is the thing that must survive."""
+    diff = b"--- a/x\n+++ b/x\n"
+    fake_ab, _ = _fake_ab_factory(result_fields={"ok": False, "dsynth_exit": 1})
+    posts: list = []
+
+    def _boom(*a, **kw):
+        raise OSError("store unreachable")
+
+    result = verify_fix.run_verify_fix(
+        bundle_id="b-1", env="verify-env", tracker_url="http://t",
+        _get_json=_stub_get_bundle(),
+        _get_bytes=_stub_get_diff(diff),
+        _post_json=_stub_post(posts),
+        _put_artifact=_boom,
+        _apply_and_build=fake_ab,
+    )
+
+    assert result.posted is True
+    assert posts[0][1]["ok"] is False
+
+
+def test_the_reason_names_the_stage_that_refused():
+    """apply-and-build reports which stage failed and a stderr tail, so the
+    reason is read off the result rather than guessed."""
+    diff = b"--- a/x\n+++ b/x\n"
+    fake_ab, _ = _fake_ab_factory(result_fields={
+        "ok": False, "dsynth_exit": 1,
+        "stderr_tail": "check-sanity: ineffective options helper",
+    })
+    posts: list = []
+
+    verify_fix.run_verify_fix(
+        bundle_id="b-1", env="verify-env", tracker_url="http://t",
+        _get_json=_stub_get_bundle(),
+        _get_bytes=_stub_get_diff(diff),
+        _post_json=_stub_post(posts),
+        _put_artifact=_stub_put([]),
+        _apply_and_build=fake_ab,
+    )
+
+    reason = posts[0][1]["reason"]
+    assert "dsynth exited 1" in reason
+    assert "ineffective options helper" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +256,8 @@ def test_verify_fix_missing_origin_raises():
             _get_json=_bundle_no_origin,
             _get_bytes=_stub_get_diff(b"diff"),
             _post_json=_stub_post([]),
-            _apply_and_build=fake_ab,
+            _put_artifact=_stub_put([]),
+        _apply_and_build=fake_ab,
         )
 
 
@@ -157,7 +270,8 @@ def test_verify_fix_empty_diff_raises():
             _get_json=_stub_get_bundle(),
             _get_bytes=_stub_get_diff(b"   \n"),
             _post_json=_stub_post([]),
-            _apply_and_build=fake_ab,
+            _put_artifact=_stub_put([]),
+        _apply_and_build=fake_ab,
         )
 
 
@@ -175,7 +289,8 @@ def test_verify_fix_diff_404_raises():
             _get_json=_stub_get_bundle(),
             _get_bytes=_missing_diff,
             _post_json=_stub_post([]),
-            _apply_and_build=fake_ab,
+            _put_artifact=_stub_put([]),
+        _apply_and_build=fake_ab,
         )
 
 
@@ -191,7 +306,8 @@ def test_verify_fix_apply_and_build_raises_wraps_as_verify_fix_error():
             _get_json=_stub_get_bundle(),
             _get_bytes=_stub_get_diff(b"diff"),
             _post_json=_stub_post([]),
-            _apply_and_build=fake_ab,
+            _put_artifact=_stub_put([]),
+        _apply_and_build=fake_ab,
         )
 
 
@@ -209,6 +325,7 @@ def test_verify_fix_post_failure_does_not_raise():
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(b"diff"),
         _post_json=_failing_post,
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
     assert result.ok is True
@@ -232,6 +349,7 @@ def test_verify_fix_drops_log_on_success_by_default(tmp_path):
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(b"diff"),
         _post_json=_stub_post([]),
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
     assert result.log_path is None
@@ -251,6 +369,7 @@ def test_verify_fix_keep_log_preserves_on_success(tmp_path):
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(b"diff"),
         _post_json=_stub_post([]),
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
     assert result.log_path == str(log)
@@ -269,6 +388,7 @@ def test_verify_fix_keeps_log_on_failure_unconditionally(tmp_path):
         _get_json=_stub_get_bundle(),
         _get_bytes=_stub_get_diff(b"diff"),
         _post_json=_stub_post([]),
+        _put_artifact=_stub_put([]),
         _apply_and_build=fake_ab,
     )
     assert result.log_path == str(log)
