@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from dportsv3.tracker.db import (
     ActiveBuildError,
+    get_active_builds_summary,
+    last_activity_at,
+    run_is_stale,
     compare_builds,
     create_build_run,
     finish_build_run,
@@ -59,16 +63,109 @@ def test_create_and_finish_build_run_records_commit_metadata(
     assert run["result_count"] == 0
 
 
+def _ago(hours: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+
 def test_create_build_run_enforces_single_active_run_per_target_and_type(
     conn: sqlite3.Connection,
 ) -> None:
-    first_run = create_build_run(conn, "@2026Q1", "test", "2026-03-17T09:00:00+00:00")
+    # Recent, so the run reads as live. A run that has recorded nothing for
+    # longer than tracker.stale_build_run_hours is superseded instead --
+    # see test_create_build_run_supersedes_a_stale_active_run.
+    first_run = create_build_run(conn, "@2026Q1", "test", _ago(0.5))
 
     with pytest.raises(ActiveBuildError) as exc:
-        create_build_run(conn, "@2026Q1", "test", "2026-03-17T10:00:00+00:00")
+        create_build_run(conn, "@2026Q1", "test", _ago(0.1))
 
     assert exc.value.active_run["id"] == first_run
     assert get_active_run(conn, "@2026Q1", "test")["id"] == first_run
+
+
+def test_create_build_run_supersedes_a_stale_active_run(
+    conn: sqlite3.Connection,
+) -> None:
+    """An interrupted dsynth leaves its run open forever, and the unique
+    active run then blocks every later build: the hook takes the 409 and
+    sets TRACKING_DISABLED for its whole run. Measured once at 137 builds
+    and 30 failures lost over 2.5 hours (poly-gd5)."""
+    dead = create_build_run(conn, "@main", "test", _ago(9))
+
+    fresh = create_build_run(conn, "@main", "test", None)
+
+    assert fresh != dead
+    assert get_active_run(conn, "@main", "test")["id"] == fresh
+    assert get_build_run(conn, dead)["finished_at"] is not None
+
+
+def test_a_long_but_live_run_is_never_superseded(
+    conn: sqlite3.Connection,
+) -> None:
+    """Staleness is measured from the last result, not from the start.
+    A run that began yesterday but recorded a port minutes ago is alive,
+    and superseding it would split one build across two runs."""
+    run_id = create_build_run(conn, "@main", "test", _ago(30))
+    record_results(conn, run_id, "@main", [
+        {"origin": "devel/llvm19", "version": "19.1.7", "result": "success",
+         "recorded_at": _ago(0.2)},
+    ])
+
+    assert run_is_stale(conn, run_id) is False
+    with pytest.raises(ActiveBuildError):
+        create_build_run(conn, "@main", "test", None)
+
+
+def test_superseded_run_is_closed_at_its_last_activity(
+    conn: sqlite3.Connection,
+) -> None:
+    """Not at now: claiming the build ran until the moment we noticed
+    would invent a duration it never had."""
+    last = _ago(20)
+    dead = create_build_run(conn, "@main", "test", _ago(26))
+    record_results(conn, dead, "@main", [
+        {"origin": "www/nginx", "version": "1.27.4", "result": "failure",
+         "recorded_at": last},
+    ])
+
+    create_build_run(conn, "@main", "test", None)
+
+    assert get_build_run(conn, dead)["finished_at"] == last
+    assert last_activity_at(conn, dead) == last
+
+
+def test_superseding_preserves_commit_metadata(
+    conn: sqlite3.Connection,
+) -> None:
+    """finish_build_run also writes the three commit columns, so reusing
+    it here would erase what a partially reported run already carries."""
+    dead = create_build_run(conn, "@main", "release", _ago(9))
+    conn.execute(
+        "UPDATE build_runs SET commit_sha = ?, commit_branch = ? WHERE id = ?",
+        ("abc123", "main", dead),
+    )
+    conn.commit()
+
+    create_build_run(conn, "@main", "release", None)
+
+    run = get_build_run(conn, dead)
+    assert run["finished_at"] is not None
+    assert run["commit_sha"] == "abc123"
+    assert run["commit_branch"] == "main"
+
+
+def test_active_builds_summary_flags_a_stale_run(
+    conn: sqlite3.Connection,
+) -> None:
+    """Nothing surfaced the open run for two and a half hours; an operator
+    found it by noticing a missing port. The summary the dashboard reads
+    now carries it."""
+    create_build_run(conn, "@main", "test", _ago(9))
+
+    summary = get_active_builds_summary(conn)
+
+    assert len(summary) == 1
+    assert summary[0]["stale"] is True
+    assert summary[0]["last_activity_at"] is not None
 
 
 def test_create_build_run_allows_parallel_types_for_same_target(

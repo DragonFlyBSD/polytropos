@@ -57,6 +57,21 @@
 # Listen port. A --port flag overrides this.
 #port = 8080
 
+# How long a build run may record nothing before start-build treats
+# it as dead and supersedes it.
+#
+# Only one run per (target, build_type) may be active, so a run left
+# open by an interrupted dsynth blocks every later build: the hook
+# takes the 409 and sets TRACKING_DISABLED for the whole run.
+# Measured once at 137 builds and 30 failures lost over 2.5 hours,
+# with the only trace inside the chroot's hook log.
+#
+# Measured from the last result recorded, not from the start, so a
+# long but live build is never superseded. A single port can take
+# well over an hour; a whole run recording nothing for six is dead.
+# Raise it if you build on very slow hardware with one builder.
+#stale_build_run_hours = 6
+
 # How the runner reaches the tracker. Keep in step with the two
 # settings above.
 #

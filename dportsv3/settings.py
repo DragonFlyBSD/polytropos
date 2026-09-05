@@ -157,6 +157,22 @@ SETTINGS: list[Setting] = [
     Setting("tracker.port", "int", 8080,
             "Listen port. A --port flag overrides this."),
     Setting(
+        "tracker.stale_build_run_hours", "int", 6,
+        "How long a build run may record nothing before start-build treats\n"
+        "it as dead and supersedes it.\n"
+        "\n"
+        "Only one run per (target, build_type) may be active, so a run left\n"
+        "open by an interrupted dsynth blocks every later build: the hook\n"
+        "takes the 409 and sets TRACKING_DISABLED for the whole run.\n"
+        "Measured once at 137 builds and 30 failures lost over 2.5 hours,\n"
+        "with the only trace inside the chroot's hook log.\n"
+        "\n"
+        "Measured from the last result recorded, not from the start, so a\n"
+        "long but live build is never superseded. A single port can take\n"
+        "well over an hour; a whole run recording nothing for six is dead.\n"
+        "Raise it if you build on very slow hardware with one builder.",
+    ),
+    Setting(
         "tracker.url", "str", DEFAULT_TRACKER_URL,
         "How the runner reaches the tracker. Keep in step with the two\n"
         "settings above.\n"

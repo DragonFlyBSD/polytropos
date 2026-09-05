@@ -13,13 +13,16 @@ busy_timeout=5000, foreign_keys=ON) via ``open_db`` / ``init_db``.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 
 from dportsv3.common.validation import is_compose_target
 from dportsv3.db.schema import DEFAULT_BUILD_TYPES, init_db as _init_state_db
+
+_LOG = logging.getLogger(__name__)
 
 VALID_BUILD_RESULTS = frozenset({"success", "failure", "skipped", "ignored"})
 
@@ -89,19 +92,124 @@ def get_active_run(
     return _row_to_dict(row)
 
 
+def last_activity_at(conn: sqlite3.Connection, run_id: int) -> str | None:
+    """The newest timestamp this run has to show for itself: its most
+    recent recorded result, or its start when it has recorded none."""
+    row = conn.execute(
+        """
+        SELECT MAX(build_results.recorded_at) AS last_result,
+               build_runs.started_at AS started_at
+        FROM build_runs
+        LEFT JOIN build_results ON build_results.build_run_id = build_runs.id
+        WHERE build_runs.id = ?
+        """,
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    last_result = row["last_result"]
+    started_at = row["started_at"]
+    if last_result and started_at:
+        return max(str(last_result), str(started_at))
+    return str(last_result or started_at or "") or None
+
+
+def run_is_stale(
+    conn: sqlite3.Connection,
+    run_id: int,
+    now: str | None = None,
+    stale_hours: int | None = None,
+) -> bool:
+    """Whether an unfinished run has recorded nothing for long enough to
+    be considered dead.
+
+    Measured from the last *result*, not from the start: a run building
+    one very slow port is alive and must never be superseded, while a run
+    whose dsynth was killed records nothing again, ever. ``finished_at``
+    cannot answer this — runner.dsynth_active documents why it refuses to
+    use that column as a gate.
+    """
+    if stale_hours is None:
+        from dportsv3 import settings  # noqa: PLC0415
+        stale_hours = int(settings.get("tracker.stale_build_run_hours"))
+    if stale_hours <= 0:
+        return False
+    last = last_activity_at(conn, run_id)
+    if not last:
+        return False
+    try:
+        last_dt = datetime.fromisoformat(last)
+    except (TypeError, ValueError):
+        return False
+    now_dt = (
+        datetime.fromisoformat(now) if now
+        else datetime.now(last_dt.tzinfo) if last_dt.tzinfo
+        else datetime.now()
+    )
+    if last_dt.tzinfo is None and now_dt.tzinfo is not None:
+        last_dt = last_dt.replace(tzinfo=now_dt.tzinfo)
+    elif now_dt.tzinfo is None and last_dt.tzinfo is not None:
+        now_dt = now_dt.replace(tzinfo=last_dt.tzinfo)
+    return (now_dt - last_dt) >= timedelta(hours=stale_hours)
+
+
+def _supersede_stale_run(conn: sqlite3.Connection, run_id: int) -> None:
+    """Close a dead run at its last known activity.
+
+    Only ``finished_at`` is touched: ``finish_build_run`` also writes the
+    three commit columns, and passing None for them would erase metadata
+    a partially-reported run may already carry. The timestamp is the last
+    activity rather than now, because claiming the build ran until now is
+    a duration this run never had.
+    """
+    stamp = last_activity_at(conn, run_id) or _utc_now()
+    with conn:
+        conn.execute(
+            "UPDATE build_runs SET finished_at = ? WHERE id = ? "
+            "AND finished_at IS NULL",
+            (stamp, run_id),
+        )
+
+
 def create_build_run(
     conn: sqlite3.Connection,
     target: str,
     build_type: str,
     started_at: str | None,
 ) -> int:
-    """Create a new build run and return its numeric ID."""
+    """Create a new build run and return its numeric ID.
+
+    A run left open by an interrupted dsynth used to block every later
+    build on the same (target, build_type) indefinitely: this raised, the
+    hook took the 409 and set TRACKING_DISABLED for its whole run, and
+    the tracker recorded nothing while the farm kept building. Silent,
+    unbounded, and the only trace was inside the chroot. So a *stale*
+    active run is superseded here rather than defended.
+    """
     _validate_target(target)
     _validate_build_type(conn, build_type)
     started_value = started_at or _utc_now()
     active_run = get_active_run(conn, target, build_type)
     if active_run is not None:
-        raise ActiveBuildError(active_run)
+        active_id = int(active_run["id"])
+        if run_is_stale(conn, active_id):
+            _LOG.warning(
+                "superseding stale build run %s (%s %s): no result recorded "
+                "since %s. It was left open by a build that never finished; "
+                "the new run records normally.",
+                active_id, target, build_type, last_activity_at(conn, active_id),
+            )
+            _supersede_stale_run(conn, active_id)
+        else:
+            # Log on the tracker side too. The refusal is only visible in
+            # the builder's hook log otherwise, which lives inside the
+            # chroot and is not what an operator reads.
+            _LOG.warning(
+                "refusing to start a build for %s %s: run %s is still "
+                "active and recorded results as recently as %s.",
+                target, build_type, active_id, last_activity_at(conn, active_id),
+            )
+            raise ActiveBuildError(active_run)
 
     try:
         with conn:
@@ -323,7 +431,16 @@ def get_active_builds_summary(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         ORDER BY build_runs.started_at DESC
         """
     ).fetchall()
-    return [_row_dict_required(row) for row in rows]
+    summaries = [_row_dict_required(row) for row in rows]
+    # An open run that is recording nothing is the shape of an interrupted
+    # dsynth. start-build supersedes it on the next attempt, but until one
+    # comes it is invisible, and invisible is how 137 builds went
+    # unrecorded for two and a half hours. Say so where someone looks.
+    for summary in summaries:
+        run_id = int(summary["id"])
+        summary["last_activity_at"] = last_activity_at(conn, run_id)
+        summary["stale"] = run_is_stale(conn, run_id)
+    return summaries
 
 
 def get_build_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
