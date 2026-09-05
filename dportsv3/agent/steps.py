@@ -625,9 +625,15 @@ class TriageStep:
                 "max_tokens": tier.max_tokens,
             },
         )
+        # TRIAGE_OK reaches TRIAGED, which is a waypoint. The patch job
+        # enqueued just above is a separate row with its own lifecycle,
+        # so without a second event this triage — which classified the
+        # failure and handed it on — would sit at TRIAGED until a
+        # restart reaped it as DEAD/runner_restart.
         return StepOutcome(
             status="success",
             next_event=JobEvent.TRIAGE_OK,
+            extra_events=[JobEvent.TRIAGE_HANDOFF],
             detail={"status_str": "done", "action": dec.action},
         )
 

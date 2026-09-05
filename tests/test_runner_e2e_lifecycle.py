@@ -172,8 +172,15 @@ def _make_bundle_dir(tmp_path: Path) -> Path:
 # --- Tests --------------------------------------------------------------------
 
 
-def test_full_triage_path_to_triaged(queue_env, tmp_path, monkeypatch):
-    """AUTO tier triage: history ends TRIAGED, patch job auto-enqueued."""
+def test_full_triage_path_hands_off_and_finishes(queue_env, tmp_path, monkeypatch):
+    """AUTO tier triage: patch job auto-enqueued, and the triage row that
+    enqueued it reaches DONE.
+
+    It used to stop at TRIAGED. Nothing transitions a triage again on the
+    auto_patch route -- the patch job is a separate row -- so the completed
+    triage sat there until a restart swept it to DEAD/runner_restart, which
+    is why triage had reached DONE zero times and dead overstated real
+    failure by about 3.1x."""
     conn = queue_env["conn"]
     bdir = _make_bundle_dir(tmp_path)
     job_path = _drop_synthetic_job(queue_env, bundle_dir=bdir)
@@ -204,8 +211,9 @@ def test_full_triage_path_to_triaged(queue_env, tmp_path, monkeypatch):
         "claim",
         "triage_start",
         "triage_ok",
+        "triage_handoff",
     ], events
-    assert lifecycle.current(conn, job_id) == lifecycle.JobState.TRIAGED
+    assert lifecycle.current(conn, job_id) == lifecycle.JobState.DONE
 
     # Patch job auto-enqueued: one new pending .job file, and a jobs
     # row in QUEUED state with type=patch.
@@ -214,6 +222,58 @@ def test_full_triage_path_to_triaged(queue_env, tmp_path, monkeypatch):
     patch_job_id = pending[0].name
     assert "patch" in patch_job_id
     assert lifecycle.current(conn, patch_job_id) == lifecycle.JobState.QUEUED
+
+
+def test_a_handed_off_triage_is_not_reaped_as_an_orphan(queue_env, tmp_path,
+                                                        monkeypatch):
+    """The invariant the measured data violated: a triage that produced a
+    classification must not end as DEAD/runner_restart. reap_orphans sweeps
+    _INFLIGHT_STATES, which still contains TRIAGED on purpose -- a triage
+    that died before handing off is genuinely incomplete -- so what keeps a
+    finished one safe is that it is no longer sitting in that state."""
+    conn = queue_env["conn"]
+    bdir = _make_bundle_dir(tmp_path)
+    job_path = _drop_synthetic_job(queue_env, bundle_dir=bdir)
+    job_id = job_path.name
+
+    from dportsv3.agent import triage as triage_module
+    monkeypatch.setattr(triage_module, "run",
+                        lambda *a, **kw: _StubTriageResult(
+                            text="## Classification\nplist-error\n\n"
+                                 "## Confidence\nhigh\n",
+                            classification="plist-error",
+                            confidence="high",
+                        ))
+    inflight_path = queue_env["queue_root"] / "inflight" / job_id
+    job_path.rename(inflight_path)
+    runner._apply_transition(job_id, lifecycle.JobEvent.CLAIM)
+    runner.process_job(queue_env["queue_root"], inflight_path, [],
+                       dry_run=False, playbooks_dir=None)
+
+    lifecycle.reap_orphans(conn)
+
+    assert lifecycle.current(conn, job_id) == lifecycle.JobState.DONE
+    row = conn.execute("SELECT retire_reason FROM jobs WHERE job_id = ?",
+                       (job_id,)).fetchone()
+    assert row["retire_reason"] != "runner_restart"
+
+
+def test_a_triage_that_died_before_handing_off_is_still_reaped(queue_env):
+    """The safety net the fix must not remove. TRIAGED stays in
+    _INFLIGHT_STATES so a triage that classified and then crashed before
+    enqueueing its patch job is still swept on restart."""
+    job_path = _drop_synthetic_job(queue_env)
+    job_id = job_path.name
+    conn = queue_env["conn"]
+
+    runner._apply_transition(job_id, lifecycle.JobEvent.CLAIM)
+    runner._apply_transition(job_id, lifecycle.JobEvent.TRIAGE_START)
+    runner._apply_transition(job_id, lifecycle.JobEvent.TRIAGE_OK)
+    assert lifecycle.current(conn, job_id) == lifecycle.JobState.TRIAGED
+
+    lifecycle.reap_orphans(conn)
+
+    assert lifecycle.current(conn, job_id) == lifecycle.JobState.DEAD
 
 
 def test_triage_manual_escalates(queue_env, tmp_path, monkeypatch):

@@ -59,6 +59,14 @@ class JobEvent(StrEnum):
     CLAIM            = "claim"
     TRIAGE_START     = "triage_start"
     TRIAGE_OK        = "triage_ok"
+    # A triage whose work is finished and handed to a separate patch
+    # job. TRIAGE_OK alone only reaches TRIAGED, which is a waypoint,
+    # not an end: the auto_patch route enqueues a *new* row and never
+    # transitions its own again, so the completed triage sat at TRIAGED
+    # until a restart reaped it as DEAD/runner_restart. Measured: triage
+    # reached DONE zero times ever, and 246 of 364 dead rows were
+    # runner_restart, overstating real failure ~3.1x.
+    TRIAGE_HANDOFF   = "triage_handoff"
     TRIAGE_FAIL      = "triage_fail"
     PATCH_START      = "patch_start"
     PATCH_OK         = "patch_ok"
@@ -123,6 +131,11 @@ TRANSITIONS: dict[tuple[JobState | None, JobEvent], JobState] = {
     (JobState.QUEUED,      JobEvent.CLAIM):            JobState.CLAIMED,
     (JobState.CLAIMED,     JobEvent.TRIAGE_START):     JobState.TRIAGING,
     (JobState.TRIAGING,    JobEvent.TRIAGE_OK):        JobState.TRIAGED,
+    # The auto_patch route's terminal step. The other two routes out of
+    # TRIAGED already end somewhere: escalate_manual reaches ESCALATED,
+    # and skip/env-broken reaches DEAD via ENV_BROKEN. Only the happy
+    # path had no exit.
+    (JobState.TRIAGED,     JobEvent.TRIAGE_HANDOFF):   JobState.DONE,
     # Patch jobs (created by enqueue_patch_job after a triage decides
     # auto_patch) arrive at CLAIMED with no preceding triage in their
     # own lifecycle. PATCH_START transitions them straight to PATCHING.
@@ -283,15 +296,18 @@ _INFLIGHT_STATES: tuple[JobState, ...] = (
 # restart?"). The two differ by exactly two members and the
 # difference is deliberate:
 #
-#   - TRIAGED is OUT here but IN _INFLIGHT_STATES. A triage job's
-#     happy path lands at TRIAGED and STAYS there — it auto-enqueues
-#     a *separate* patch/convert job rather than transitioning itself.
-#     So for "actively working" a TRIAGED job is done (the real work
-#     is the spawned job). But for reaping it must stay in-flight: a
-#     TRIAGED job whose spawned patch died should still get reaped.
-#     (Counting TRIAGED as active also blocked operator retriage
-#     forever after a patch terminal — the redis/skalibs log-spam
-#     bug.)
+#   - TRIAGED is OUT here but IN _INFLIGHT_STATES, and that asymmetry
+#     is still right — but it is no longer where a finished triage
+#     lives. TRIAGE_HANDOFF now carries the auto_patch route from
+#     TRIAGED to DONE once the patch job is enqueued, so "finished" is
+#     a third answer alongside "active" and "reapable". What remains at
+#     TRIAGED is a triage that classified and then died before handing
+#     off, which is genuinely incomplete and SHOULD be reaped — so the
+#     state stays in _INFLIGHT_STATES rather than being removed from
+#     it. For "actively working" it is still out: the real work is the
+#     spawned job. (Counting TRIAGED as active also blocked operator
+#     retriage forever after a patch terminal — the redis/skalibs
+#     log-spam bug.)
 #   - QUEUED is IN here but OUT of _INFLIGHT_STATES. A queued job is
 #     about to run (its activity is imminent — live UI should poll,
 #     the retriage guard should treat the origin as taken), but
