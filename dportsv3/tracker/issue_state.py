@@ -31,10 +31,13 @@ renders the groups.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from dportsv3.tracker import fix_state
+
+_LOG = logging.getLogger(__name__)
 
 # --- Issue-state vocabulary (one definition) -------------------------------
 
@@ -119,6 +122,24 @@ def derived_regression(
     last seen.
     """
     if issue.get("state") != ISSUE_RESOLVED:
+        return None
+    if not occurrences and (issue.get("times_seen") or 0) > 0:
+        # Every issue has at least one occurrence by construction — the
+        # ingest writer creates the row with times_seen=1 and only ever
+        # increments. So an empty list here never means "it never failed";
+        # it means the caller passed a row whose occurrences were not
+        # loaded, and the honest answer is "cannot tell", not "resolved".
+        # Silently answering `resolved` is how a port that is demonstrably
+        # broken again reads as fixed and stays out of the worklist.
+        # `list_issues` returns exactly such bare rows; only
+        # `issues_with_occurrences`, `get_issue` and `issue_for_bundle`
+        # attach them.
+        _LOG.warning(
+            "cannot derive regression for issue %s: times_seen=%s but no "
+            "occurrences were loaded. Read it with issues_with_occurrences() "
+            "or get_issue(), not list_issues().",
+            issue.get("issue_key"), issue.get("times_seen"),
+        )
         return None
     crossings = [
         o.get("ts_utc") for o in occurrences

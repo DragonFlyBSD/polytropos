@@ -143,6 +143,81 @@ def test_effective_state_defaults_to_attached_occurrences():
     assert I.effective_state(issue) == I.effective_state(issue, issue["occurrences"])
 
 
+# --- the reported failure, end to end (poly-l9y) ---------------------------
+
+
+def _pango(conn, *, ordinal: int | None, resolved_at: str | None = "2026-08-29T22:37:00+00:00"):
+    """The exact shape of the report: an issue resolved at 22:37 with
+    green_head_run_id=12, then a fresh occurrence from run 13 at 23:18."""
+    for run_id, ts in ((12, "2026-08-29T20:00:00+00:00"),
+                       (13, "2026-08-29T23:00:00+00:00")):
+        conn.execute(
+            "INSERT INTO build_runs(id, target, build_type, started_at, "
+            "finished_at) VALUES (?, '@main', 'test', ?, ?)", (run_id, ts, ts))
+    conn.execute(
+        "INSERT INTO issues(issue_key, target, origin, fingerprint, state, "
+        "times_seen, first_seen_at, last_seen_at, resolved_at, "
+        "green_head_run_id, updated_at) VALUES ('i-pango', '@main', "
+        "'x11-toolkits/pango', 'fp1', 'resolved', 2, "
+        "'2026-08-29T20:00:00+00:00', '2026-08-29T23:18:00+00:00', ?, 12, "
+        "'2026-08-29T23:18:00+00:00')", (resolved_at,))
+    conn.execute("INSERT INTO runs(run_id, target, build_run_id) "
+                 "VALUES ('r-13', '@main', ?)", (ordinal,))
+    conn.execute(
+        "INSERT INTO bundles(bundle_id, run_id, origin, ts_utc, target, "
+        "issue_key, error_signature) VALUES ('b-new', 'r-13', "
+        "'x11-toolkits/pango', '2026-08-29T23:18:00+00:00', '@main', "
+        "'i-pango', 'fp1')")
+    conn.commit()
+
+
+@pytest.mark.parametrize("ordinal", [13, None])
+def test_the_reported_regression_is_derived_through_the_query_layer(conn, ordinal):
+    """poly-l9y: pango read `resolved` after failing again. Through the real
+    read path it derives `regressed` whether or not the occurrence carries a
+    build ordinal — with one, by ordinal; without one (tracking was off, see
+    poly-gd5), by the timestamp fallback."""
+    from dportsv3.tracker.agentic_queries.issues import get_issue
+
+    _pango(conn, ordinal=ordinal)
+    issue = get_issue(conn, "i-pango")
+
+    assert issue["occurrences"][0]["build_run_id"] == ordinal
+    assert I.effective_state(issue) == I.ISSUE_REGRESSED
+
+
+def test_an_unloaded_row_cannot_derive_and_says_so(conn, caplog):
+    """The one input that does produce the reported symptom: a row read
+    without its occurrences. `list_issues` returns exactly that shape. An
+    issue always has at least one occurrence, so an empty list means the
+    caller did not load them — warn instead of silently reporting the port
+    as fixed."""
+    from dportsv3.tracker.agentic_queries.issues import list_issues
+
+    _pango(conn, ordinal=13)
+    bare = list_issues(conn)[0]
+    assert "occurrences" not in bare
+
+    with caplog.at_level("WARNING"):
+        state = I.effective_state(bare)
+
+    assert state == I.ISSUE_RESOLVED
+    assert "i-pango" in caplog.text
+    assert "issues_with_occurrences" in caplog.text
+
+
+def test_a_genuinely_unseen_issue_does_not_warn(caplog):
+    """times_seen=0 never happens through ingest, but the guard must key on
+    it rather than on emptiness alone, or every such row logs noise."""
+    issue = _issue(green_head=HEAD, resolved_at="2026-07-25T00:00:00Z")
+    issue["times_seen"] = 0
+
+    with caplog.at_level("WARNING"):
+        assert I.derived_regression(issue, []) is None
+
+    assert caplog.text == ""
+
+
 # --- what the operator sees ------------------------------------------------
 
 
