@@ -92,7 +92,9 @@
     {# What the fix changed comes first — the diff/proposed_fix live here. #}
     {% include "_bundle_artifacts.html" %}
 
-    {% include "_bundle_chat.html" %}
+    {# Tier 3 -- the fix-review chat reasons over the agent's own session
+       dump, so it is operator material rather than build status. #}
+    {% if can_operate() %}{% include "_bundle_chat.html" %}{% endif %}
 
     {% include "_bundle_jobs.html" %}
 

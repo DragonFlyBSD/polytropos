@@ -69,6 +69,8 @@ from dportsv3.tracker.progress_adapter import (
     target_summary,
 )
 from dportsv3.tracker.routes._common import (
+    can_operate,
+    forbid_anonymous,
     HTMLResponse,
     HTTPException,
     Query,
@@ -322,7 +324,7 @@ def register(app, ctx):
         # The policy (and the authoritative endpoint gate) lives in
         # fix_state — one place, tested, instead of the former inline
         # matrix. See that module for the allowed-vs-surface split.
-        acts = fix_state.bundle_actions(bundle)
+        acts = fix_state.bundle_actions(bundle, can_operate=can_operate())
         # Env picker for the Verify button — a live DB read, so it stays
         # here rather than in the pure policy. Populate only when Verify
         # is eligible; default-select the active env, falling back to the
@@ -469,6 +471,7 @@ def register(app, ctx):
         reasoning_content + tool_calls + tool results, and a right-rail
         TOC. The relpath is always under analysis/sessions/ — we accept
         only the filename in the URL to keep links short."""
+        forbid_anonymous("The session viewer")
         relpath = f"analysis/sessions/{filename}"
         with _conn() as conn:
             bundle = get_bundle(conn, bundle_id)
@@ -748,6 +751,7 @@ def register(app, ctx):
         origin: str,
         payload: ManualContextRequest,
     ) -> dict[str, Any]:
+        forbid_anonymous("Submitting manual context")
         text = (payload.context_text or "").strip()
         if not text:
             raise HTTPException(
@@ -780,6 +784,7 @@ def register(app, ctx):
         origin: str,
         payload: ManualDiscardRequest | None = None,
     ) -> dict[str, Any]:
+        forbid_anonymous("Discarding a manual request")
         with _conn() as conn:
             mr = get_manual_request(conn, run_id, origin)
             if mr is None:

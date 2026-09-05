@@ -26,6 +26,8 @@ from dportsv3.tracker.agentic_queries import (
     set_active_env,
 )
 from dportsv3.tracker.routes._common import (
+    can_operate,
+    forbid_anonymous,
     HTTPException,
     Query,
     _LOG,
@@ -115,6 +117,7 @@ def register(app, ctx):
 
     @app.put("/api/config/active-env")
     def api_put_active_env(payload: dict[str, Any]) -> dict[str, Any]:
+        forbid_anonymous("Choosing the active dev-env")
         name = payload.get("name")
         if name is not None and not isinstance(name, str):
             raise HTTPException(
@@ -167,6 +170,7 @@ def register(app, ctx):
         job to DEAD with ``retire_reason='abandoned'``. Rejects calls
         against terminal states (DONE/DEAD/ESCALATED) — the operator
         can't abandon something that's already retired."""
+        forbid_anonymous("Abandoning a job")
         from dportsv3.agent import lifecycle as _lc  # noqa: PLC0415
         with _conn() as conn:
             row = get_job(conn, job_id)
@@ -261,8 +265,10 @@ def register(app, ctx):
         (v1 is ephemeral). Returns ``{ok, reply, session_relpath,
         artifacts_included, session_truncated, usage}``.
 
-        Gated by ``llm.chat.model``: 503 when it is empty.
+        Gated by ``llm.chat.model``: 503 when it is empty, and by the
+        audience: tier 3 (agent working material), not build status.
         """
+        forbid_anonymous("Fix-review chat")
         cfg = _chat_llm_config()
         if cfg is None:
             raise HTTPException(
@@ -503,6 +509,7 @@ def register(app, ctx):
     def api_bundle_verify(
         bundle_id: str, body: dict[str, Any],
     ) -> dict[str, Any]:
+        forbid_anonymous("Verify")
         """Operator-triggered verify (Step 11c). Writes a row to
         ``verify_requests``; the runner's poll loop picks it up,
         calls ``dportsv3.verify_fix.run_verify_fix`` in-process, and
@@ -533,7 +540,8 @@ def register(app, ctx):
                 status_code=404, detail=f"Unknown bundle: {bundle_id}",
             )
         if not fix_state.action_allowed(
-            "verify", row.get("resolution"), row.get("verification_status")
+            "verify", row.get("resolution"), row.get("verification_status"),
+            can_operate=can_operate(),
         ):
             raise HTTPException(
                 status_code=409,

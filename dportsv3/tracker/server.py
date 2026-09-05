@@ -117,6 +117,11 @@ def create_app(db_path: str | Path) -> Any:
     # controls to show (mute/unmute/resolve/reopen).
     templates.env.globals["issue_status"] = issue_state.issue_status
     templates.env.globals["issue_actions"] = issue_state.issue_actions
+    # Which audience this page is being composed for. A global rather than
+    # per-route context because there is no session to read it from yet
+    # (see _common.can_operate); when operator auth lands it becomes a
+    # per-request value and this becomes the place that resolves it.
+    templates.env.globals["can_operate"] = _common.can_operate
     # Compact relative ages ("18m ago") for the worklist queue rows.
     templates.env.filters["relative_age"] = render.relative_age
 

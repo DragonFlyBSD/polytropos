@@ -121,6 +121,53 @@ FileResponse = cast(Any, FileResponseType)
 StreamingResponse = cast(Any, StreamingResponseType)
 
 
+# ---------------------------------------------------------------------------
+# Audience: who is this request for?
+#
+# Two audiences share every view. An OPERATOR drives the loop — accept,
+# reject, retry, take over, deliver, mute, resolve — and reads the agent's
+# own working material. An ANONYMOUS reader wants to know how the build is
+# going and nothing else. Roughly ten of the first, several dozen of the
+# second.
+#
+# One capability answers it, resolved in one place, so no view has to invent
+# a rule. Three tiers follow from it:
+#
+#   1. public status    — builds, results, issues, evidence. Always served.
+#   2. operator actions — every mutating control. can_operate.
+#   3. agent internals  — session dumps, fix-chat. can_operate.
+#
+# It takes no request argument YET because there is nothing to read one from:
+# the tracker has no authentication (poly-fij.5). That is the seam — when a
+# session exists this grows a request parameter, its callers pass one, and
+# nothing else in the design moves. It fails CLOSED by construction:
+# authentication will GRANT the capability, never restrict it, so an
+# unrecognised caller gets the anonymous page rather than the operator one.
+# ---------------------------------------------------------------------------
+
+
+def can_operate() -> bool:
+    """Whether this request may drive the loop and read agent internals."""
+    from dportsv3 import settings  # noqa: PLC0415
+
+    return not bool(settings.get("tracker.public_readonly"))
+
+
+def forbid_anonymous(what: str) -> None:
+    """Refuse a tier-2 or tier-3 request from an anonymous reader.
+
+    The endpoint gate, not a hidden button. A control removed from the page
+    while its handler still accepts the POST is a hidden button, not
+    read-only.
+    """
+    if not can_operate():
+        raise HTTPException(
+            status_code=403,
+            detail=f"{what} requires an operator; this tracker is serving "
+                   "read-only (tracker.public_readonly).",
+        )
+
+
 @dataclass
 class RouteContext:
     """Runtime deps a route group needs from ``create_app`` that cannot be

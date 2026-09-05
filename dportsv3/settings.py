@@ -157,6 +157,23 @@ SETTINGS: list[Setting] = [
     Setting("tracker.port", "int", 8080,
             "Listen port. A --port flag overrides this."),
     Setting(
+        "tracker.public_readonly", "bool", False,
+        "Serve every request as an anonymous reader: build status stays\n"
+        "fully visible, every mutating control disappears from the page AND\n"
+        "is refused at the endpoint, and agent internals (session dumps,\n"
+        "fix-chat) are not served.\n"
+        "\n"
+        "This is the switch for a tracker that dozens of people can reach\n"
+        "but only a few should drive. It is a whole-instance setting because\n"
+        "the tracker has no authentication yet: there is no session to read a\n"
+        "capability from. When operator auth lands (poly-fij.5) the same\n"
+        "capability becomes per-request and this becomes its default for a\n"
+        "caller who presents no session.\n"
+        "\n"
+        "Default False keeps a private single-operator install exactly as it\n"
+        "was.",
+    ),
+    Setting(
         "tracker.stale_build_run_hours", "int", 6,
         "How long a build run may record nothing before start-build treats\n"
         "it as dead and supersedes it.\n"

@@ -24,6 +24,8 @@ from dportsv3.tracker.agentic_queries import (
     upsert_user_context_text,
 )
 from dportsv3.tracker.routes._common import (
+    can_operate,
+    forbid_anonymous,
     FileResponse,
     HTTPException,
     Query,
@@ -260,6 +262,7 @@ def register(app, ctx):
         semantics. The ``skip_action`` field on the response and
         the event payload makes the lock disposition observable.
         """
+        forbid_anonymous("Accept")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         with _conn() as conn:
@@ -269,7 +272,7 @@ def register(app, ctx):
                 status_code=404, detail=f"Unknown bundle: {bundle_id}",
             )
         if not fix_state.action_allowed(
-            "accept", row.get("resolution"), row.get("verification_status")
+            "accept", row.get("resolution"), row.get("verification_status"), can_operate=can_operate()
         ):
             # Gate denied — pick the specific reason for the message.
             if row.get("resolution") in fix_state.TERMINAL_RESOLUTIONS:
@@ -483,6 +486,7 @@ def register(app, ctx):
         fresh row with the same error, and is more honest than a gate
         guessing which provider errors are transient.
         """
+        forbid_anonymous("Deliver")
         with _conn() as conn:
             row = get_bundle(conn, bundle_id)
             latest = (
@@ -494,7 +498,7 @@ def register(app, ctx):
                 status_code=404, detail=f"Unknown bundle: {bundle_id}",
             )
         if not fix_state.action_allowed(
-            "deliver", row.get("resolution"), row.get("verification_status")
+            "deliver", row.get("resolution"), row.get("verification_status"), can_operate=can_operate()
         ):
             raise HTTPException(
                 status_code=409,
@@ -613,6 +617,7 @@ def register(app, ctx):
 
         Body: ``{"reason": "<text>"}``. Reason is required (an
         unexplained reject is uninformative)."""
+        forbid_anonymous("Reject")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         reason = (body or {}).get("reason")
@@ -628,7 +633,7 @@ def register(app, ctx):
                 status_code=404, detail=f"Unknown bundle: {bundle_id}",
             )
         if not fix_state.action_allowed(
-            "reject", row.get("resolution"), row.get("verification_status")
+            "reject", row.get("resolution"), row.get("verification_status"), can_operate=can_operate()
         ):
             raise HTTPException(
                 status_code=409,
@@ -697,6 +702,7 @@ def register(app, ctx):
           - ``reason``: short note describing the take-over context;
             defaults to a generic label.
         """
+        forbid_anonymous("Take over")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         operator = ((body or {}).get("operator") or "operator").strip()
@@ -716,7 +722,7 @@ def register(app, ctx):
         # bundles — success-shaped ones use the Accept/Reject surface.
         current_resolution = row.get("resolution")
         if not fix_state.action_allowed(
-            "take-over", current_resolution, row.get("verification_status")
+            "take-over", current_resolution, row.get("verification_status"), can_operate=can_operate()
         ):
             # Gate denied — specific message per reason.
             if current_resolution in fix_state.TERMINAL_RESOLUTIONS:
@@ -872,6 +878,7 @@ def register(app, ctx):
         forensics across the discard / take-over paths, and the
         existing lock keeps its set_by / bundle_id provenance.
         """
+        forbid_anonymous("Discard")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         reason = (body or {}).get("reason")
@@ -894,7 +901,7 @@ def register(app, ctx):
             )
         current_resolution = row.get("resolution")
         if not fix_state.action_allowed(
-            "discard", current_resolution, row.get("verification_status")
+            "discard", current_resolution, row.get("verification_status"), can_operate=can_operate()
         ):
             # Gate denied — specific message per reason.
             if current_resolution in fix_state.TERMINAL_RESOLUTIONS:
@@ -1040,6 +1047,7 @@ def register(app, ctx):
             the existing ``## User Context`` section.
           - ``operator`` (str, optional): freeform identifier.
         """
+        forbid_anonymous("Retry")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         text = ((body or {}).get("context") or "")
@@ -1078,7 +1086,7 @@ def register(app, ctx):
             )
         current_resolution = row.get("resolution")
         if not fix_state.action_allowed(
-            "retry", current_resolution, row.get("verification_status")
+            "retry", current_resolution, row.get("verification_status"), can_operate=can_operate()
         ):
             raise HTTPException(
                 status_code=409,
@@ -1215,6 +1223,7 @@ def register(app, ctx):
             sibling's stake to release.
           - Emits ``bundle_released`` event.
         """
+        forbid_anonymous("Release")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         reason = (body or {}).get("reason")
@@ -1235,7 +1244,7 @@ def register(app, ctx):
                 status_code=404, detail=f"Unknown bundle: {bundle_id}",
             )
         if not fix_state.action_allowed(
-            "release", row.get("resolution"), row.get("verification_status")
+            "release", row.get("resolution"), row.get("verification_status"), can_operate=can_operate()
         ):
             raise HTTPException(
                 status_code=409,
@@ -1345,6 +1354,7 @@ def register(app, ctx):
           - Emits ``bundle_reopened`` event with
             ``prior_resolution`` + ``skip_action``.
         """
+        forbid_anonymous("Reopen")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         reason = (body or {}).get("reason")
@@ -1366,7 +1376,7 @@ def register(app, ctx):
             )
         prior = row.get("resolution")
         if not fix_state.action_allowed(
-            "reopen", prior, row.get("verification_status")
+            "reopen", prior, row.get("verification_status"), can_operate=can_operate()
         ):
             raise HTTPException(
                 status_code=409,
@@ -1488,6 +1498,7 @@ def register(app, ctx):
         a terminal back to created can use the standard reopen
         flow (Step 28d) followed by a fresh Accept.
         """
+        forbid_anonymous("Delivery status")
         from datetime import datetime, timezone  # noqa: PLC0415
 
         status = (body or {}).get("status")

@@ -8,6 +8,11 @@
   <a href="{{ request.url_for('agentic_issues') }}"{% if _p.startswith(request.url_for('agentic_issues').path) %} class="active"{% endif %}>Issues</a>
   <a href="{{ request.url_for('agentic_bundles') }}"{% if _p.startswith(request.url_for('agentic_bundles').path) %} class="active"{% endif %}>Occurrences</a>
   <a href="{{ request.url_for('agentic_jobs') }}"{% if _p.startswith(request.url_for('agentic_jobs').path) %} class="active"{% endif %}>Jobs</a>
+  {# Operator destinations: driving the runner and answering the manual
+     queue are things only an operator can do, so they are not offered to a
+     reader who could not act on them. #}
+  {% if can_operate() %}
   <a href="{{ request.url_for('agentic_runner') }}"{% if _p.startswith(request.url_for('agentic_runner').path) %} class="active"{% endif %}>Runner</a>
   <a href="{{ request.url_for('agentic_manual_list') }}"{% if _p.startswith(request.url_for('agentic_manual_list').path) %} class="active"{% endif %}>Manual</a>
+  {% endif %}
 </div>

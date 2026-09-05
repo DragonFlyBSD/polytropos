@@ -22,7 +22,7 @@ from dportsv3.tracker.agentic_queries import (
     get_issue,
     green_head_watermark,
 )
-from dportsv3.tracker.routes._common import HTTPException
+from dportsv3.tracker.routes._common import HTTPException, can_operate, forbid_anonymous
 
 
 def _now() -> str:
@@ -361,7 +361,9 @@ def register(app, ctx):
         # Effective, not stored: a regressed issue's row reads `resolved`
         # (C3) but it must keep the open-issue controls.
         state = issue_state.effective_state(issue)
-        if not issue_state.issue_action_allowed(action, state):
+        forbid_anonymous(f"Issue action {action!r}")
+        if not issue_state.issue_action_allowed(
+                action, state, can_operate=can_operate()):
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot {action} an issue in state {state!r}",
@@ -405,7 +407,9 @@ def register(app, ctx):
         # Effective, not stored: a regressed issue's row reads `resolved`
         # (C3) but it must keep the open-issue controls.
         state = issue_state.effective_state(issue)
-        if not issue_state.issue_action_allowed(action, state):
+        forbid_anonymous(f"Issue action {action!r}")
+        if not issue_state.issue_action_allowed(
+                action, state, can_operate=can_operate()):
             raise HTTPException(
                 status_code=409,
                 detail=(f"Cannot {action} for an issue in state {state!r} — "

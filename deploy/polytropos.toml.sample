@@ -57,6 +57,22 @@
 # Listen port. A --port flag overrides this.
 #port = 8080
 
+# Serve every request as an anonymous reader: build status stays
+# fully visible, every mutating control disappears from the page AND
+# is refused at the endpoint, and agent internals (session dumps,
+# fix-chat) are not served.
+#
+# This is the switch for a tracker that dozens of people can reach
+# but only a few should drive. It is a whole-instance setting because
+# the tracker has no authentication yet: there is no session to read a
+# capability from. When operator auth lands (poly-fij.5) the same
+# capability becomes per-request and this becomes its default for a
+# caller who presents no session.
+#
+# Default False keeps a private single-operator install exactly as it
+# was.
+#public_readonly = false
+
 # How long a build run may record nothing before start-build treats
 # it as dead and supersedes it.
 #

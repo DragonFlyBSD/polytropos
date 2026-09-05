@@ -10,7 +10,7 @@
   {% include "_agentic_subnav.html" %}
 
   {% set st = issue_status(issue) %}
-  {% set acts = issue_actions(issue) %}
+  {% set acts = issue_actions(issue, can_operate=can_operate()) %}
   <div class="tracker-page issue-detail" data-issue-key="{{ issue.issue_key }}">
     <div class="issue-head">
       <div class="issue-head-main">

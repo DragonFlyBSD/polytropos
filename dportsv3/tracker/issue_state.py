@@ -206,14 +206,23 @@ ISSUE_ACTION_ALLOWED = {
 }
 
 
-def issue_action_allowed(action: str, state: str | None) -> bool:
+def issue_action_allowed(
+    action: str, state: str | None, *, can_operate: bool = True,
+) -> bool:
     """Authoritative state-gate for an issue-level action. Unknown action
-    names are refused (True is never the default)."""
+    names are refused (True is never the default).
+
+    ``can_operate`` is the audience half, checked first: an anonymous
+    reader may drive nothing whatever the issue's state."""
+    if not can_operate:
+        return False
     gate = ISSUE_ACTION_ALLOWED.get(action)
     return bool(gate(state)) if gate else False
 
 
-def issue_actions(issue: dict[str, Any]) -> dict[str, bool]:
+def issue_actions(
+    issue: dict[str, Any], *, can_operate: bool = True,
+) -> dict[str, bool]:
     """Which issue-level controls the UI shows/enables, given its state.
 
     A straight mirror of the gate (unlike `bundle_actions`, the issue
@@ -225,6 +234,11 @@ def issue_actions(issue: dict[str, Any]) -> dict[str, bool]:
     its row now reads `resolved`.
     """
     s = effective_state(issue)
+    if not can_operate:
+        return {k: False for k in (
+            "can_mute", "can_unmute", "can_resolve", "can_reopen",
+            "can_build", "can_cancel_build",
+        )}
     return {
         "can_mute": issue_action_allowed("mute", s),
         "can_unmute": issue_action_allowed("unmute", s),

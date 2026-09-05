@@ -117,9 +117,18 @@ ACTION_ALLOWED: dict[str, Callable[[str | None, str | None], bool]] = {
 
 def action_allowed(
     action: str, resolution: str | None, verification_status: str | None,
+    *, can_operate: bool = True,
 ) -> bool:
     """Authoritative state-gate for an operator action. Unknown action
-    names are refused (True is never the default)."""
+    names are refused (True is never the default).
+
+    ``can_operate`` is the audience half of the gate: an anonymous reader
+    may drive nothing whatever the bundle's state. It defaults True so a
+    caller that has not been taught about audiences behaves exactly as
+    before, and it is checked FIRST so state can never re-permit what the
+    audience forbids."""
+    if not can_operate:
+        return False
     gate = ACTION_ALLOWED.get(action)
     return bool(gate(resolution, verification_status)) if gate else False
 
@@ -127,8 +136,22 @@ def action_allowed(
 # --- UI surface (consumed by the bundle-detail view) -----------------------
 
 
-def bundle_actions(bundle: dict[str, Any]) -> dict[str, Any]:
+_NO_BUNDLE_ACTIONS: dict[str, Any] = {
+    "show": False, "show_11c_group": False, "show_accept_button": False,
+    "can_verify": False, "can_accept": False, "can_reject": False,
+    "can_take_over": False, "can_discard": False, "can_retry": False,
+    "can_reopen": False, "can_release": False,
+}
+
+
+def bundle_actions(
+    bundle: dict[str, Any], *, can_operate: bool = True,
+) -> dict[str, Any]:
     """Which operator actions the bundle-detail page shows/enables.
+
+    With ``can_operate`` False every capability is False and ``show`` is
+    False, so the page renders no action panel at all rather than a panel
+    of disabled buttons — an anonymous reader is not a blocked operator.
 
     Pure over ``resolution`` / ``verification_status`` / ``target`` /
     ``origin`` — no DB access (the verify env-picker data is a live read
@@ -137,6 +160,8 @@ def bundle_actions(bundle: dict[str, Any]) -> dict[str, Any]:
 
     Narrower than ``ACTION_ALLOWED`` on purpose (see module docstring).
     """
+    if not can_operate:
+        return dict(_NO_BUNDLE_ACTIONS)
     r = bundle.get("resolution")
     v = bundle.get("verification_status")
     has_meta = bool((bundle.get("target") or "").strip()) and bool(
