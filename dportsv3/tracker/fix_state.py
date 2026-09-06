@@ -301,6 +301,133 @@ def fix_status(bundle: dict[str, Any]) -> FixStatus:
     return FixStatus("unknown", "—", "total")
 
 
+# --- Verify projection (poly-0e02.6) ---------------------------------------
+#
+# A verify request and a verification result live in different rows and
+# neither closes the other: the runner moves the request pending -> enqueued
+# (or failed) and stops, and the result posts back to `bundles` without a
+# request id to close. So `enqueued` is not "running" -- it is "a job was
+# created at some point", and what happened next has to be reconciled from
+# three places: the request's own status, the job's state, and whether the
+# bundle's verification_at postdates the request.
+#
+# Deriving beats writing a closing status: the post-back carries no request
+# id, so closing "the newest enqueued request" would mis-close whichever
+# second verify an operator started in the meantime.
+
+VERIFY_NONE = "none"            # nobody asked, and nothing has verified
+VERIFY_QUEUED = "queued"        # written; the runner has not picked it up
+VERIFY_STARTING = "starting"    # enqueued, job not visible yet
+VERIFY_RUNNING = "running"      # enqueued, the job is working
+VERIFY_PASSED = "passed"
+VERIFY_FAILED = "failed"        # ran, and the fix did not hold
+VERIFY_NOT_STARTED = "not_started"  # the enqueue itself failed
+VERIFY_LOST = "lost"            # the job ended without recording a result
+
+
+@dataclass(frozen=True)
+class VerifyState:
+    """What the last verify asked for on an occurrence actually did."""
+    key: str
+    label: str
+    pill: str
+    detail: str
+    env: str | None
+    requested_at: str | None
+    job_id: str | None
+
+
+def verify_state(
+    bundle: dict[str, Any], request: dict[str, Any] | None = None,
+) -> VerifyState:
+    """Reconcile one occurrence's verification with the request that asked
+    for it.
+
+    ``request`` is ``latest_verify_request``'s row (carrying ``job_state``),
+    or None when none was ever written -- the agent's own verify path
+    records a result on the bundle without going through a request.
+    """
+    status = bundle.get("verification_status")
+    verified_at = bundle.get("verification_at")
+    reason = bundle.get("verification_reason")
+    exit_code = bundle.get("verification_exit_code")
+    env = (request or {}).get("env")
+    requested_at = (request or {}).get("requested_at")
+    job_id = (request or {}).get("job_id")
+
+    def out(key: str, label: str, pill: str, detail: str) -> VerifyState:
+        return VerifyState(
+            key=key, label=label, pill=pill, detail=detail, env=env,
+            requested_at=requested_at, job_id=job_id,
+        )
+
+    # A result that postdates the request is that request's answer. Compared
+    # by timestamp because the post-back carries no request id -- the same
+    # boundary reasoning issue_state uses for regression.
+    answered = bool(status) and (
+        not requested_at or (verified_at or "") >= requested_at
+    )
+    where = f" in {env}" if env else ""
+
+    if answered:
+        if status == VERIFIED:
+            return out(
+                VERIFY_PASSED, f"verified{where}", "green",
+                f"The fix was replayed{where or ' somewhere unrecorded'} and "
+                f"the port built."
+                + (f" Recorded {verified_at}." if verified_at else ""),
+            )
+        parts = [p for p in (
+            f"dsynth exited {exit_code}" if exit_code is not None else None,
+            reason,
+        ) if p]
+        return out(
+            VERIFY_FAILED, f"verify failed{where}", "red",
+            "The fix was replayed and the port still failed"
+            + (": " + ": ".join(parts) if parts else ".")
+            + (f" Recorded {verified_at}." if verified_at else ""),
+        )
+
+    if request is None:
+        return out(
+            VERIFY_NONE, "not verified", "neutral",
+            "No independent verification has been run for this occurrence.",
+        )
+
+    req_status = request.get("status")
+    if req_status == "failed":
+        return out(
+            VERIFY_NOT_STARTED, "verify never started", "red",
+            f"The verify could not be enqueued: "
+            f"{request.get('error') or 'no reason recorded'}.",
+        )
+    if req_status == "pending":
+        return out(
+            VERIFY_QUEUED, f"verify queued{where}", "cyan",
+            f"Requested {requested_at}. The runner turns it into a job on "
+            f"its next pass.",
+        )
+
+    job_state = request.get("job_state")
+    if job_state is None:
+        return out(
+            VERIFY_STARTING, f"verify starting{where}", "cyan",
+            f"Job {job_id or '?'} was created; its state has not been "
+            f"recorded yet.",
+        )
+    if job_state in _INFLIGHT_JOB_STATES:
+        return out(
+            VERIFY_RUNNING, f"verifying{where}", "cyan",
+            f"Job {job_id} is replaying the fix{where}. The result posts "
+            f"back here when it finishes.",
+        )
+    return out(
+        VERIFY_LOST, f"verify produced no result{where}", "amber",
+        f"Job {job_id} ended in state {job_state!r} without recording a "
+        f"verification. Run it again, or read the job's activity for why.",
+    )
+
+
 # --- Worklist bucketing ------------------------------------------------------
 
 # fix_status.key -> worklist bucket. Only `in_progress` is unlisted: that is

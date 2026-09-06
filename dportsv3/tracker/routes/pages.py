@@ -38,6 +38,7 @@ from dportsv3.tracker.agentic_queries import (
     issues_with_occurrences,
     job_events_for_job,
     latest_review_request_for_bundle,
+    latest_verify_request,
     list_bundles,
     list_issues,
     list_jobs,
@@ -52,6 +53,7 @@ from dportsv3.tracker.agentic_queries import (
     token_usage_for_job,
     token_usage_for_port,
     upsert_user_context_text,
+    verify_requests_for_bundle,
 )
 from dportsv3.tracker.db import (
     INFLIGHT_BUILD_STATUSES,
@@ -568,6 +570,20 @@ def register(app, ctx):
             delivery_request = latest_review_request_for_bundle(
                 conn, bundle_id,
             )
+            # poly-0e02.6: the verify request is the ONLY record of which
+            # env a verification ran in -- bundles has no env column -- and
+            # of a verify that never started at all. Nothing read it back
+            # until now.
+            verify = (
+                fix_state.verify_state(
+                    bundle, latest_verify_request(conn, bundle_id),
+                )
+                if bundle is not None else None
+            )
+            verify_history = (
+                verify_requests_for_bundle(conn, bundle_id)
+                if bundle is not None else []
+            )
             # Visibility plan: tracker-side activity rows
             # (bundle_accepted, delivery_complete) live with
             # bundle_id set but job_id=NULL. Surface them on the
@@ -644,6 +660,8 @@ def register(app, ctx):
                 "dops_state": dops_state,
                 "operator_actions": operator_actions,
                 "delivery_request": delivery_request,
+                "verify": verify,
+                "verify_history": verify_history,
                 "bundle_activity": bundle_activity,
                 "chat_enabled": chat_enabled,
                 "chat_session_relpath": chat_session_relpath,

@@ -61,6 +61,10 @@ from dportsv3.tracker.agentic_queries.skip import (
     set_origin_skip,
     clear_origin_skip,
 )
+from dportsv3.tracker.agentic_queries.verify import (
+    latest_verify_request,
+    verify_requests_for_bundle,
+)
 from dportsv3.tracker.agentic_queries.review import (
     insert_review_request,
     latest_review_request_for_bundle,
@@ -119,6 +123,8 @@ __all__ = [
     "is_origin_skipped",
     "set_origin_skip",
     "clear_origin_skip",
+    "latest_verify_request",
+    "verify_requests_for_bundle",
     "insert_review_request",
     "latest_review_request_for_bundle",
     "open_delivery_bundle_ids",
