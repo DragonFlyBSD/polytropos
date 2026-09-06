@@ -562,7 +562,9 @@ def issue_bucket(
 
 
 # Count at which an issue's recurrences read as systemic (loud, floats up).
-_SYSTEMIC_THRESHOLD = 3
+# Public because the pipeline inventory counts systemic issues in SQL
+# (`times_seen >= N`) rather than projecting every row to find them.
+SYSTEMIC_THRESHOLD = 3
 
 
 def issue_group(
@@ -613,7 +615,7 @@ def issue_group(
         "muted": state == ISSUE_MUTED,
         "resolved": state == ISSUE_RESOLVED,
         "resolving": state == ISSUE_RESOLVING,
-        "systemic": (times_seen or 0) >= _SYSTEMIC_THRESHOLD,
+        "systemic": (times_seen or 0) >= SYSTEMIC_THRESHOLD,
         "latest": latest,
         "latest_ts": (latest.get("ts_utc") if latest else "") or "",
         "occurrences": ordered,
