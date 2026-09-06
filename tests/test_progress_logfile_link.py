@@ -14,6 +14,7 @@ no link rather than a broken one.
 from __future__ import annotations
 
 import gzip
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -180,33 +181,49 @@ def test_a_corrupt_gzip_reports_instead_of_crashing(
     assert resp.status_code == 200, resp.text
 
 
+def _run_js() -> str:
+    return (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+            / "static" / "run.js").read_text()
+
+
 def test_the_old_relative_link_is_gone_from_the_ui() -> None:
     """Guard against the lifted form coming back: it resolved against the
-    page's <base> to /api/progress/build/<x>.log and never existed."""
-    js = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
-          / "static" / "progress.js").read_text()
+    page's <base> to /api/progress/build/<x>.log and never existed.
+
+    progress.js became run.js in UI-3; the trap it guards is the same one,
+    because run.html still sets <base>."""
+    js = _run_js()
+
     assert "'___'" not in js
+    assert '"___"' not in js
     assert "'../'" not in js
+    assert '"../"' not in js
     assert "/agentic/bundles/" in js
 
 
-def test_the_link_is_root_relative() -> None:
+def test_the_evidence_links_are_root_relative() -> None:
     """The page sets <base href="/api/progress/...">, which rewrites
     relative URLs. A root-relative path is immune to it."""
-    js = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
-          / "static" / "progress.js").read_text()
-    start = js.index("function logfile(")
-    body = js[start:js.index("}", start)]
-    assert "'/agentic/bundles/'" in body
+    js = _run_js()
+    start = js.index("function rowNode(")
+    body = js[start:js.index("\n  }", start)]
+
+    for href in re.findall(r'link\(\s*\n?\s*"([^"]*)"', body):
+        assert href.startswith("/"), href
+    assert body.count('"/agentic/bundles/"') == 2   # the log and the bundle
 
 
-def test_only_failed_rows_get_a_link_in_the_renderer() -> None:
-    """built used to render a link and nothing else. It renders the
-    version now — successes have no log in the tracker to link to."""
-    js = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
-          / "static" / "progress.js").read_text()
-    start = js.index("function infoHTML(")
-    body = js[start:js.index("\n}", start)]
-    assert body.count("logfile(") == 1
-    failed_branch = body[body.index("if (result === 'failed')"):]
-    assert "logfile(" in failed_branch
+def test_only_a_row_with_evidence_gets_a_link() -> None:
+    """A success uploads nothing, so there is no log to point at. The
+    renderer must not offer one -- it used to render a link and no version
+    for every built row."""
+    js = _run_js()
+    start = js.index("function rowNode(")
+    body = js[start:js.index("\n  }", start)]
+
+    guard = body.index("if (r.bundle_id)")
+    else_branch = body.index("} else {", guard)
+
+    assert body.index('"/agentic/bundles/"') > guard
+    assert body.rindex('"/agentic/bundles/"') < else_branch
+    assert "—" in body[else_branch:]

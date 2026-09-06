@@ -62,11 +62,12 @@ def test_progress_html_serves(client: TestClient) -> None:
     resp = client.get("/target/@2026Q2")
     assert resp.status_code == 200
     body = resp.text
-    # Pinned base + key dsynth-progress hooks
+    # The base still pins run.js' relative JSON fetches; the hooks it fills
+    # are the run view's, not the lifted dsynth page's (UI-3).
     assert '<base href="/api/progress/@2026Q2/">' in body
     assert "progress.css" in body
-    assert "progress.js" in body
-    assert 'id="stats_built"' in body
+    assert "run.js" in body
+    assert 'id="s-built"' in body
 
 
 def test_progress_summary_shape(client: TestClient) -> None:

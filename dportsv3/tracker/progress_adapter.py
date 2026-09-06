@@ -147,6 +147,10 @@ def _run_summary_by_id(
     kfiles = max(1, (historical + CHUNK_SIZE - 1) // CHUNK_SIZE) if historical else 0
 
     return {
+        # /target/{target} follows whichever run is latest. If a new one
+        # starts while someone is watching, the page's server-rendered
+        # header is describing the old one -- this is how it notices.
+        "run_id": int(run["id"]),
         "profile": str(run["target"]),
         "kickoff": _format_kickoff(str(run["started_at"])),
         "kfiles": kfiles,
@@ -240,6 +244,7 @@ def run_history_chunk(
 
 def _empty_summary(target: str) -> dict[str, Any]:
     return {
+        "run_id": None,
         "profile": target,
         "kickoff": "",
         "kfiles": 0,

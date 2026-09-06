@@ -1,0 +1,154 @@
+{% extends "_base.html" %}
+{# One build run, live. Serves /target/{target} (the newest run there) and
+   /builds/{run_id}. Replaces the lifted dsynth-progress page: the stress
+   table, the stat-card row, the builder-slot columns and the preset tags
+   all described a farm this tracker does not model, so they are gone
+   rather than shown empty. run.js keeps the data contract -- summary.json
+   plus NN_history.json chunks bounded by kfiles. #}
+{% block title %}Run {{ run.id if run else target }} — DeltaPorts Tracker{% endblock %}
+{% block head_extra %}
+  {# progress_base pins the relative JSON fetches; run.js is loaded with a
+     root-relative URL so <base> cannot rewrite it. #}
+  <base href="{{ progress_base }}">
+{% endblock %}
+{% block body %}
+  {% with nav_crumbs = [
+       {"label": "Builds", "url": request.url_for('dashboard_index')},
+       {"label": (('#' ~ run.id ~ ' ') if run else '') ~ target}] %}
+    {% include "_tracker_nav.html" %}
+  {% endwith %}
+
+  {% if not run %}
+  <div class="page-heading">
+    <div>
+      <h1>{{ target }}</h1>
+      <p>No build run has been recorded for this target.</p>
+    </div>
+  </div>
+  <div class="page-body">
+    <section class="panel">
+      <div class="empty">
+        <strong>Nothing to show</strong>
+        Live progress appears here once the farm starts a build on {{ target }}.
+      </div>
+    </section>
+  </div>
+  {% else %}
+
+  <div class="page-heading">
+    <div>
+      <h1>Run #{{ run.id }} · {{ run.target }}</h1>
+      <p>
+        {{ run.build_type }}
+        {%- if run.commit_branch or run.commit_sha %} ·
+          {{ run.commit_branch or '' }}{% if run.commit_sha %} @ {{ run.commit_sha[:12] }}{% endif %}
+        {%- endif %} · started {{ run.started_at }}
+        {%- if run.finished_at %} · finished {{ run.finished_at }}{% endif %}
+      </p>
+    </div>
+    <div class="heading-actions">
+      <span class="live-dot" id="run-live">connecting</span>
+      <a class="control" href="{{ request.url_for('dashboard_index') }}?run={{ run.id }}">Open in Builds</a>
+    </div>
+  </div>
+
+  <div class="page-body stack">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Progress</h2>
+        <span class="count"><span id="s-total">{{ run.total_expected or 0 }}</span> expected</span>
+        <span class="spacer"></span>
+        <span class="count">elapsed <span id="s-elapsed">—</span></span>
+      </div>
+      <div class="run-progress">
+        <div class="pbar" id="run-bar" role="img" aria-label="Build progress"></div>
+        <div class="run-counts">
+          <div class="build-count"><span>Built</span><strong id="s-built">0</strong></div>
+          <div class="build-count"><span>Failed</span><strong class="red" id="s-failed">0</strong></div>
+          <div class="build-count"><span>Skipped</span><strong class="amber" id="s-skipped">0</strong></div>
+          <div class="build-count"><span>Ignored</span><strong id="s-ignored">0</strong></div>
+          <div class="build-count"><span>Building</span><strong class="cyan" id="s-building">0</strong></div>
+          <div class="build-count"><span>Queued</span><strong class="amber" id="s-queued">0</strong></div>
+          <div class="build-count"><span>Remaining</span><strong id="s-remains">0</strong></div>
+        </div>
+        <p class="run-note">
+          Load, swap, package rate and per-port duration are not recorded by
+          this tracker, so they are not shown.
+          <a id="queued-link" hidden
+             href="{{ request.url_for('dashboard_index') }}?run={{ run.id }}&amp;state=queued">See the queued origins</a>
+        </p>
+      </div>
+    </section>
+
+    <section class="panel" id="builders-panel" hidden>
+      <div class="panel-head">
+        <h2>Building now</h2>
+        <span class="count" id="builders-count">0</span>
+      </div>
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr><th>Origin</th><th>Version</th></tr></thead>
+          <tbody id="builders-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="results">
+      <div class="detail-toolbar">
+        <h2>Origins</h2>
+        <span class="detail-note" id="results-note">loading</span>
+        <span class="toolbar-spacer"></span>
+        <label class="visually-hidden" for="results-search">Search origins</label>
+        <input class="result-search" id="results-search" type="search"
+               placeholder="Search origin">
+      </div>
+      <div class="detail-toolbar" style="border-bottom:0;padding-top:0">
+        <div class="result-filters">
+          {% for key, label in [('all', 'All'), ('failure', 'Failed'), ('success', 'Built'),
+                                ('skipped', 'Skipped'), ('ignored', 'Ignored'),
+                                ('building', 'Building')] %}
+          <button type="button" class="result-filter{% if key == 'all' %} active{% endif %}"
+                  data-state="{{ key }}" aria-pressed="{{ 'true' if key == 'all' else 'false' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+        <span class="toolbar-spacer"></span>
+        <span class="detail-note" id="chunk-note"></span>
+      </div>
+
+      <div class="table-scroll-x" id="results-table-wrap">
+        <table class="data-table results-table">
+          <thead>
+            <tr><th>No.</th><th>State</th><th>Origin</th><th>Version</th><th>Recorded</th><th>Evidence</th></tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="results-empty" hidden>
+        <strong>No origins match</strong>
+        Clear the search or pick a different state. Queued origins are not in
+        this view — they are listed on the Builds dashboard.
+      </div>
+
+      <div class="pager">
+        <label class="visually-hidden" for="per-page">Rows per page</label>
+        <select class="control" id="per-page">
+          {% for n in [25, 50, 100, 200] %}
+          <option value="{{ n }}"{% if n == 50 %} selected{% endif %}>{{ n }} per page</option>
+          {% endfor %}
+        </select>
+        <span class="spacer"></span>
+        <button type="button" class="control" id="page-prev" disabled>Previous</button>
+        <button type="button" class="control" id="page-next" disabled>Next</button>
+      </div>
+    </section>
+  </div>
+  {% endif %}
+{% endblock %}
+{% block scripts %}
+{% if run %}
+  <script>
+    window.DP_RUN = { portBase: {{ (request.url_for('dashboard_target', target=run.target)|string ~ '/')|tojson }} };
+  </script>
+  <script src="{{ request.url_for('static', path='run.js') }}?v={{ static_v }}" defer></script>
+{% endif %}
+{% endblock %}

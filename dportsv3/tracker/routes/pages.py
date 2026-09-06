@@ -59,6 +59,7 @@ from dportsv3.tracker.db import (
     get_port_history,
     get_port_status,
     get_target_summary,
+    latest_run_for_target,
     list_build_runs,
 )
 from dportsv3.tracker.models import (
@@ -1007,15 +1008,22 @@ def register(app, ctx):
 
     @app.get("/target/{target}", response_class=HTMLResponse)
     def dashboard_target(request: RequestType, target: str) -> Any:
-        # The page uses progress.{css,js} (lifted from dsynth-progress)
-        # and fetches data from /api/progress/{target}/. The <base> tag
-        # pins those relative URLs to the canonical API root.
+        """The newest run on one target, live.
+
+        The header is server-rendered from the run this resolves now;
+        summary.json carries run_id so the page notices when a newer run
+        starts underneath it. The <base> tag pins run.js' relative JSON
+        fetches to the progress API root.
+        """
+        with _conn() as conn:
+            run = latest_run_for_target(conn, target)
         return templates.TemplateResponse(
             request,
-            "progress.html",
+            "run.html",
             {
                 "title": target,
                 "target": target,
+                "run": run,
                 "progress_base": f"/api/progress/{target}/",
             },
         )
@@ -1108,9 +1116,9 @@ def register(app, ctx):
 
     @app.get("/builds/{run_id}", response_class=HTMLResponse)
     def dashboard_build_detail(request: RequestType, run_id: int) -> Any:
-        # Build detail uses the same dsynth-progress UI as /target/{target},
-        # just scoped to one run_id. Verify the run exists so unknown
-        # IDs 404 here rather than at the JSON fetch.
+        """One run, live. The same view as /target/{target}, pinned to a run
+        instead of following the newest. Unknown ids 404 here rather than at
+        the first JSON fetch."""
         try:
             with _conn() as conn:
                 build = get_build_run(conn, run_id)
@@ -1118,10 +1126,11 @@ def register(app, ctx):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return templates.TemplateResponse(
             request,
-            "progress.html",
+            "run.html",
             {
                 "title": f"Build {run_id}",
-                "target": f"{build['target']} (run {run_id})",
+                "target": str(build["target"]),
+                "run": build,
                 "progress_base": f"/api/progress/build/{run_id}/",
             },
         )

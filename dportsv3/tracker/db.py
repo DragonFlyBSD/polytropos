@@ -570,6 +570,23 @@ def get_build_results(conn: sqlite3.Connection, run_id: int) -> list[dict[str, A
     return [_row_dict_required(row) for row in rows]
 
 
+def latest_run_for_target(
+    conn: sqlite3.Connection, target: str
+) -> dict[str, Any] | None:
+    """The newest run recorded for one target, with its counts, or None.
+
+    /target/{target} follows whichever run is latest rather than naming
+    one, so the page has to resolve it the same way the progress adapter
+    does before it can render a header for it.
+    """
+    row = conn.execute(
+        """SELECT id FROM build_runs WHERE target = ?
+           ORDER BY started_at DESC, id DESC LIMIT 1""",
+        (target,),
+    ).fetchone()
+    return get_build_run(conn, int(row[0])) if row else None
+
+
 def get_build_results_page(
     conn: sqlite3.Connection,
     run_id: int,
