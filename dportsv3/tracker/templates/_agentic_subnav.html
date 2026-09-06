@@ -1,8 +1,12 @@
 {# The Repairs view's own sections, below the primary nav -- the same
-   .section-nav shell Builds uses, so the two views navigate alike. run /
-   job / activity are drill-downs (reached from a bundle or job), so they
-   are intentionally not here. Active item is derived from the request path
-   (no per-route threading). #}
+   .section-nav shell Builds uses, so the three views navigate alike. run
+   and activity are drill-downs (reached from a bundle), so they are
+   intentionally not here. Active item is derived from the request path (no
+   per-route threading).
+
+   Jobs, Runner and Manual used to be here because Pipeline had no home of
+   its own. UI-4 gave it one, and they are its secondary destinations --
+   they describe the machinery, not a fingerprinted problem. #}
 {% set _p = request.url.path %}
 <nav class="section-nav" aria-label="Repairs sections">
   <a href="{{ request.url_for('agentic_index') }}"
@@ -11,16 +15,5 @@
      {% if _p.startswith(request.url_for('agentic_issues').path) %}class="active" aria-current="page"{% endif %}>Issues</a>
   <a href="{{ request.url_for('agentic_bundles') }}"
      {% if _p.startswith(request.url_for('agentic_bundles').path) %}class="active" aria-current="page"{% endif %}>Occurrences</a>
-  <a href="{{ request.url_for('agentic_jobs') }}"
-     {% if _p.startswith(request.url_for('agentic_jobs').path) %}class="active" aria-current="page"{% endif %}>Jobs</a>
-  {# Operator destinations: driving the runner and answering the manual
-     queue are things only an operator can do, so they are not offered to a
-     reader who could not act on them. #}
-  {% if can_operate() %}
-  <a href="{{ request.url_for('agentic_runner') }}"
-     {% if _p.startswith(request.url_for('agentic_runner').path) %}class="active" aria-current="page"{% endif %}>Runner</a>
-  <a href="{{ request.url_for('agentic_manual_list') }}"
-     {% if _p.startswith(request.url_for('agentic_manual_list').path) %}class="active" aria-current="page"{% endif %}>Manual</a>
-  {% endif %}
   <span class="section-context">Repair workspace</span>
 </nav>

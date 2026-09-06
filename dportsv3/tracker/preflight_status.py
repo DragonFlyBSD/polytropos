@@ -153,7 +153,11 @@ def current(*, force: bool = False) -> PreflightReport:
     findings = _check()
     report = PreflightReport(
         findings=findings,
-        checked_at=datetime.now(timezone.utc).isoformat(),
+        # Seconds, not microseconds: this is a stamp a page prints, and
+        # every other timestamp the tracker shows stops there.
+        checked_at=datetime.now(timezone.utc).replace(
+            microsecond=0,
+        ).isoformat(),
         level=_level_of(findings),
     )
     with _LOCK:

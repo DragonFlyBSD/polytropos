@@ -1,0 +1,276 @@
+{% extends "_base.html" %}
+{% block title %}Pipeline — DeltaPorts Tracker{% endblock %}
+{% block body %}
+  {% include "_tracker_nav.html" %}
+  {% include "_pipeline_subnav.html" %}
+
+  <div class="page-heading">
+    <div>
+      <h1>Pipeline</h1>
+      <p>Is the system healthy and moving. What needs <em>you</em> is the
+         <a href="{{ request.url_for('agentic_index') }}">Repairs worklist</a>.</p>
+    </div>
+  </div>
+
+  <div class="page-body stack pipeline">
+
+    {# --- health strip: quiet in steady state ------------------------- #}
+    {% set env_broken = env_health | selectattr('status', 'equalto', 'broken') | list %}
+    <div class="health-strip">
+      <span class="health-item">
+        <span class="dot {% if runner_live %}ok{% else %}bad{% endif %}"></span>
+        <b>Runner</b>
+        {% if runner_live %}{{ runner.status }}{% if runner.current_stage %} · {{ runner.current_stage }}{% endif %}
+        {% else %}not running{% endif %}
+      </span>
+      <span class="health-item">
+        <span class="dot {% if env_broken %}bad{% else %}ok{% endif %}"></span>
+        <b>Dev-env</b>
+        {% if env_broken %}{{ env_broken|length }} broken
+          ({{ env_broken|map(attribute='env')|join(', ') }})
+        {% else %}healthy{% endif %}
+      </span>
+      <span class="health-item">
+        <span class="dot {% if preflight.healthy %}ok{% else %}bad{% endif %}"></span>
+        <b>Delivery</b>
+        {% if preflight.healthy %}preflight clean
+        {% else %}{{ preflight.findings|length }} preflight
+          {{ 'finding' if preflight.findings|length == 1 else 'findings' }}{% endif %}
+        {% if preflight.checked_at %}
+        <span class="health-when">
+          as of {{ preflight.checked_at }}{% if preflight.deferred %} · not re-checked, a delivery holds the clone{% endif %}
+        </span>
+        {% endif %}
+      </span>
+    </div>
+    {% if not preflight.healthy and preflight.findings %}
+    <details class="stage-drawer preflight-detail">
+      <summary>What the delivery preflight found</summary>
+      <ul class="finding-list">
+        {% for f in preflight.findings %}
+        <li class="finding {{ f.level }}"><span class="pill {{ 'red' if f.level == 'error' else 'amber' if f.level == 'warn' else 'green' }}">{{ f.level }}</span> {{ f.detail }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+
+    {# --- the shape of the thing, said once --------------------------- #}
+    <p class="pipeline-note">
+      These are inventories, not stages of a queue. Work does not advance
+      through them in order: triage and patch are <strong>separate jobs</strong>
+      (a triage that decides to patch enqueues a new row and finishes), a
+      failed verification or fresh operator context <strong>enqueues new
+      work</strong> on a problem that had already been through once, and an
+      issue can <strong>reopen after resolving</strong> when its fingerprint
+      comes back. A single port can be counted in several of these at once,
+      and the totals do not add up to anything.
+    </p>
+
+    <div class="stage-grid">
+
+      {# --- 1. ingested ---------------------------------------------- #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Ingested</h2>
+          <span class="stage-n">{{ status.bundles }}</span>
+        </div>
+        <p class="stage-cap">Failure evidence the farm has filed, across
+           {{ status.runs }} {{ 'run' if status.runs == 1 else 'runs' }}.</p>
+        {% if status.bundles %}
+        <div class="stage-rows">
+          <a class="stage-row" href="{{ request.url_for('agentic_bundles') }}">
+            <span>All occurrences</span><span class="n">{{ status.bundles }}</span>
+          </a>
+        </div>
+        {% else %}
+        <div class="stage-empty">Nothing has been ingested yet. Occurrences
+          arrive from the dsynth hooks when a build fails.</div>
+        {% endif %}
+      </section>
+
+      {# --- 2. fingerprinted ------------------------------------------ #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Fingerprinted</h2>
+          <span class="stage-n">{{ issues.total }}</span>
+        </div>
+        <p class="stage-cap">Distinct problems behind those occurrences. One
+           issue is one fingerprint, however many times it has been seen.</p>
+        {% if issues.total %}
+        <div class="stage-rows">
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}?state=unresolved">
+            <span>Unresolved</span><span class="n">{{ issues.by_state.unresolved }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}?state=regressed">
+            <span>Regressed <em>fixed, then seen again</em></span><span class="n">{{ regressed }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}">
+            <span>Seen {{ issues.systemic_threshold }}+ times <em>systemic</em></span>
+            <span class="n">{{ issues.systemic }}</span>
+          </a>
+        </div>
+        {% else %}
+        <div class="stage-empty">No issue has been fingerprinted yet.</div>
+        {% endif %}
+      </section>
+
+      {# --- 3. automated work ----------------------------------------- #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Automated work</h2>
+          <span class="stage-n">{{ status.jobs.pending + status.jobs.inflight }}</span>
+        </div>
+        <p class="stage-cap">Jobs the runner is holding. A queued job is
+           waiting for the runner; an in-flight one has claimed a port.</p>
+        {% if status.jobs.pending or status.jobs.inflight or bands.runner %}
+        <div class="stage-rows">
+          <a class="stage-row" href="{{ request.url_for('agentic_jobs') }}?state=queued">
+            <span>Queued</span><span class="n">{{ status.jobs.pending }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_jobs') }}">
+            <span>In flight <em>claimed through confirming</em></span>
+            <span class="n">{{ status.jobs.inflight }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_index') }}">
+            <span>Issues the runner owns <em>nothing for you to do yet</em></span>
+            <span class="n">{{ bands.runner }}</span>
+          </a>
+        </div>
+        {% else %}
+        <div class="stage-empty">The runner is holding nothing.
+          {% if not runner_live %}It is also not running.{% endif %}</div>
+        {% endif %}
+      </section>
+
+      {# --- 4. operator work ------------------------------------------ #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Operator work</h2>
+          <span class="stage-n">{{ bands.ready + bands.verify + bands.decide + bands.owned + status.manual_pending }}</span>
+        </div>
+        <p class="stage-cap">Open issues banded by what they need from a
+           person. This is the Repairs worklist, counted.</p>
+        {% set operator_total = bands.ready + bands.verify + bands.decide + bands.owned + status.manual_pending %}
+        {% if operator_total %}
+        <div class="stage-rows">
+          {% for key in ['ready', 'verify', 'decide', 'owned'] %}
+          <a class="stage-row" href="{{ request.url_for('agentic_index') }}#wl-{{ key }}">
+            <span>{{ band_labels[key] }}</span><span class="n">{{ bands[key] }}</span>
+          </a>
+          {% endfor %}
+          {# The count is in the headline above either way, so hiding the
+             row from a reader would leave the two disagreeing. Reading how
+             much is queued is not acting on it; only the destination is
+             operator-gated (poly-0e02.12). #}
+          {% if can_operate() %}
+          <a class="stage-row" href="{{ request.url_for('agentic_manual_list') }}">
+            <span>Waiting for your context</span><span class="n">{{ status.manual_pending }}</span>
+          </a>
+          {% else %}
+          <span class="stage-row static">
+            <span>Waiting for an operator's context</span><span class="n">{{ status.manual_pending }}</span>
+          </span>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="stage-empty">Nothing needs a person right now.</div>
+        {% endif %}
+      </section>
+
+      {# --- 5. delivery ----------------------------------------------- #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Delivery</h2>
+          <span class="stage-n">{{ deliveries.open }}</span>
+        </div>
+        <p class="stage-cap">Fixes offered upstream and still open there.
+           Separate from the confirm build: since the build is what resolves
+           an issue, a fix can be proven without a PR and a PR can be open
+           on an issue that reopened.</p>
+        {% if deliveries.total or deliveries.awaiting_confirm_build %}
+        <div class="stage-rows">
+          <a class="stage-row" href="{{ request.url_for('pipeline_deliveries') }}?status=open">
+            <span>Open upstream</span><span class="n">{{ deliveries.open }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('pipeline_deliveries') }}?status=create_failed">
+            <span>Never reached the provider</span><span class="n">{{ deliveries.failed }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}?state=resolving">
+            <span>Awaiting a confirm build <em>a different axis</em></span>
+            <span class="n">{{ deliveries.awaiting_confirm_build }}</span>
+          </a>
+        </div>
+        {% else %}
+        <div class="stage-empty">Nothing has been delivered.
+          {% if not preflight.healthy %}The delivery preflight has findings
+          — see above.{% endif %}</div>
+        {% endif %}
+      </section>
+
+      {# --- 6. outcome ------------------------------------------------ #}
+      <section class="stage">
+        <div class="stage-head">
+          <h2>Outcome</h2>
+          <span class="stage-n">{{ issues.by_state.resolved }}</span>
+        </div>
+        <p class="stage-cap">Issues a build has proven fixed, and how the
+           jobs behind them ended.</p>
+        {% set jobs_ended = outcomes.by_state.done + outcomes.by_state.escalated + outcomes.by_state.dead %}
+        {% if issues.total or jobs_ended %}
+        <div class="stage-rows">
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}?state=resolved">
+            <span>Issues resolved</span><span class="n">{{ issues.by_state.resolved }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_issues') }}?state=muted">
+            <span>Issues muted</span><span class="n">{{ issues.by_state.muted }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_jobs') }}?state=done">
+            <span>Jobs done</span><span class="n">{{ outcomes.by_state.done }}</span>
+          </a>
+          <a class="stage-row" href="{{ request.url_for('agentic_jobs') }}?state=dead">
+            <span>Jobs that failed the work</span><span class="n">{{ outcomes.dead.failed }}</span>
+          </a>
+        </div>
+        {% if outcomes.by_state.dead %}
+        <details class="stage-drawer">
+          <summary>Why {{ outcomes.by_state.dead }} dead
+            {{ 'job' if outcomes.by_state.dead == 1 else 'jobs' }} are dead</summary>
+          <p class="drawer-note">
+            The word <code>dead</code> is not a verdict on the work. Only
+            the first row below says anything about a port: the others are
+            the job being interrupted, or a decision not to do it.
+          </p>
+          <div class="stage-rows">
+            <span class="stage-row static"><span>The work was attempted and failed</span><span class="n">{{ outcomes.dead.failed }}</span></span>
+            <span class="stage-row static"><span>Interrupted <em>runner restart, broken env, no worktree</em></span><span class="n">{{ outcomes.dead.interrupted }}</span></span>
+            <span class="stage-row static"><span>Skipped <em>origin locked, issue muted, abandoned</em></span><span class="n">{{ outcomes.dead.skipped }}</span></span>
+            {% if outcomes.dead.unclassified %}
+            <span class="stage-row static"><span>Unclassified <em>no retire_reason, or a new one</em></span><span class="n">{{ outcomes.dead.unclassified }}</span></span>
+            {% endif %}
+          </div>
+          {% if outcomes.dead.interrupted %}
+          <p class="drawer-note">
+            A completed triage job had nowhere to go until poly-h6c: it sat
+            at <code>triaged</code> until a restart reaped it as
+            <code>runner_restart</code>. Those rows were not backfilled, so
+            the interrupted count is inflated by finished triage work and
+            stays that way until it ages out.
+          </p>
+          {% endif %}
+          {% if outcomes.dead_by_reason %}
+          <div class="stage-rows">
+            {% for reason, n in outcomes.dead_by_reason.items() %}
+            <span class="stage-row static sub"><span><code>{{ reason }}</code></span><span class="n">{{ n }}</span></span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </details>
+        {% endif %}
+        {% else %}
+        <div class="stage-empty">Nothing has finished yet.</div>
+        {% endif %}
+      </section>
+
+    </div>
+  </div>
+{% endblock %}

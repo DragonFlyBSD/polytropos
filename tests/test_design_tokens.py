@@ -89,13 +89,23 @@ def test_body_is_not_set_in_monospace():
     assert "monospace" not in body
 
 
+#: Both ways CSS sets a type size. The shorthand was missed at first, and
+#: a 10px uppercase label went in under the guard on the page that was
+#: being written when it was noticed (UI-4).
+_SIZE_PATTERNS = (
+    r"font-size:\s*(\d+(?:\.\d+)?)px",
+    r"font:[^;{}]*?\b(\d+(?:\.\d+)?)px",
+)
+
+
 @pytest.mark.parametrize("source", ["css", "templates"])
 def test_nothing_essential_is_below_twelve_pixels(source):
     texts = [_css()] if source == "css" else [t.read_text() for t in TEMPLATES]
     small = [
         m.group(0)
         for text in texts
-        for m in re.finditer(r"font-size:\s*(\d+(?:\.\d+)?)px", text)
+        for pattern in _SIZE_PATTERNS
+        for m in re.finditer(pattern, text)
         if float(m.group(1)) < 12
     ]
     assert small == []

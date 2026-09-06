@@ -3,9 +3,7 @@
    every page -- which is the point of having one shell.
 
    Builds | Pipeline | Repairs are the three views the migration is built
-   around. Pipeline has no overview of its own yet (UI-4 gives it /pipeline);
-   until then it lands on Jobs, which is one of its own secondary
-   destinations, so the entry always goes somewhere real. #}
+   around, each with its own overview and its own section nav. #}
 {% set _path = request.url.path %}
 <header class="app-header">
   <a class="app-brand" href="{{ request.url_for('dashboard_index') }}">
@@ -14,8 +12,8 @@
   <nav class="primary-nav" aria-label="Primary">
     <a href="{{ request.url_for('dashboard_builds') }}"
        {% if _path.startswith('/builds') or _path.startswith('/target') or _path == '/' %}class="active" aria-current="page"{% endif %}>Builds</a>
-    <a href="{{ request.url_for('agentic_jobs') }}"
-       {% if _path.startswith('/agentic/jobs') or _path.startswith('/agentic/runner') or _path.startswith('/agentic/manual') %}class="active" aria-current="page"{% endif %}>Pipeline</a>
+    <a href="{{ request.url_for('pipeline_overview') }}"
+       {% if _path.startswith('/pipeline') or _path.startswith('/agentic/jobs') or _path.startswith('/agentic/runner') or _path.startswith('/agentic/manual') %}class="active" aria-current="page"{% endif %}>Pipeline</a>
     <a href="{{ request.url_for('agentic_index') }}"
        {% if _path == '/agentic' or _path.startswith('/agentic/issues') or _path.startswith('/agentic/bundles') %}class="active" aria-current="page"{% endif %}>Repairs</a>
   </nav>

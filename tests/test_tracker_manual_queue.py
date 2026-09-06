@@ -292,11 +292,16 @@ def test_post_context_origin_with_slash(client: TestClient) -> None:
 # --- dashboard link ----------------------------------------------------------
 
 
-def test_agentic_index_links_to_manual_queue(client: TestClient) -> None:
-    body = client.get("/agentic").text
-    # Phase 6: the landing links to the manual queue via the agentic sub-nav.
+def test_the_pipeline_links_to_the_manual_queue(client: TestClient) -> None:
+    """The manual queue is reachable from the Pipeline sub-nav, and its
+    depth is a count on the overview. It used to hang off the Repairs
+    sub-nav, which was where every machinery destination lived before UI-4
+    gave Pipeline an overview of its own."""
+    body = client.get("/pipeline").text
+
     assert ">Manual</a>" in body
     assert "/agentic/manual" in body
+    assert "Waiting for your context" in body
 
 
 # --- discard ---------------------------------------------------------------

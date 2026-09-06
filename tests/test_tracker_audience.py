@@ -167,12 +167,16 @@ def test_agent_internals_are_operator_only(db, tmp_path, monkeypatch):
 def test_the_page_omits_what_it_will_not_accept(db, tmp_path, monkeypatch):
     with _client(db, tmp_path, readonly=False, monkeypatch=monkeypatch) as cl:
         op = cl.get("/agentic/bundles/b-1").text
-        op_nav = cl.get("/agentic").text
+        op_nav = cl.get("/pipeline").text
     with _client(db, tmp_path, readonly=True, monkeypatch=monkeypatch) as cl:
         anon = cl.get("/agentic/bundles/b-1").text
-        anon_nav = cl.get("/agentic").text
+        anon_nav = cl.get("/pipeline").text
 
     assert "Operator actions" in op and "Operator actions" not in anon
-    # Runner and Manual are places only an operator can act.
-    assert ">Runner<" in op_nav and ">Runner<" not in anon_nav
-    assert ">Manual<" in op_nav and ">Manual<" not in anon_nav
+    # Runner and Manual are places only an operator can act. They sit in the
+    # Pipeline sub-nav since UI-4 -- they describe the machinery, not a
+    # fingerprinted problem -- and the audience rule moved with them.
+    # Matched as links, not as text: the overview's health strip names the
+    # runner too, and reading its state is not acting on it.
+    assert ">Runner</a>" in op_nav and ">Runner</a>" not in anon_nav
+    assert ">Manual</a>" in op_nav and ">Manual</a>" not in anon_nav

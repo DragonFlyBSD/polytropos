@@ -538,21 +538,37 @@ def test_view_agentic_bundle_detail_renders_grouped_list(client: TestClient) -> 
 
 def test_agentic_subnav_present_and_highlights_current(client: TestClient) -> None:
     """Phase 6: agentic pages carry a sub-nav with the primary destinations.
-    The active item is derived from the request path."""
+    The active item is derived from the request path.
+
+    Repairs is a fingerprinted problem and what to do about it. Jobs,
+    Runner, Manual and Deliveries describe the machinery, and were here only
+    because Pipeline had no home of its own; UI-4 gave it one and they moved
+    to its sub-nav.
+    """
     import re
     body = client.get("/agentic").text
     # UI-5 put it on the same .section-nav shell Builds uses, so the two
     # views navigate alike.
     assert 'aria-label="Repairs sections"' in body
     assert 'id="agentic-subnav"' not in body
-    for label in (">Worklist<", ">Issues<", ">Occurrences<", ">Jobs<",
-                  ">Runner<", ">Manual<"):
+    for label in (">Worklist<", ">Issues<", ">Occurrences<"):
         assert label in body
+    for moved in (">Jobs<", ">Runner<", ">Manual<"):
+        assert moved not in body
     assert re.search(r'<a[^>]*class="active"[^>]*>Worklist</a>', body)
 
     # On the issues page the active item shifts to Issues.
     issues_body = client.get("/agentic/issues").text
     assert re.search(r'<a[^>]*class="active"[^>]*>Issues</a>', issues_body)
+
+    pipeline_body = client.get("/pipeline").text
+    assert 'aria-label="Pipeline sections"' in pipeline_body
+    for label in (">Overview<", ">Jobs<", ">Deliveries<", ">Runner<",
+                  ">Manual<"):
+        assert label in pipeline_body
+    assert re.search(
+        r'<a[^>]*class="active"[^>]*>Overview</a>', pipeline_body,
+    )
 
 
 def test_view_agentic_bundle_detail_links_to_its_jobs(

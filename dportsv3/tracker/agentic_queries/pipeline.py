@@ -197,3 +197,56 @@ def worklist_band_counts(conn: sqlite3.Connection) -> dict[str, int]:
         )
         counts[bucket or RUNNER_BAND] += int(row["n"])
     return counts
+
+
+def job_outcome_counts(conn: sqlite3.Connection) -> dict[str, Any]:
+    """How the finished jobs finished, with ``dead`` split by why.
+
+    ``dead`` on its own is not a verdict on the work. Its reasons split
+    three ways -- the job was interrupted, the work was skipped by a
+    decision, or the work was attempted and failed -- and only the last
+    says anything about the port. Reporting them as one number is how a
+    healthy system reads as a broken one: measured on the builder
+    2026-09-05, 246 of 364 dead rows were ``runner_restart``, so ``dead``
+    overstated real failure by about 3.1x (poly-h6c).
+
+    ``unclassified`` holds dead rows whose ``retire_reason`` is NULL or a
+    name nobody has classified. Kept visible rather than folded into
+    ``failed``, because a number that grows without anyone noticing is how
+    the 3.1x happened in the first place.
+    """
+    from dportsv3.agent import lifecycle  # noqa: PLC0415
+
+    outcomes = {state: 0 for state in sorted(lifecycle.JOB_OUTCOME_STATES)}
+    for row in conn.execute(
+        "SELECT state, COUNT(*) FROM jobs WHERE state IN "
+        f"({','.join('?' * len(lifecycle.JOB_OUTCOME_STATES))}) GROUP BY state",
+        sorted(lifecycle.JOB_OUTCOME_STATES),
+    ):
+        outcomes[str(row[0])] = int(row[1])
+
+    dead = {"failed": 0, "interrupted": 0, "skipped": 0, "unclassified": 0}
+    by_reason: dict[str, int] = {}
+    for row in conn.execute(
+        "SELECT retire_reason, COUNT(*) FROM jobs WHERE state = 'dead' "
+        "GROUP BY retire_reason"
+    ):
+        reason = row[0]
+        n = int(row[1])
+        if reason:
+            by_reason[str(reason)] = n
+        if reason in lifecycle.RETIRE_INTERRUPTED:
+            dead["interrupted"] += n
+        elif reason in lifecycle.RETIRE_SKIPPED:
+            dead["skipped"] += n
+        elif reason in lifecycle.RETIRE_FAILED:
+            dead["failed"] += n
+        else:
+            dead["unclassified"] += n
+    return {
+        "by_state": outcomes,
+        "dead": dead,
+        "dead_by_reason": dict(sorted(
+            by_reason.items(), key=lambda kv: (-kv[1], kv[0]),
+        )),
+    }

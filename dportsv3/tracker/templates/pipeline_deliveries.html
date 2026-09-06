@@ -1,0 +1,90 @@
+{% extends "_base.html" %}
+{% block title %}Deliveries — DeltaPorts Tracker{% endblock %}
+{% block body %}
+  {% with nav_crumbs = [{"label": "Pipeline", "url": request.url_for('pipeline_overview')}, {"label": "Deliveries"}] %}
+    {% include "_tracker_nav.html" %}
+  {% endwith %}
+  {% include "_pipeline_subnav.html" %}
+
+  <div class="page-heading">
+    <div>
+      <h1>Deliveries</h1>
+      <p>One row per delivered occurrence: its newest delivery attempt, and
+         the issue it belongs to. An issue resolves when a build proves the
+         fix, not when a PR merges — so a resolved issue here can still show
+         a delivery that never reached the provider.</p>
+    </div>
+  </div>
+
+  <div class="page-body stack">
+    <div class="result-filters" role="group" aria-label="Filter by status">
+      <a class="result-filter{% if not selected_status %} active{% endif %}"
+         href="?{{ query_for(status=None, page=None) }}">All <span class="n">{{ counts.total }}</span></a>
+      <a class="result-filter{% if selected_status == 'open' %} active{% endif %}"
+         href="?{{ query_for(status='open', page=None) }}">Open upstream <span class="n">{{ counts.open }}</span></a>
+      {% for s in statuses %}
+      <a class="result-filter{% if selected_status == s %} active{% endif %}"
+         href="?{{ query_for(status=s, page=None) }}">{{ s.replace('_', ' ') }}
+        <span class="n">{{ counts.by_status[s] }}</span></a>
+      {% endfor %}
+    </div>
+
+    {% set carried = [] %}
+    {% if selected_status %}{% set _ = carried.append(('status', selected_status)) %}{% endif %}
+    {% with items = deliveries, search_placeholder = 'Search origin, PR number or branch' %}
+      {% include "_list_controls.html" %}
+    {% endwith %}
+
+    <section class="panel">
+      {% if deliveries %}
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead>
+            <tr><th>Status</th><th>Origin</th><th>Issue</th><th>Review</th>
+                <th>Branch</th><th>Occurrence</th><th>Opened</th></tr>
+          </thead>
+          <tbody>
+            {% for d in deliveries %}
+            <tr>
+              <td>
+                <span class="pill {% if d.status == 'merged' %}green{% elif d.status == 'create_failed' %}red{% elif d.status in ('created', 'updated') %}cyan{% else %}neutral{% endif %}">{{ d.status.replace('_', ' ') }}</span>
+                {% if d.issue_state %}
+                <span class="pill neutral">issue {{ d.issue_state }}</span>
+                {% endif %}
+              </td>
+              <td>{{ d.origin or '—' }}</td>
+              <td>{% if d.issue_key %}<a href="{{ request.url_for('agentic_issue_detail', issue_key=d.issue_key) }}">{{ d.issue_key }}</a>{% else %}—{% endif %}</td>
+              <td>
+                {% if d.url and d.provider == 'local-patch' %}<code>{{ d.url }}</code>
+                {% elif d.url %}<a href="{{ d.url }}" target="_blank" rel="noopener">
+                  {% if d.provider_pr_id %}#{{ d.provider_pr_id }}{% else %}{{ d.provider }}{% endif %}</a>
+                {% else %}<span class="faint">never opened</span>{% endif %}
+              </td>
+              <td class="tabular">{{ d.branch or '—' }}</td>
+              <td>{% if d.bundle_id %}<a href="{{ request.url_for('agentic_bundle_detail', bundle_id=d.bundle_id) }}">{{ d.bundle_id }}</a>{% else %}—{% endif %}</td>
+              <td class="tabular">{{ d.created_at or '—' }}</td>
+            </tr>
+            {% if d.error %}
+            <tr class="row-note"><td colspan="7"><strong>{{ d.status.replace('_', ' ') }}:</strong> {{ d.error }}</td></tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% elif counts.total %}
+      <div class="empty">
+        <strong>Nothing matches this filter</strong>
+        {{ counts.total }} {{ 'delivery has' if counts.total == 1 else 'deliveries have' }}
+        been attempted in total.
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>Nothing has been delivered</strong>
+        A delivery row is written when an accepted fix is offered upstream.
+        Until delivery is configured, Accept records the decision and skips
+        with <code>no_config</code>.
+      </div>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

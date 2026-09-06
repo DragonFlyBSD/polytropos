@@ -13,6 +13,7 @@ from dportsv3.tracker import (
     delivery_sync,
     fix_state,
     issue_state,
+    preflight_status,
     render,
 )
 from dportsv3.tracker.agentic_queries import (
@@ -29,17 +30,22 @@ from dportsv3.tracker.agentic_queries import (
     open_delivery_bundle_ids,
     get_job,
     count_bundles,
+    count_deliveries,
     count_issues,
     count_jobs,
+    delivery_counts,
     get_manual_request,
     get_issue,
     get_run,
     issue_for_bundle,
+    issue_inventory,
     issues_with_occurrences,
     job_events_for_job,
+    job_outcome_counts,
     latest_review_request_for_bundle,
     latest_verify_request,
     list_bundles,
+    list_deliveries,
     list_issues,
     list_jobs,
     list_jobs_for_bundle,
@@ -49,12 +55,18 @@ from dportsv3.tracker.agentic_queries import (
     port_attempt_summary,
     recent_activity,
     recent_activity_for_bundle,
+    regressed_issue_count,
     runner_is_live,
     runner_status,
+    worklist_band_counts,
     token_usage_for_job,
     token_usage_for_port,
     upsert_user_context_text,
     verify_requests_for_bundle,
+)
+from dportsv3.tracker.agentic_queries.deliveries import (
+    DELIVERY_OPEN_STATUSES,
+    DELIVERY_STATUSES,
 )
 from dportsv3.tracker.db import (
     INFLIGHT_BUILD_STATUSES,
@@ -317,6 +329,94 @@ def register(app, ctx):
                 request,
                 "targets.html",
                 {"title": "Targets", "targets": get_target_summary(conn)},
+            )
+
+    # ------------------------------------------------------------------
+    # Pipeline: the system overview (UI-4).
+    # ------------------------------------------------------------------
+
+    @app.get("/pipeline", response_class=HTMLResponse)
+    def pipeline_overview(request: RequestType) -> Any:
+        """Is the system healthy and moving -- a different question from
+        what needs me, which is the Repairs worklist.
+
+        Every number here is a real count of a named population, uncapped.
+        None of them is a rate: there is no time-window aggregation query,
+        and a made-up throughput figure on a page whose whole job is to be
+        trusted is worse than no figure.
+        """
+        with _conn() as conn:
+            return templates.TemplateResponse(
+                request,
+                "pipeline.html",
+                {
+                    "title": "Pipeline",
+                    "status": agentic_status(conn),
+                    "issues": issue_inventory(conn),
+                    "regressed": regressed_issue_count(conn),
+                    "bands": worklist_band_counts(conn),
+                    "band_labels": dict(
+                        (key, label)
+                        for key, label, _cls in
+                        issue_state.ISSUE_WORKLIST_SECTIONS
+                    ),
+                    "deliveries": delivery_counts(conn),
+                    "outcomes": job_outcome_counts(conn),
+                    "runner": runner_status(conn),
+                    "runner_live": runner_is_live(conn),
+                    "env_health": env_health_statuses(conn),
+                    "preflight": preflight_status.current(),
+                },
+            )
+
+    @app.get("/pipeline/deliveries", response_class=HTMLResponse)
+    def pipeline_deliveries(
+        request: RequestType,
+        status: str | None = None,
+        provider: str | None = None,
+        q: str | None = None,
+        page: int = Query(default=1, ge=1),
+    ) -> Any:
+        """The delivery stage's drawer: one row per delivered bundle, its
+        newest delivery row, and the issue it belongs to."""
+        status_value = (status or "").strip() or None
+        provider_value = (provider or "").strip() or None
+        search = (q or "").strip() or None
+        # `open` is not a status, it is the two that are still upstream.
+        # Offered because it is the question the overview links on.
+        if status_value == "open":
+            statuses: tuple[str, ...] | None = DELIVERY_OPEN_STATUSES
+        elif status_value in DELIVERY_STATUSES:
+            statuses = (status_value,)
+        else:
+            statuses = None
+            status_value = None
+        offset = (page - 1) * _LIST_PAGE
+        with _conn() as conn:
+            return templates.TemplateResponse(
+                request,
+                "pipeline_deliveries.html",
+                {
+                    "title": "Deliveries",
+                    "deliveries": list_deliveries(
+                        conn, statuses=statuses, provider=provider_value,
+                        search=search, limit=_LIST_PAGE, offset=offset,
+                    ),
+                    "total": count_deliveries(
+                        conn, statuses=statuses, provider=provider_value,
+                        search=search,
+                    ),
+                    "counts": delivery_counts(conn),
+                    "page": page,
+                    "per_page": _LIST_PAGE,
+                    "search": search,
+                    "query_for": _query_for({
+                        "status": status_value, "provider": provider_value,
+                        "q": search, "page": page if page > 1 else None,
+                    }),
+                    "selected_status": status_value,
+                    "statuses": DELIVERY_STATUSES,
+                },
             )
 
     # ------------------------------------------------------------------

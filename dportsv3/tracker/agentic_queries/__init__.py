@@ -84,6 +84,7 @@ from dportsv3.tracker.agentic_queries.deliveries import (
 from dportsv3.tracker.agentic_queries.pipeline import (
     RUNNER_BAND,
     issue_inventory,
+    job_outcome_counts,
     regressed_issue_count,
     worklist_band_counts,
 )
@@ -156,6 +157,7 @@ __all__ = [
     "issues_needing_build",
     "RUNNER_BAND",
     "issue_inventory",
+    "job_outcome_counts",
     "regressed_issue_count",
     "worklist_band_counts",
     "DELIVERY_FAILED_STATUS",

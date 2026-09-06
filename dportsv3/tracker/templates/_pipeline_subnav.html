@@ -1,0 +1,21 @@
+{# The Pipeline view's own sections. Jobs, Runner and Manual are existing
+   /agentic/* routes -- they are the pipeline's secondary destinations, not
+   the repair workspace's, so they are reachable from both. #}
+{% set _p = request.url.path %}
+<nav class="section-nav" aria-label="Pipeline sections">
+  <a href="{{ request.url_for('pipeline_overview') }}"
+     {% if _p == request.url_for('pipeline_overview').path %}class="active" aria-current="page"{% endif %}>Overview</a>
+  <a href="{{ request.url_for('agentic_jobs') }}"
+     {% if _p.startswith(request.url_for('agentic_jobs').path) %}class="active" aria-current="page"{% endif %}>Jobs</a>
+  <a href="{{ request.url_for('pipeline_deliveries') }}"
+     {% if _p.startswith(request.url_for('pipeline_deliveries').path) %}class="active" aria-current="page"{% endif %}>Deliveries</a>
+  {# Only an operator can drive the runner or answer the manual queue, so
+     a reader who could not act on them is not offered them (poly-0e02.12). #}
+  {% if can_operate() %}
+  <a href="{{ request.url_for('agentic_runner') }}"
+     {% if _p.startswith(request.url_for('agentic_runner').path) %}class="active" aria-current="page"{% endif %}>Runner</a>
+  <a href="{{ request.url_for('agentic_manual_list') }}"
+     {% if _p.startswith(request.url_for('agentic_manual_list').path) %}class="active" aria-current="page"{% endif %}>Manual</a>
+  {% endif %}
+  <span class="section-context">System overview</span>
+</nav>

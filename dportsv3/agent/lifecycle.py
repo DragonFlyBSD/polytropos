@@ -360,6 +360,33 @@ ACTIVE_WORK_STATE_VALUES: tuple[str, ...] = tuple(
 )
 
 
+# Why a dead job is dead. `dead` alone is not a verdict on the work: the
+# reasons split three ways, and lumping them together is how a healthy
+# system reads as a broken one. Measured on the builder 2026-09-05, 246 of
+# 364 dead rows were runner_restart -- so `dead` overstated real failure by
+# about 3.1x, all of it in triage (poly-h6c).
+#
+# INTERRUPTED: the job never finished, and nothing was learned about the
+# port. Infrastructure, not a verdict.
+RETIRE_INTERRUPTED: frozenset[str] = frozenset({
+    "runner_restart", "env_broken", "worktree_unavailable",
+})
+
+# SKIPPED: a decision was taken not to do this work. Also not a verdict.
+RETIRE_SKIPPED: frozenset[str] = frozenset({
+    "origin_locked", "issue_muted", "abandoned",
+})
+
+# FAILED: the work itself was attempted and did not succeed. This is the
+# only bucket that says anything about the port. Derived rather than
+# listed, so a new terminal reason is a failure until someone classifies
+# it -- the safe direction, since the other two buckets are the ones that
+# make the numbers look better.
+RETIRE_FAILED: frozenset[str] = frozenset(
+    set(_TERMINAL_REASONS.values()) - RETIRE_INTERRUPTED - RETIRE_SKIPPED
+)
+
+
 class IllegalTransition(Exception):
     """Raised when (current_state, event) is not in TRANSITIONS."""
 

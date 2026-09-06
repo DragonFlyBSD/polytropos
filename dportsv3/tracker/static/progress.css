@@ -1517,6 +1517,108 @@ a.wl-port:hover { color: var(--amber-dim); }
   .occ-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
 }
 
+/* --- Pipeline overview (UI-4) ---------------------------------------------
+ * A set of inventories, deliberately not a numbered sequence: work does not
+ * advance through these in order, so no step markers and no connecting
+ * arrows -- a device that implied a pipeline would be the one wrong thing
+ * this page could say.
+ */
+.health-strip {
+  display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline;
+  padding: 10px 14px; background: var(--surface); border: 1px solid var(--line);
+  font-size: 12px; color: var(--muted);
+}
+.health-item { display: inline-flex; align-items: baseline; gap: 6px; }
+/* .wl-dot is scoped to .worklist, so the strip carries its own. Same two
+   states, same tokens. */
+.health-item .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--track);
+  align-self: center;
+}
+.health-item .dot.ok  { background: var(--green); }
+.health-item .dot.bad { background: var(--red); }
+.health-item b {
+  color: var(--faint); font: 650 12px/1.4 var(--sans);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.health-when { color: var(--faint); font-variant-numeric: tabular-nums; }
+
+.pipeline-note {
+  max-width: 74ch; font-size: 12.5px; line-height: 1.65; color: var(--prose);
+}
+.pipeline-note strong { color: var(--text); font-weight: 650; }
+
+.stage-grid {
+  /* start, not stretch: an open drawer would otherwise pull every card in
+     its row to the same height and leave the others mostly empty. */
+  display: grid; gap: 12px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+}
+.stage {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px; background: var(--surface); border: 1px solid var(--line);
+}
+.stage-head { display: flex; align-items: baseline; gap: 10px; }
+.stage-head h2 {
+  flex: 1; margin: 0; color: var(--faint);
+  font: 650 12px/1.4 var(--sans); letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.stage-n {
+  font: 350 30px/1 var(--sans); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.stage-cap { font-size: 12px; line-height: 1.6; color: var(--muted); }
+.stage-rows { display: flex; flex-direction: column; margin-top: 2px; }
+.stage-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 0; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--text); text-decoration: none;
+}
+.stage-row > span:first-child { flex: 1; }
+.stage-row em {
+  display: block; font-style: normal; font-size: 12px; color: var(--faint);
+}
+.stage-row .n {
+  font: 650 14px/1 var(--sans); font-variant-numeric: tabular-nums;
+}
+a.stage-row:hover { color: var(--cyan); }
+a.stage-row:hover .n { color: var(--cyan); }
+a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.stage-row.static { color: var(--muted); }
+.stage-row.sub { padding: 4px 0; border-top: 0; }
+.stage-row.sub code { color: var(--faint); }
+.stage-empty {
+  padding: 12px; background: var(--surface-2); border: 1px dashed var(--line);
+  font-size: 12px; line-height: 1.6; color: var(--muted);
+}
+
+.stage-drawer { margin-top: 4px; font-size: 12px; }
+.stage-drawer > summary {
+  padding: 6px 0; color: var(--cyan); cursor: pointer;
+  font: 650 12px/1.4 var(--sans);
+}
+.stage-drawer > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.drawer-note {
+  margin: 6px 0; max-width: 66ch;
+  font-size: 12px; line-height: 1.6; color: var(--muted);
+}
+.finding-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.finding {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; line-height: 1.6; color: var(--prose);
+}
+.preflight-detail { padding: 0 14px 10px; background: var(--surface); border: 1px solid var(--line); border-top: 0; }
+
+.row-note td { padding-top: 0; font-size: 12px; color: var(--muted); }
+.row-note strong { color: var(--red); }
+.faint { color: var(--faint); }
+
+@media (max-width: 760px) {
+  .stage-grid { grid-template-columns: minmax(0, 1fr); }
+  .stage-n { font-size: 26px; }
+}
+
 /* --- Repairs, narrow ------------------------------------------------------
  * After the .worklist rules, not before: these override at equal
  * specificity, so source order is what decides.
