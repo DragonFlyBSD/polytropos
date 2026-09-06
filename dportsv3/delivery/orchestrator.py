@@ -63,6 +63,20 @@ _LOG = logging.getLogger(__name__)
 _CLONE_LOCK = threading.Lock()
 
 
+def clone_is_busy() -> bool:
+    """Whether a delivery currently holds the clone.
+
+    Non-blocking, and deliberately only a hint: a reader that gets False
+    has no promise the lock is still free a moment later. The one caller
+    that needs it -- the tracker's preflight refresh -- is not trying to
+    take the clone, it is deciding whether looking at it right now would
+    tell the truth. Mid-delivery the tree is on the feature branch with
+    the diff applied, so the clone-state checks would report a working
+    delivery as two warnings.
+    """
+    return _CLONE_LOCK.locked()
+
+
 @contextmanager
 def _clone_locked() -> Iterator[None]:
     """Hold the delivery clone for the length of one provider call.

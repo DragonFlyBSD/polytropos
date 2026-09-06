@@ -60,11 +60,18 @@ def _log_delivery_preflight() -> None:
     Best-effort in the strict sense: nothing here may stop the tracker
     from serving. A stale forge credential should be a line in the log,
     not a service that will not boot.
+
+    Taken through ``preflight_status`` rather than calling ``check()``
+    directly, so the boot log and the pipeline health strip are the same
+    reading. Two calls would run the clone-state git subprocesses twice at
+    startup and could disagree.
     """
     try:
         from dportsv3.delivery import preflight  # noqa: PLC0415
+        from dportsv3.tracker import preflight_status  # noqa: PLC0415
 
-        for level, message in preflight.format_report(preflight.check()):
+        report = preflight_status.current(force=True)
+        for level, message in preflight.format_report(report.findings):
             _LOG.log(_PREFLIGHT_LEVELS.get(level, logging.INFO), message)
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("delivery preflight could not run: %s", exc)

@@ -200,6 +200,20 @@ SETTINGS: list[Setting] = [
         "few seconds. Set 0 to sweep on every render.",
     ),
     Setting(
+        "tracker.preflight_refresh_seconds", "int", 300,
+        "How often the pipeline's health strip may re-run the delivery\n"
+        "preflight.\n"
+        "\n"
+        "It reads as filesystem work and is not: the clone-state check\n"
+        "shells out to git status, which costs tens of milliseconds on a\n"
+        "ports tree and rewrites the index. The reading is stamped with\n"
+        "when it was taken, so a longer interval makes the strip older,\n"
+        "never wrong. A refresh is skipped entirely while a delivery holds\n"
+        "the clone, because mid-delivery the tree is on the feature branch\n"
+        "with the diff applied and would read as two faults. Set 0 to\n"
+        "re-check on every render.",
+    ),
+    Setting(
         "tracker.runner_heartbeat_stale_seconds", "int", 60,
         "How long runner_status.updated_at may go unrefreshed before the UI\n"
         "reports the runner as not running.\n"

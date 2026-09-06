@@ -97,6 +97,19 @@
 # few seconds. Set 0 to sweep on every render.
 #delivery_sweep_seconds = 60
 
+# How often the pipeline's health strip may re-run the delivery
+# preflight.
+#
+# It reads as filesystem work and is not: the clone-state check
+# shells out to git status, which costs tens of milliseconds on a
+# ports tree and rewrites the index. The reading is stamped with
+# when it was taken, so a longer interval makes the strip older,
+# never wrong. A refresh is skipped entirely while a delivery holds
+# the clone, because mid-delivery the tree is on the feature branch
+# with the diff applied and would read as two faults. Set 0 to
+# re-check on every render.
+#preflight_refresh_seconds = 300
+
 # How long runner_status.updated_at may go unrefreshed before the UI
 # reports the runner as not running.
 #
