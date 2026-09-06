@@ -365,8 +365,23 @@ CREATE TABLE IF NOT EXISTS bundle_review_requests (
 CREATE INDEX IF NOT EXISTS idx_events_id ON events(id);
 CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_ts ON activity_log(ts);
+-- Partial on purpose: only the tracker's own endpoints (accept, delivery)
+-- write bundle_id, so this indexes the operator-action rows and skips the
+-- runner's firehose. Small is the point, not a defect.
 CREATE INDEX IF NOT EXISTS idx_activity_log_bundle
     ON activity_log(bundle_id) WHERE bundle_id IS NOT NULL;
+-- The job-detail timeline: `WHERE job_id = ? ORDER BY id DESC`. Composite
+-- rather than job_id alone so the ordering comes from the index too --
+-- measured, it removes both the table scan and the temp B-tree.
+CREATE INDEX IF NOT EXISTS idx_activity_log_job
+    ON activity_log(job_id, id);
+-- Per-bundle aggregates over stage (attempt counts, llm_turn rollups) reach
+-- jobs through job_id, so carrying it makes the index covering: measured,
+-- `SCAN a` becomes `SEARCH a USING COVERING INDEX`. Note this cannot help
+-- token_usage_for_port, whose `stage LIKE '%llm_turn'` has a leading
+-- wildcard; that one needs the predicate rewritten, not an index.
+CREATE INDEX IF NOT EXISTS idx_activity_log_stage
+    ON activity_log(stage, job_id);
 CREATE INDEX IF NOT EXISTS idx_env_health_status_status ON env_health_status(status);
 CREATE INDEX IF NOT EXISTS idx_user_context_updated ON user_context(updated_at);
 CREATE INDEX IF NOT EXISTS idx_user_context_requests_pending
