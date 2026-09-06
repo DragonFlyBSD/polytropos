@@ -151,10 +151,16 @@ def register(app, ctx):
     def api_jobs(
         state: str | None = None,
         target: str | None = None,
+        q: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
     ) -> list[dict[str, Any]]:
+        """``q`` is a case-insensitive substring of the origin or job id."""
         with _conn() as conn:
-            return list_jobs(conn, state=state, target=target, limit=limit)
+            return list_jobs(
+                conn, state=state, target=target,
+                search=(q or "").strip() or None, limit=limit, offset=offset,
+            )
 
     @app.get("/api/jobs/{job_id}")
     def api_job_detail(job_id: str) -> dict[str, Any]:
@@ -214,10 +220,17 @@ def register(app, ctx):
     def api_bundles(
         target: str | None = None,
         origin: str | None = None,
+        q: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
     ) -> list[dict[str, Any]]:
+        """``origin`` is exact; ``q`` is a case-insensitive substring of the
+        origin or bundle id."""
         with _conn() as conn:
-            return list_bundles(conn, target=target, origin=origin, limit=limit)
+            return list_bundles(
+                conn, target=target, origin=origin,
+                search=(q or "").strip() or None, limit=limit, offset=offset,
+            )
 
     @app.get("/api/bundles/{bundle_id}")
     def api_bundle_detail(

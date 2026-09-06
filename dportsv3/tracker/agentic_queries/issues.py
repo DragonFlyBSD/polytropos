@@ -18,23 +18,21 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
-from dportsv3.tracker.agentic_queries._util import _row_dict, _maybe
+from dportsv3.tracker.agentic_queries._util import (
+    like_contains,
+    _row_dict,
+    _maybe,
+)
 
 
-def list_issues(
-    conn: sqlite3.Connection,
-    *,
-    target: str | None = None,
-    origin: str | None = None,
-    states: Iterable[str] | None = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """Issues (with their persisted rollups), newest-problem-first.
-
-    Filters are all optional and ANDed: ``target`` / ``origin`` exact
-    match, ``states`` an allow-list of lifecycle states.
-    """
-    sql = "SELECT * FROM issues"
+def _issue_where(
+    target: str | None,
+    origin: str | None,
+    states: Iterable[str] | None,
+    search: str | None,
+) -> tuple[str, list[Any]]:
+    """The WHERE that ``list_issues`` and ``count_issues`` share, so the
+    page and the total it is a page of cannot describe different sets."""
     clauses: list[str] = []
     params: list[Any] = []
     if target is not None:
@@ -47,11 +45,61 @@ def list_issues(
     if state_list:
         clauses.append(f"state IN ({','.join('?' * len(state_list))})")
         params.extend(state_list)
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY times_seen DESC, last_seen_at DESC, issue_key ASC LIMIT ?"
-    params.append(max(1, int(limit)))
+    if search:
+        # Origin is what an operator types; issue_key and fingerprint are
+        # what they paste. All three, so the box answers both.
+        pattern = like_contains(search)
+        clauses.append(
+            r"(origin LIKE ? ESCAPE '\' OR issue_key LIKE ? ESCAPE '\' "
+            r"OR fingerprint LIKE ? ESCAPE '\')"
+        )
+        params.extend([pattern, pattern, pattern])
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+
+def list_issues(
+    conn: sqlite3.Connection,
+    *,
+    target: str | None = None,
+    origin: str | None = None,
+    states: Iterable[str] | None = None,
+    search: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Issues (with their persisted rollups), newest-problem-first.
+
+    Filters are all optional and ANDed: ``target`` / ``origin`` exact
+    match, ``states`` an allow-list of lifecycle states, ``search`` a
+    case-insensitive substring of the origin, issue key or fingerprint.
+
+    Ordered times_seen DESC, so a bare ``limit`` keeps the loudest issues
+    and drops the long tail -- which is where the specific port someone is
+    looking for usually lives. ``search`` and ``offset`` are how the tail
+    is reachable at all; ``count_issues`` says how much of it there is.
+    """
+    where, params = _issue_where(target, origin, states, search)
+    sql = (
+        f"SELECT * FROM issues{where} "
+        "ORDER BY times_seen DESC, last_seen_at DESC, issue_key ASC "
+        "LIMIT ? OFFSET ?"
+    )
+    params.extend([max(1, int(limit)), max(0, int(offset))])
     return [_row_dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def count_issues(
+    conn: sqlite3.Connection,
+    *,
+    target: str | None = None,
+    origin: str | None = None,
+    states: Iterable[str] | None = None,
+    search: str | None = None,
+) -> int:
+    """How many issues the same filters match, for the page's honesty line."""
+    where, params = _issue_where(target, origin, states, search)
+    row = conn.execute(f"SELECT COUNT(*) FROM issues{where}", params).fetchone()
+    return int(row[0]) if row is not None else 0
 
 
 # Occurrence rows carry the build ordinal of the run they came from, joined
@@ -176,7 +224,9 @@ def issues_with_occurrences(
     target: str | None = None,
     origin: str | None = None,
     states: Iterable[str] | None = None,
+    search: str | None = None,
     limit: int = 200,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """`list_issues` with each issue's ``occurrences`` attached — the
     feed `issue_state.build_issue_worklist` consumes.
@@ -185,7 +235,8 @@ def issues_with_occurrences(
     by ``issue_key IN (...)``) rather than N per-issue round-trips.
     """
     issues = list_issues(
-        conn, target=target, origin=origin, states=states, limit=limit
+        conn, target=target, origin=origin, states=states, search=search,
+        limit=limit, offset=offset,
     )
     if not issues:
         return issues

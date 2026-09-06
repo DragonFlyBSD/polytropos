@@ -1,0 +1,41 @@
+{# Search box and pager for the operator lists.
+
+   The lists used to be a single capped fetch -- 300 issues, 200 bundles,
+   200 jobs -- with the search box filtering client-side over whatever had
+   already arrived. A port outside the cap could not be found by typing its
+   name, and the box said nothing about only having looked at the first N.
+   Search runs in SQL now, and the count is of everything that matched, not
+   of what fits on the page.
+
+   Expects: total, page, per_page, search, query_for, and `truncated` where
+   the page could not count exactly. #}
+<form class="list-search" method="get">
+  {% for name, value in (carried or []) %}
+  <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  <label class="visually-hidden" for="list-q">Search</label>
+  <input class="result-search" id="list-q" type="search" name="q"
+         value="{{ search or '' }}" placeholder="{{ search_placeholder or 'Search' }}">
+  <button type="submit" class="control">Search</button>
+  {% if search %}
+  <a class="control" href="?{{ query_for(q=None, page=None) }}">Clear</a>
+  {% endif %}
+</form>
+
+<div class="pager">
+  {% set shown = items | length %}
+  {% set first = ((page - 1) * per_page) + 1 if shown else 0 %}
+  <span>
+    {% if shown %}{{ first }}–{{ first + shown - 1 }} of
+      {% if truncated %}more than {{ total }}{% else %}{{ total }}{% endif %}
+    {% else %}nothing matches{% endif %}
+    {%- if search %} for “{{ search }}”{% endif %}
+  </span>
+  <span class="spacer"></span>
+  {% if page > 1 %}
+  <a class="control" href="?{{ query_for(page=page - 1) }}">Previous</a>
+  {% endif %}
+  {% if (page * per_page) < total %}
+  <a class="control" href="?{{ query_for(page=page + 1) }}">Next</a>
+  {% endif %}
+</div>

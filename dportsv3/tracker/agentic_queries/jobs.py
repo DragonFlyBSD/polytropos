@@ -9,6 +9,7 @@ from typing import Any
 
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
 from dportsv3.tracker.agentic_queries._util import (
+    like_contains,
     _row_dict,
     _maybe,
     _decode_extra_json,
@@ -39,13 +40,10 @@ _STATE_BUCKETS: dict[str, tuple[str, ...]] = {
 }
 
 
-def list_jobs(
-    conn: sqlite3.Connection,
-    state: str | None = None,
-    target: str | None = None,
-    limit: int = 100,
-) -> list[dict[str, Any]]:
-    sql = "SELECT * FROM jobs"
+def _job_where(
+    state: str | None, target: str | None, search: str | None,
+) -> tuple[str, list[Any]]:
+    """The WHERE ``list_jobs`` and ``count_jobs`` share."""
     clauses: list[str] = []
     params: list[Any] = []
     if state is not None:
@@ -61,11 +59,46 @@ def list_jobs(
     if target is not None:
         clauses.append("target = ?")
         params.append(target)
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY created_ts_utc DESC, job_id DESC LIMIT ?"
-    params.append(max(1, int(limit)))
+    if search:
+        pattern = like_contains(search)
+        clauses.append(
+            r"(origin LIKE ? ESCAPE '\' OR job_id LIKE ? ESCAPE '\')"
+        )
+        params.extend([pattern, pattern])
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+
+def list_jobs(
+    conn: sqlite3.Connection,
+    state: str | None = None,
+    target: str | None = None,
+    limit: int = 100,
+    *,
+    search: str | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Jobs, newest first. ``search`` is a case-insensitive substring of
+    the origin or the job id."""
+    where, params = _job_where(state, target, search)
+    sql = (
+        f"SELECT * FROM jobs{where} "
+        "ORDER BY created_ts_utc DESC, job_id DESC LIMIT ? OFFSET ?"
+    )
+    params.extend([max(1, int(limit)), max(0, int(offset))])
     return [_row_dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def count_jobs(
+    conn: sqlite3.Connection,
+    state: str | None = None,
+    target: str | None = None,
+    *,
+    search: str | None = None,
+) -> int:
+    """How many jobs the same filters match."""
+    where, params = _job_where(state, target, search)
+    row = conn.execute(f"SELECT COUNT(*) FROM jobs{where}", params).fetchone()
+    return int(row[0]) if row is not None else 0
 
 
 def get_job(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:

@@ -13,10 +13,18 @@
     {% set state_chips = [('', 'All'), ('unresolved', 'Open'), ('regressed', 'Regressed'), ('resolved', 'Resolved'), ('muted', 'Muted')] %}
     <div class="issue-filter">
       {% for val, label in state_chips %}
-      <a href="{{ request.url_for('agentic_issues') }}{% if val %}?state={{ val }}{% endif %}"
+      <a href="?{{ query_for(state=val or None, page=None) }}"
          class="issue-chip{% if (selected_state or '') == val %} active{% endif %}">{{ label }}</a>
       {% endfor %}
     </div>
+
+    {% set carried = [] %}
+    {% if selected_target %}{% set _ = carried.append(('target', selected_target)) %}{% endif %}
+    {% if selected_state %}{% set _ = carried.append(('state', selected_state)) %}{% endif %}
+    {% with items = issues,
+            search_placeholder = 'Search origin, issue key or fingerprint' %}
+      {% include "_list_controls.html" %}
+    {% endwith %}
 
     <table class="tracker-table">
       <thead>

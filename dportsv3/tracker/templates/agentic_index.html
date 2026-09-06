@@ -17,6 +17,12 @@
     <h1>Agentic worklist</h1>
     <p class="lede">
       Failure fixes that need you, most urgent first.
+      {%- if issue_total > worklist_cap %}
+      Reading the {{ worklist_cap }} most-seen of {{ issue_total }} issues;
+      the rest are on
+      <a href="{{ request.url_for('agentic_issues') }}">Issues</a>, which is
+      searchable.
+      {%- endif %}
       <a href="{{ request.url_for('agentic_bundles') }}">All bundles &rarr;</a>
     </p>
 
@@ -85,7 +91,11 @@
               <span class="wl-age" title="last failure {{ g.latest_ts }}">last {{ g.latest_ts | relative_age }}</span>
             </div>
             <div class="wl-actions">
+              {% if g.latest %}
               <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}" onclick="event.stopPropagation()">{{ action[0] }}</a>
+              {% else %}
+              <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}" onclick="event.stopPropagation()">Open issue</a>
+              {% endif %}
             </div>
           </div>
           <div class="wl-children">
@@ -100,6 +110,24 @@
               <span class="wl-copen">open →</span>
             </a>
             {% endfor %}
+          </div>
+        </div>
+        {% elif not g.latest %}
+        {# An issue whose occurrences are gone -- pruned evidence, or a row
+           that outlived them. issue_bucket already bands it as needing a
+           look; this used to dereference g.latest and 500 the whole page. #}
+        <div class="wl-row {{ band.key }}">
+          <span class="wl-stripe"></span>
+          <span class="wl-chev leaf">›</span>
+          <div class="wl-ident">
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}">{{ g.origin }}</a>
+            <span class="wl-subid">{{ g.issue_key }}</span>
+          </div>
+          <div class="wl-mid">
+            <span class="wl-pill total">no occurrences recorded</span>
+          </div>
+          <div class="wl-actions">
+            <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}">Open issue</a>
           </div>
         </div>
         {% else %}

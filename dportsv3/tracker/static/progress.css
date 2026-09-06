@@ -522,6 +522,12 @@ table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow:
 .result-filter.active { color: var(--on-accent); background: var(--cyan); border-color: var(--cyan); }
 .result-filter .n { margin-left: 6px; font-family: var(--mono); opacity: .75; }
 
+/* Search box above an operator list. */
+.list-search {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 0 0 10px;
+}
+
 /* Paging strip under a table. */
 .pager {
   display: flex; align-items: center; gap: 10px;

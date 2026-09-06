@@ -31,6 +31,7 @@ from dportsv3.tracker.agentic_queries.runs import (
     get_run,
 )
 from dportsv3.tracker.agentic_queries.jobs import (
+    count_jobs,
     list_jobs,
     get_job,
     list_jobs_for_bundle,
@@ -41,6 +42,7 @@ from dportsv3.tracker.agentic_queries.jobs import (
     port_attempt_summary,
 )
 from dportsv3.tracker.agentic_queries.bundles import (
+    count_bundles,
     list_bundles,
     get_bundle,
     get_artifact_ref,
@@ -67,6 +69,7 @@ from dportsv3.tracker.agentic_queries.review import (
     update_review_request_status,
 )
 from dportsv3.tracker.agentic_queries.issues import (
+    count_issues,
     list_issues,
     get_issue,
     occurrences_for_issue,
@@ -93,6 +96,7 @@ __all__ = [
     "env_health_statuses",
     "list_runs",
     "get_run",
+    "count_jobs",
     "list_jobs",
     "get_job",
     "list_jobs_for_bundle",
@@ -101,6 +105,7 @@ __all__ = [
     "token_usage_for_port",
     "job_events_for_job",
     "port_attempt_summary",
+    "count_bundles",
     "list_bundles",
     "get_bundle",
     "get_artifact_ref",
@@ -119,6 +124,7 @@ __all__ = [
     "open_delivery_bundle_ids",
     "find_open_review_request",
     "update_review_request_status",
+    "count_issues",
     "list_issues",
     "get_issue",
     "occurrences_for_issue",

@@ -13,6 +13,13 @@
 
     {% with show_origin = True %}{% include "_target_filter.html" %}{% endwith %}
 
+    {% set carried = [] %}
+    {% if selected_target %}{% set _ = carried.append(('target', selected_target)) %}{% endif %}
+    {% if selected_origin %}{% set _ = carried.append(('origin', selected_origin)) %}{% endif %}
+    {% with items = bundles, search_placeholder = 'Search origin or bundle id' %}
+      {% include "_list_controls.html" %}
+    {% endwith %}
+
     <table class="tracker-table">
       <thead>
         <tr><th>Bundle</th><th>Origin</th><th>Flavor</th><th>Target</th><th>Result</th><th>Status</th><th>When</th><th>Run</th></tr>

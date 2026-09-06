@@ -41,3 +41,14 @@ def _decode_extra_json(item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+
+
+def like_contains(term: str) -> str:
+    """A LIKE pattern matching ``term`` anywhere, wildcards taken literally.
+
+    Without this an operator searching for ``_`` matches every row, and one
+    searching for ``%`` matches every row twice over. Pair it with
+    ``ESCAPE '\\'`` in the SQL.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"

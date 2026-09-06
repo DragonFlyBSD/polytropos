@@ -21,6 +21,7 @@ from typing import Any, cast
 
 from dportsv3.common.validation import is_compose_target
 from dportsv3.db.schema import DEFAULT_BUILD_TYPES, init_db as _init_state_db
+from dportsv3.tracker.agentic_queries._util import like_contains
 
 _LOG = logging.getLogger(__name__)
 
@@ -628,7 +629,7 @@ def get_build_results_page(
         params.append(state)
     if search:
         clauses.append(r"br.origin LIKE ? ESCAPE '\'")
-        params.append(_like_contains(search))
+        params.append(like_contains(search))
     where_sql = " AND ".join(clauses)
 
     total = int(
@@ -1011,16 +1012,6 @@ def _validate_build_type(conn: sqlite3.Connection, build_type: str) -> None:
 def _validate_build_result(result: str) -> None:
     if result not in VALID_BUILD_RESULTS:
         raise ValueError(f"Invalid build result: {result}")
-
-
-def _like_contains(term: str) -> str:
-    """A LIKE pattern matching ``term`` anywhere, wildcards taken literally.
-
-    Without this an operator searching for ``_`` matches every origin, and
-    one searching for ``%`` matches every origin twice over.
-    """
-    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

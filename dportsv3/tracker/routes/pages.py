@@ -28,6 +28,9 @@ from dportsv3.tracker.agentic_queries import (
     get_bundle,
     open_delivery_bundle_ids,
     get_job,
+    count_bundles,
+    count_issues,
+    count_jobs,
     get_manual_request,
     get_issue,
     get_run,
@@ -91,6 +94,23 @@ from dportsv3.tracker.routes._common import (
 
 # One screen of origins. 13,440 rows is a run, not a page.
 _ORIGIN_PAGE = 50
+
+# One screen of an operator list. The old caps -- 300 issues, 200 bundles,
+# 200 jobs -- were not pages: they were the whole answer, and a port outside
+# them could not be found by typing its name because the search was
+# client-side over what had already been fetched.
+_LIST_PAGE = 100
+
+# `regressed` is derived from occurrences, so it cannot be a SQL filter: the
+# rows come back as stored `resolved` and the split happens in Python, which
+# means SQL paging would leave holes. Those two filters page in Python over a
+# bounded fetch instead, and the page says when the bound bit.
+_DERIVED_STATE_FILTERS = frozenset({"resolved", "regressed"})
+_DERIVED_FETCH_CAP = 1000
+
+# The worklist groups by band rather than paging, so its bound is a cap
+# and not a page. It is named here so the page can say when it bit.
+_WORKLIST_CAP = 500
 
 # The chips over the origin table, each paired with the run count that
 # fills it. A state the run never produced gets no chip -- an operator does
@@ -295,7 +315,11 @@ def register(app, ctx):
             # need you, grouped and bucketed by their actionable occurrence.
             # 500 is a generous window — resolved/muted issues live in the
             # collapsed archives, not the actionable bands.
-            issues = issues_with_occurrences(conn, limit=500)
+            issues = issues_with_occurrences(conn, limit=_WORKLIST_CAP)
+            # The cap orders times_seen DESC, so what it drops is the long
+            # tail -- exactly where a specific port someone is looking for
+            # usually lives. Say so rather than looking complete.
+            issue_total = count_issues(conn)
             worklist = issue_state.build_issue_worklist(issues)
             bands = [
                 {
@@ -321,6 +345,8 @@ def register(app, ctx):
                     "focus_count": focus_count,
                     "done_groups": worklist["done"],
                     "muted_groups": worklist["muted"],
+                    "issue_total": issue_total,
+                    "worklist_cap": _WORKLIST_CAP,
                 },
             )
 
@@ -329,9 +355,13 @@ def register(app, ctx):
         request: RequestType,
         target: str | None = None,
         origin: str | None = None,
+        q: str | None = None,
+        page: int = Query(default=1, ge=1),
     ) -> Any:
         target_value = target or None
         origin_value = (origin or "").strip() or None
+        search = (q or "").strip() or None
+        offset = (page - 1) * _LIST_PAGE
         with _conn() as conn:
             return templates.TemplateResponse(
                 request,
@@ -339,8 +369,20 @@ def register(app, ctx):
                 {
                     "title": "Bundles",
                     "bundles": list_bundles(
-                        conn, target=target_value, origin=origin_value, limit=200
+                        conn, target=target_value, origin=origin_value,
+                        search=search, limit=_LIST_PAGE, offset=offset,
                     ),
+                    "total": count_bundles(
+                        conn, target=target_value, origin=origin_value,
+                        search=search,
+                    ),
+                    "page": page,
+                    "per_page": _LIST_PAGE,
+                    "search": search,
+                    "query_for": _query_for({
+                        "target": target_value, "origin": origin_value,
+                        "q": search, "page": page if page > 1 else None,
+                    }),
                     "target_options": distinct_targets(conn),
                     "selected_target": target_value,
                     "selected_origin": origin_value,
@@ -352,9 +394,13 @@ def register(app, ctx):
         request: RequestType,
         target: str | None = None,
         state: str | None = None,
+        q: str | None = None,
+        page: int = Query(default=1, ge=1),
     ) -> Any:
         target_value = target or None
         state_value = (state or "").strip() or None
+        search = (q or "").strip() or None
+        offset = (page - 1) * _LIST_PAGE
         # `regressed` is derived, so it cannot be a SQL filter: narrow to the
         # stored states that could present as the requested one, then filter
         # exactly on the effective state. Both `resolved` and `regressed`
@@ -362,21 +408,45 @@ def register(app, ctx):
         states = (
             issue_state.stored_states_for(state_value) if state_value else None
         )
+        truncated = False
         with _conn() as conn:
-            issues = issues_with_occurrences(
-                conn, target=target_value, states=states, limit=300
-            )
-            if state_value:
-                issues = [
-                    i for i in issues
+            if state_value in _DERIVED_STATE_FILTERS:
+                # SQL paging would leave holes: the rows this filter drops
+                # are interleaved with the ones it keeps.
+                fetched = issues_with_occurrences(
+                    conn, target=target_value, states=states, search=search,
+                    limit=_DERIVED_FETCH_CAP,
+                )
+                truncated = len(fetched) == _DERIVED_FETCH_CAP
+                matching = [
+                    i for i in fetched
                     if issue_state.effective_state(i) == state_value
                 ]
+                total = len(matching)
+                issues = matching[offset:offset + _LIST_PAGE]
+            else:
+                total = count_issues(
+                    conn, target=target_value, states=states, search=search,
+                )
+                issues = issues_with_occurrences(
+                    conn, target=target_value, states=states, search=search,
+                    limit=_LIST_PAGE, offset=offset,
+                )
             return templates.TemplateResponse(
                 request,
                 "agentic_issues.html",
                 {
                     "title": "Issues",
                     "issues": issues,
+                    "total": total,
+                    "truncated": truncated,
+                    "page": page,
+                    "per_page": _LIST_PAGE,
+                    "search": search,
+                    "query_for": _query_for({
+                        "target": target_value, "state": state_value,
+                        "q": search, "page": page if page > 1 else None,
+                    }),
                     "target_options": distinct_targets(conn),
                     "selected_target": target_value,
                     "selected_state": state_value,
@@ -682,9 +752,13 @@ def register(app, ctx):
         request: RequestType,
         target: str | None = None,
         state: str | None = None,
+        q: str | None = None,
+        page: int = Query(default=1, ge=1),
     ) -> Any:
         target_value = target or None
         state_value = state or None
+        search = (q or "").strip() or None
+        offset = (page - 1) * _LIST_PAGE
         with _conn() as conn:
             return templates.TemplateResponse(
                 request,
@@ -692,8 +766,20 @@ def register(app, ctx):
                 {
                     "title": "Jobs",
                     "jobs": list_jobs(
-                        conn, state=state_value, target=target_value, limit=200
+                        conn, state=state_value, target=target_value,
+                        search=search, limit=_LIST_PAGE, offset=offset,
                     ),
+                    "total": count_jobs(
+                        conn, state=state_value, target=target_value,
+                        search=search,
+                    ),
+                    "page": page,
+                    "per_page": _LIST_PAGE,
+                    "search": search,
+                    "query_for": _query_for({
+                        "target": target_value, "state": state_value,
+                        "q": search, "page": page if page > 1 else None,
+                    }),
                     "target_options": distinct_targets(conn),
                     "selected_target": target_value,
                     "selected_state": state_value,
