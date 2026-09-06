@@ -1,0 +1,23 @@
+{# The issue row shape, shared by the issues and outcome drawers. #}
+{% if drawer.rows %}
+<div class="table-scroll-x">
+  <table class="data-table">
+    <thead><tr><th scope="col">Issue</th><th scope="col">Origin</th>
+      <th scope="col" class="num">Seen</th><th scope="col">Last</th></tr></thead>
+    <tbody>
+      {% for i in drawer.rows %}
+      <tr>
+        <td><a href="{{ request.url_for('agentic_issue_detail', issue_key=i.issue_key) }}">{{ i.issue_key }}</a></td>
+        <td>{{ i.origin }}</td>
+        <td class="num">{{ i.times_seen }}</td>
+        <td class="tabular">{{ i.last_seen_at or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty"><strong>No issues yet</strong>
+  An issue is one fingerprinted problem, created as failure evidence
+  arrives from the farm.</div>
+{% endif %}

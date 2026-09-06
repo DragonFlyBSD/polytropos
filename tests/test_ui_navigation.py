@@ -254,13 +254,19 @@ def test_a_port_links_to_the_issue_that_covers_it(client) -> None:
         client, "/target/@main/devel/alpha")
 
 
-def test_the_pipeline_counts_link_to_the_rows_behind_them(client) -> None:
-    body = _get(client, "/pipeline")
-
-    for href in ("/agentic/bundles", "/agentic/issues?state=unresolved",
-                 "/agentic/jobs?state=queued",
-                 "/pipeline/deliveries?status=open"):
-        assert href in body
+@pytest.mark.parametrize(("stage", "href"), [
+    ("failures", "/agentic/bundles"),
+    ("issues", "/agentic/issues?state=unresolved"),
+    ("automation", "/agentic/jobs"),
+    ("delivery", "/pipeline/deliveries"),
+    ("outcome", "/agentic/issues?state=resolved"),
+])
+def test_a_pipeline_stage_links_to_the_rows_behind_it(
+    client, stage, href,
+) -> None:
+    """The counts open their rows in a drawer since M3, so only the
+    selected stage's way onward is on the page."""
+    assert href in _get(client, f"/pipeline?stage={stage}")
 
 
 # --- links keep their filters ---------------------------------------------

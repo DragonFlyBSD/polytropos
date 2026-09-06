@@ -407,8 +407,56 @@ def register(app, ctx):
              "src": "issue_inventory() · job_outcome_counts()"},
         ]
 
+    #: How many rows one drawer shows before it defers to the full list.
+    _DRAWER_ROWS = 25
+
+    def _pipeline_drawer(request, conn, stage, issues, deliveries):
+        """The rows behind ONE node.
+
+        One stage per render, not six: a count with no way through to its
+        rows is an assertion nobody can check, but fetching all of them to
+        show one would pay six times for it.
+
+        Each body is capped and says so. The mock slices at 20 with no
+        total and no way onward, which is a mock being a mock -- an
+        operator who reaches the bottom of the drawer needs the list.
+        """
+        if stage == "failures":
+            return {"kind": "occurrences",
+                    "rows": list_bundles(conn, limit=_DRAWER_ROWS),
+                    "total": count_bundles(conn),
+                    "more": str(request.url_for("agentic_bundles"))}
+        if stage == "automation":
+            return {"kind": "jobs",
+                    "rows": list_jobs(conn, limit=_DRAWER_ROWS),
+                    "total": count_jobs(conn),
+                    "more": str(request.url_for("agentic_jobs"))}
+        if stage == "operator":
+            return {"kind": "operator",
+                    "rows": list_manual_requests(conn, limit=_DRAWER_ROWS),
+                    "total": None, "more": None}
+        if stage == "delivery":
+            return {"kind": "deliveries",
+                    "rows": list_deliveries(conn, limit=_DRAWER_ROWS),
+                    "total": deliveries["total"],
+                    "more": str(request.url_for("pipeline_deliveries"))}
+        if stage == "outcome":
+            return {"kind": "issues",
+                    "rows": list_issues(
+                        conn, states=(issue_state.ISSUE_RESOLVED,),
+                        limit=_DRAWER_ROWS),
+                    "total": issues["by_state"]["resolved"],
+                    "more": (str(request.url_for("agentic_issues"))
+                             + "?state=resolved")}
+        return {"kind": "issues",
+                "rows": list_issues(conn, limit=_DRAWER_ROWS),
+                "total": issues["total"],
+                "more": str(request.url_for("agentic_issues"))}
+
     @app.get("/pipeline", response_class=HTMLResponse)
-    def pipeline_overview(request: RequestType) -> Any:
+    def pipeline_overview(
+        request: RequestType, stage: str | None = None,
+    ) -> Any:
         """Is the system healthy and moving -- a different question from
         what needs me, which is the Repairs worklist.
 
@@ -426,6 +474,15 @@ def register(app, ctx):
             outcomes = job_outcome_counts(conn)
             active_runs = get_active_builds_summary(conn)
             live = runner_is_live(conn)
+            flow = _pipeline_flow(
+                status, issues, regressed, bands, deliveries, outcomes,
+                active_runs, live,
+            )
+            # A stage nobody named, or one that does not exist, falls back
+            # to the issues node rather than 404ing: the URL is a view
+            # preference, not a resource.
+            keys = [node["key"] for node in flow]
+            selected = stage if stage in keys else "issues"
             return templates.TemplateResponse(
                 request,
                 "pipeline.html",
@@ -447,10 +504,15 @@ def register(app, ctx):
                     "env_health": env_health_statuses(conn),
                     "preflight": preflight_status.current(),
                     "active_runs": active_runs,
-                    "flow": _pipeline_flow(
-                        status, issues, regressed, bands, deliveries,
-                        outcomes, active_runs, live,
+                    "flow": flow,
+                    "stage": selected,
+                    "stage_node": next(
+                        node for node in flow if node["key"] == selected
                     ),
+                    "drawer": _pipeline_drawer(
+                        request, conn, selected, issues, deliveries,
+                    ),
+                    "query_for": _query_for({"stage": selected}),
                 },
             )
 

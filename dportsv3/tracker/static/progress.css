@@ -1730,6 +1730,14 @@ main:focus-visible { outline: none; }
    so a different colour. */
 .pipe-node:nth-child(3)::after { border-top-color: var(--amber); }
 .pipe-node:nth-child(3)::before { border-left-color: var(--amber); }
+a.pipe-node { color: var(--text); text-decoration: none; }
+a.pipe-node:hover { border-color: var(--cyan); }
+a.pipe-node.selected {
+  border-color: var(--cyan); box-shadow: 0 0 0 2px var(--cyan);
+}
+a.pipe-node:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.pipeline-flow > li { display: flex; }
+.pipeline-flow > li > .pipe-node { flex: 1; }
 .pipe-node.alert   { background: var(--red-soft);   border-color: var(--red-line); }
 .pipe-node.warning { background: var(--amber-soft); border-color: var(--amber-line); }
 .pipe-node.success { background: var(--green-soft); border-color: var(--green-line); }
@@ -1781,6 +1789,38 @@ main:focus-visible { outline: none; }
   .pipeline-note, .pipeline-health { min-width: 0; }
   .retry-loop { width: 100%; min-width: 0; margin-left: 0; }
   .source-strip { grid-template-columns: 160px repeat(auto-fit, minmax(190px, 1fr)); }
+}
+
+/* --- The pipeline drawer (M3) ---------------------------------------------
+ * The rows behind whichever node is selected. A count with no way through
+ * to its rows is an assertion nobody can check.
+ */
+.pipeline-drawer { background: var(--surface); border: 1px solid var(--line); }
+.drawer-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  min-height: 44px; padding: 9px 14px;
+  background: var(--head); border-bottom: 1px solid var(--line);
+}
+.drawer-head h2 { margin: 0; font-size: 16px; }
+.drawer-head > span { color: var(--muted); font-size: 12.5px; }
+/* Naming the query is the point of the drawer's head. */
+.drawer-src {
+  margin-left: auto; color: var(--faint) !important;
+  font: 12px var(--mono);
+}
+.drawer-panels {
+  display: grid; gap: 12px; padding: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  align-items: start;
+}
+.drawer-panels .content-panel { min-width: 0; }
+.drawer-panels .drawer-note { margin: 8px 12px; }
+.drawer-panels td em {
+  display: block; font-style: normal; font-size: 12px; color: var(--faint);
+}
+.drawer-more {
+  padding: 10px 14px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 12.5px;
 }
 
 /* --- Pipeline overview (UI-4) ---------------------------------------------

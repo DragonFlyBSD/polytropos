@@ -1,0 +1,228 @@
+{% from "_macros.html" import status_pill %}
+{# The rows behind one pipeline node.
+
+   Per stage, because a count with no way through to its rows is an
+   assertion nobody can check -- but fetching all six to show one would
+   pay six times for it. Each body is capped and says so; the mock slices
+   at 20 with no total and no way onward, and an operator who reaches the
+   bottom of a drawer needs the list, not a dead end. #}
+
+{% if drawer.kind == "occurrences" %}
+  {% if drawer.rows %}
+  <div class="table-scroll-x">
+    <table class="data-table">
+      <thead><tr><th scope="col">Occurrence</th><th scope="col">Origin</th>
+        <th scope="col">Target</th><th scope="col">Status</th>
+        <th scope="col">Recorded</th></tr></thead>
+      <tbody>
+        {% for b in drawer.rows %}
+        <tr>
+          <td><a href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">{{ b.bundle_id }}</a></td>
+          <td>{{ b.origin }}</td>
+          <td>{{ b.target or '—' }}</td>
+          <td>{{ status_pill(b) }}</td>
+          <td class="tabular">{{ b.ts_utc }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><strong>No occurrences yet</strong>
+    Evidence arrives from the dsynth hooks when a build fails.</div>
+  {% endif %}
+
+{% elif drawer.kind == "jobs" %}
+  {% if drawer.rows %}
+  <div class="table-scroll-x">
+    <table class="data-table">
+      <thead><tr><th scope="col">Job</th><th scope="col">Kind</th>
+        <th scope="col">State</th><th scope="col">Origin</th>
+        <th scope="col">Created</th></tr></thead>
+      <tbody>
+        {% for j in drawer.rows %}
+        <tr>
+          <td><a href="{{ request.url_for('agentic_job_detail', job_id=j.job_id) }}">{{ j.job_id }}</a></td>
+          <td>{{ j.type or '—' }}</td>
+          <td><span class="pill neutral">{{ j.state }}</span></td>
+          <td>{{ j.origin }}</td>
+          <td class="tabular">{{ j.created_ts_utc }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><strong>No jobs yet</strong>
+    A job is one piece of work the runner does on one occurrence.</div>
+  {% endif %}
+
+{% elif drawer.kind == "deliveries" %}
+  {% if drawer.rows %}
+  <div class="table-scroll-x">
+    <table class="data-table">
+      <thead><tr><th scope="col">Status</th><th scope="col">Origin</th>
+        <th scope="col">Issue</th><th scope="col">Review</th>
+        <th scope="col">Opened</th></tr></thead>
+      <tbody>
+        {% for d in drawer.rows %}
+        <tr>
+          <td><span class="pill {% if d.status == 'merged' %}green{% elif d.status == 'create_failed' %}red{% elif d.status in ('created', 'updated') %}cyan{% else %}neutral{% endif %}">{{ d.status.replace('_', ' ') }}</span></td>
+          <td>{{ d.origin or '—' }}</td>
+          <td>{% if d.issue_key %}<a href="{{ request.url_for('agentic_issue_detail', issue_key=d.issue_key) }}">{{ d.issue_key }}</a>{% else %}—{% endif %}</td>
+          <td>{% if d.url and d.provider != 'local-patch' %}<a href="{{ d.url }}" target="_blank" rel="noopener">{% if d.provider_pr_id %}#{{ d.provider_pr_id }}{% else %}{{ d.provider }}{% endif %}</a>{% elif d.url %}<code>{{ d.url }}</code>{% else %}<span class="faint">never opened</span>{% endif %}</td>
+          <td class="tabular">{{ d.created_at or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><strong>Nothing has been delivered</strong>
+    A delivery row is written when an accepted fix is offered upstream.</div>
+  {% endif %}
+
+{% elif drawer.kind == "operator" %}
+  {# Two panels, like the mock: the bands are the work, the manual queue
+     is the other thing that only a person can move. #}
+  <div class="drawer-panels">
+    <div class="content-panel">
+      <div class="content-head">Worklist bands<strong>{{ stage_node.value }} issues</strong></div>
+      <div class="table-scroll-x">
+      <table class="data-table">
+        <thead><tr><th scope="col">Band</th><th scope="col" class="num">Issues</th>
+          <th scope="col"></th></tr></thead>
+        <tbody>
+          {% for key in ['ready', 'verify', 'decide', 'owned'] %}
+          <tr>
+            <td>{{ band_labels[key] }}</td>
+            <td class="num">{{ bands[key] }}</td>
+            <td><a href="{{ request.url_for('agentic_index') }}#wl-{{ key }}">open queue →</a></td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td>{{ band_labels['confirming'] }}<em>a build's to finish, not yours</em></td>
+            <td class="num">{{ bands['confirming'] }}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="content-panel">
+      <div class="content-head">Waiting for context<strong>{{ status.manual_pending }} open</strong></div>
+      {% if drawer.rows %}
+      <div class="table-scroll-x">
+      <table class="data-table">
+        <thead><tr><th scope="col">Origin</th><th scope="col">Asked</th>
+          <th scope="col">State</th></tr></thead>
+        <tbody>
+          {% for m in drawer.rows %}
+          <tr>
+            <td>{% if can_operate() %}<a href="{{ request.url_for('agentic_manual_detail', run_id=m.run_id, origin=m.origin) }}">{{ m.origin }}</a>{% else %}{{ m.origin }}{% endif %}</td>
+            <td class="tabular">{{ m.requested_at }}</td>
+            <td><span class="pill amber">{{ m.status }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+      <div class="empty"><strong>Nothing is waiting on you</strong>
+        The agent files one of these when it cannot proceed without
+        something only an operator knows.</div>
+      {% endif %}
+    </div>
+  </div>
+
+{% else %}
+  {# issues, and outcome -- the same row shape, different population. #}
+  {% if stage == 'outcome' %}
+  <div class="drawer-panels">
+    <div class="content-panel">
+      <div class="content-head">How the jobs ended<strong>{{ outcomes.by_state.dead }} dead</strong></div>
+      <p class="drawer-note">
+        The word <code>dead</code> is not a verdict on the work. Only the
+        first row says anything about a port: the others are the job being
+        interrupted, or a decision not to do it.
+      </p>
+      <div class="table-scroll-x">
+      <table class="data-table">
+        <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Jobs</th></tr></thead>
+        <tbody>
+          <tr><td>Done</td><td class="num">{{ outcomes.by_state.done }}</td></tr>
+          <tr><td>Escalated</td><td class="num">{{ outcomes.by_state.escalated }}</td></tr>
+          <tr><td>The work was attempted and failed</td><td class="num">{{ outcomes.dead.failed }}</td></tr>
+          <tr><td>Interrupted<em>runner restart, broken env, no worktree</em></td><td class="num">{{ outcomes.dead.interrupted }}</td></tr>
+          <tr><td>Skipped<em>origin locked, issue muted, abandoned</em></td><td class="num">{{ outcomes.dead.skipped }}</td></tr>
+          {% if outcomes.dead.unclassified %}
+          <tr><td>Unclassified<em>no retire_reason, or a new one</em></td><td class="num">{{ outcomes.dead.unclassified }}</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+      </div>
+      {% if outcomes.dead.interrupted %}
+      <p class="drawer-note">
+        A completed triage job had nowhere to go until poly-h6c: it sat at
+        <code>triaged</code> until a restart reaped it as
+        <code>runner_restart</code>. Those rows were not backfilled, so the
+        interrupted count is inflated by finished triage work and stays
+        that way until it ages out.
+      </p>
+      {% endif %}
+    </div>
+    <div class="content-panel">
+      <div class="content-head">Issues a build has proven fixed<strong>{{ drawer.total }}</strong></div>
+      {% include "_pipeline_issue_rows.html" %}
+    </div>
+  </div>
+  {% else %}
+  <div class="drawer-panels">
+    <div class="content-panel">
+      <div class="content-head">By state<strong>{{ issues.total }} fingerprints</strong></div>
+      <div class="table-scroll-x">
+      <table class="data-table">
+        <thead><tr><th scope="col">State</th><th scope="col" class="num">Issues</th>
+          <th scope="col"></th></tr></thead>
+        <tbody>
+          {% for key in ['unresolved', 'resolving', 'resolved', 'muted'] %}
+          <tr>
+            <td>{{ key }}</td><td class="num">{{ issues.by_state[key] }}</td>
+            <td><a href="{{ request.url_for('agentic_issues') }}?state={{ key }}">open →</a></td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td>regressed<em>fixed, then seen again</em></td>
+            <td class="num">{{ regressed }}</td>
+            <td><a href="{{ request.url_for('agentic_issues') }}?state=regressed">open →</a></td>
+          </tr>
+          <tr>
+            <td>seen {{ issues.systemic_threshold }}+ times<em>systemic</em></td>
+            <td class="num">{{ issues.systemic }}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="content-panel">
+      <div class="content-head">Issues<strong>{{ drawer.total }} fingerprints</strong></div>
+      {% include "_pipeline_issue_rows.html" %}
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
+
+{# The way onward is unconditional. A drawer is a page of rows whether or
+   not it happens to fit today, and an operator who reaches the bottom of
+   one needs the list -- the mock stops at 20 with neither a total nor a
+   link, which is a mock being a mock. #}
+{% if drawer.more %}
+<p class="drawer-more">
+  {% if drawer.total and drawer.rows and drawer.total > drawer.rows|length %}
+  Showing {{ drawer.rows|length }} of {{ drawer.total }}.
+  {% endif %}
+  <a href="{{ drawer.more }}">See all
+    {%- if drawer.total %} {{ drawer.total }}{% endif %} →</a>
+</p>
+{% endif %}

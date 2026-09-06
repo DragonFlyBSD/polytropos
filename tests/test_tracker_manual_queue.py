@@ -301,7 +301,9 @@ def test_the_pipeline_links_to_the_manual_queue(client: TestClient) -> None:
 
     assert ">Manual</a>" in body
     assert "/agentic/manual" in body
-    assert "Waiting for your context" in body
+    # The depth itself is in the operator stage's drawer (M3).
+    operator = client.get("/pipeline?stage=operator").text
+    assert "Waiting for context" in operator
 
 
 # --- discard ---------------------------------------------------------------
