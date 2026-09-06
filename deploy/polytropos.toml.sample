@@ -73,6 +73,30 @@
 # was.
 #public_readonly = false
 
+# Memory the tracker may spend caching rendered artifacts.
+#
+# Rendering one is expensive: up to 4 MiB gunzipped, decoded, then
+# syntax-highlighted or turned into a diff. Blobs are content-
+# addressed, so the sha256 already on the artifact_refs row is an
+# exact cache key -- the bytes behind a sha can never change, and
+# dozens of readers on the same failing port ask for the same log.
+#
+# Set 0 to disable the cache entirely. Rendered HTML is larger than
+# the source, so this is a ceiling on the rendered form, not on the
+# artifacts.
+#artifact_cache_bytes = 67108864
+
+# How often the worklist may sweep open deliveries for upstream
+# merges.
+#
+# Each candidate bundle is polled at most once per
+# delivery.reconcile_min_interval regardless, so this does not
+# change how often GitHub is asked. What it bounds is how often the
+# worklist render pays for finding out -- one SQLite connection per
+# open delivery, on the page a room full of people is polling every
+# few seconds. Set 0 to sweep on every render.
+#delivery_sweep_seconds = 60
+
 # How long a build run may record nothing before start-build treats
 # it as dead and supersedes it.
 #

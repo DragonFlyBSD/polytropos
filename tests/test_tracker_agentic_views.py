@@ -387,7 +387,12 @@ def _make_ready_with_open_pr(db_path: Path, bundle_id: str) -> None:
 
 
 def _patch_probe_merged(monkeypatch) -> None:
+    # The worklist sweep is throttled process-wide
+    # (tracker.delivery_sweep_seconds), so a test that asserts
+    # reconcile-on-render has to clear that global first -- otherwise an
+    # earlier test in the same process has already used the slot.
     from dportsv3.tracker import delivery_sync
+    delivery_sync.reset_sweep_throttle()
     monkeypatch.setattr(
         delivery_sync, "_resolve_merge_probe",
         lambda target: (lambda pr_id: {

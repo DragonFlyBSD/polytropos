@@ -107,22 +107,16 @@ def register(app, ctx):
 
     @app.get("/agentic", response_class=HTMLResponse)
     def agentic_index(request: RequestType) -> Any:
+        # Lazy delivery reconcile FIRST: a PR merged upstream resolves its
+        # issue (WS4), so it runs before the issues are read and the render
+        # sees current states. One call, throttled process-wide by
+        # tracker.delivery_sweep_seconds -- this page is polled every few
+        # seconds by everyone watching, and it used to open one SQLite
+        # connection per open delivery on every single render.
+        delivery_sync.reconcile_open_deliveries(
+            db_path=app.state.db_path, provider="github",
+        )
         with _conn() as conn:
-            # Lazy delivery reconcile FIRST: a PR merged upstream resolves
-            # its issue (WS4). Run it before reading issues so their states
-            # are current this render. Scoped to bundles with an open
-            # GitHub delivery row (a small set) and throttled inside the
-            # reconciler, so a steady-state render does zero network calls.
-            # (SELECTs on this per-request connection are autocommit, so
-            # the read below sees the reconciler's committed writes.)
-            for bid in open_delivery_bundle_ids(conn, provider="github"):
-                row = conn.execute(
-                    "SELECT target FROM bundles WHERE bundle_id = ?", (bid,)
-                ).fetchone()
-                delivery_sync.reconcile_bundle_delivery(
-                    db_path=app.state.db_path, bundle_id=bid,
-                    target=row["target"] if row else None,
-                )
             # The landing is an issue worklist: fingerprinted problems that
             # need you, grouped and bucketed by their actionable occurrence.
             # 500 is a generous window — resolved/muted issues live in the

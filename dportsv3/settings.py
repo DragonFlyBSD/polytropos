@@ -174,6 +174,32 @@ SETTINGS: list[Setting] = [
         "was.",
     ),
     Setting(
+        "tracker.artifact_cache_bytes", "int", 64 * 1024 * 1024,
+        "Memory the tracker may spend caching rendered artifacts.\n"
+        "\n"
+        "Rendering one is expensive: up to 4 MiB gunzipped, decoded, then\n"
+        "syntax-highlighted or turned into a diff. Blobs are content-\n"
+        "addressed, so the sha256 already on the artifact_refs row is an\n"
+        "exact cache key -- the bytes behind a sha can never change, and\n"
+        "dozens of readers on the same failing port ask for the same log.\n"
+        "\n"
+        "Set 0 to disable the cache entirely. Rendered HTML is larger than\n"
+        "the source, so this is a ceiling on the rendered form, not on the\n"
+        "artifacts.",
+    ),
+    Setting(
+        "tracker.delivery_sweep_seconds", "int", 60,
+        "How often the worklist may sweep open deliveries for upstream\n"
+        "merges.\n"
+        "\n"
+        "Each candidate bundle is polled at most once per\n"
+        "delivery.reconcile_min_interval regardless, so this does not\n"
+        "change how often GitHub is asked. What it bounds is how often the\n"
+        "worklist render pays for finding out -- one SQLite connection per\n"
+        "open delivery, on the page a room full of people is polling every\n"
+        "few seconds. Set 0 to sweep on every render.",
+    ),
+    Setting(
         "tracker.stale_build_run_hours", "int", 6,
         "How long a build run may record nothing before start-build treats\n"
         "it as dead and supersedes it.\n"

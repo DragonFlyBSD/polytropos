@@ -6,6 +6,8 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +128,90 @@ def _read_gzip_text(path: Path) -> str:
     return text
 
 
+# --- rendered-artifact cache ------------------------------------------------
+#
+# Rendering an artifact costs up to MAX_DECOMPRESSED_BYTES of gunzip, a UTF-8
+# decode and then a highlight or diff pass. The result is a pure function of
+# the bytes and the name they are stored under, and blobs are content-
+# addressed: the sha256 on the artifact_refs row IS the identity of the bytes,
+# so it cannot go stale. That makes a cache here free of the usual
+# invalidation problem -- there is nothing to invalidate, only to evict.
+#
+# Bounded by bytes rather than entries because entries differ by three orders
+# of magnitude: a 2 KiB diff and a 4 MiB log are both one entry. Guarded by a
+# lock because the tracker serves every request on a threadpool.
+#
+# Only the derived half is cached. bundle_id, relpath, ref and size belong to
+# the caller's request -- the same blob is reachable from several bundles once
+# dedup has done its work.
+
+_CACHE: OrderedDict[tuple[str, str, str], tuple[dict[str, Any], int]] = (
+    OrderedDict()
+)
+_CACHE_LOCK = threading.Lock()
+_DERIVED_FIELDS = (
+    "media_type", "inline", "decompressed", "render_kind",
+    "content", "content_html", "error", "badge",
+)
+
+
+def _cache_limit() -> int:
+    from dportsv3 import settings  # noqa: PLC0415
+
+    try:
+        return max(0, int(settings.get("tracker.artifact_cache_bytes")))
+    except Exception:  # noqa: BLE001 — a cache must never break a render
+        return 0
+
+
+def _cache_key(relpath: str, ref: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Identity of a render, or None when the bytes are not addressable.
+
+    A ``fs`` ref points at a path whose contents can change under us, so it
+    is deliberately not cacheable. ``relpath`` and ``kind`` are part of the
+    key because they, not the bytes, decide markdown vs diff vs log.
+    """
+    sha = ref.get("sha256")
+    if not sha:
+        return None
+    return (str(sha), relpath, str(ref.get("kind") or ""))
+
+
+def _cache_get(key: tuple[str, str, str] | None) -> dict[str, Any] | None:
+    if key is None:
+        return None
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit is None:
+            return None
+        _CACHE.move_to_end(key)
+        return dict(hit[0])
+
+
+def _cache_put(key: tuple[str, str, str] | None, derived: dict[str, Any]) -> None:
+    if key is None:
+        return
+    limit = _cache_limit()
+    if limit <= 0:
+        return
+    cost = len(derived.get("content") or "")
+    if cost > limit:
+        return
+    with _CACHE_LOCK:
+        _CACHE[key] = (dict(derived), cost)
+        _CACHE.move_to_end(key)
+        total = sum(c for _, c in _CACHE.values())
+        while total > limit and len(_CACHE) > 1:
+            _, (_, evicted) = _CACHE.popitem(last=False)
+            total -= evicted
+
+
+def cache_clear() -> None:
+    """Drop everything. For tests and for an operator changing the limit."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
 def artifact_view_data(
     artifact_root: Path,
     bundle_id: str,
@@ -135,6 +221,18 @@ def artifact_view_data(
     path = resolve_artifact_path(artifact_root, ref)
     if path is None or not path.exists():
         return None
+
+    key = _cache_key(relpath, ref)
+    cached = _cache_get(key)
+    if cached is not None:
+        return {
+            **cached,
+            "bundle_id": bundle_id,
+            "relpath": relpath,
+            "ref": ref,
+            "filename": Path(relpath).name,
+            "size": path.stat().st_size,
+        }
     media_type, inline = artifact_media_type(
         relpath, ref.get("kind"), fs_path=path,
     )
@@ -201,7 +299,7 @@ def artifact_view_data(
         except (OSError, gzip.BadGzipFile, EOFError) as exc:
             error = str(exc)
             content = ""
-    return {
+    view = {
         "bundle_id": bundle_id,
         "relpath": relpath,
         "ref": ref,
@@ -216,6 +314,11 @@ def artifact_view_data(
         "badge": _type_badge(relpath),
         "size": path.stat().st_size if path.exists() else ref.get("size"),
     }
+    # A render that failed is not cached: the cause is usually the file, not
+    # the bytes, and a transient read error must not stick to the sha.
+    if error is None:
+        _cache_put(key, {k: view[k] for k in _DERIVED_FIELDS})
+    return view
 
 
 

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -227,6 +229,85 @@ def _resolve_merge_probe(target: str | None) -> Callable[[str], dict[str, Any]] 
     if probe is None:
         return None
     return probe  # type: ignore[return-value]
+
+
+# The worklist used to run this sweep inline on every render: one SQLite
+# connection per open delivery, on the page a room full of readers polls
+# every few seconds. Each bundle is still rate-limited to
+# delivery.reconcile_min_interval, so this does not change how often the
+# provider is asked -- it bounds how often the render pays to find out.
+#
+# Monotonic, so a clock adjustment cannot park the sweep in the future, and
+# lock-guarded because the tracker answers on a threadpool.
+_LAST_SWEEP_MONOTONIC: float = 0.0
+_SWEEP_LOCK = threading.Lock()
+
+
+def reset_sweep_throttle() -> None:
+    """Forget when the last sweep ran, so the next call sweeps.
+
+    Process-global state, so tests that assert reconcile-on-render have to
+    control it the way they would any module global.
+    """
+    global _LAST_SWEEP_MONOTONIC
+    with _SWEEP_LOCK:
+        _LAST_SWEEP_MONOTONIC = 0.0
+
+
+def reconcile_open_deliveries(
+    *, db_path: str, provider: str = "github", force: bool = False,
+) -> int:
+    """Poll every open delivery for an upstream merge. Returns how many
+    bundles were examined, or 0 when the sweep was skipped as too recent.
+
+    Throttled by ``tracker.delivery_sweep_seconds`` (0 sweeps every call).
+    Best-effort throughout: a page render must not fail because a forge is
+    unreachable.
+    """
+    global _LAST_SWEEP_MONOTONIC
+    from dportsv3 import settings  # noqa: PLC0415
+
+    try:
+        interval = max(0, int(settings.get("tracker.delivery_sweep_seconds")))
+    except Exception:  # noqa: BLE001
+        interval = 60
+    now = time.monotonic()
+    with _SWEEP_LOCK:
+        if not force and interval and (now - _LAST_SWEEP_MONOTONIC) < interval:
+            return 0
+        # Claim the slot before doing the work, so concurrent renders do not
+        # all decide to sweep at once.
+        _LAST_SWEEP_MONOTONIC = now
+
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        candidates = [
+            (str(r["bundle_id"]), r["target"])
+            for r in conn.execute(
+                """SELECT r.bundle_id AS bundle_id, b.target AS target
+                     FROM bundle_review_requests r
+                     JOIN (SELECT bundle_id, MAX(id) AS max_id
+                             FROM bundle_review_requests GROUP BY bundle_id) l
+                       ON r.bundle_id = l.bundle_id AND r.id = l.max_id
+                     LEFT JOIN bundles b ON b.bundle_id = r.bundle_id
+                    WHERE r.status IN ('created', 'updated')
+                      AND r.provider = ?
+                    ORDER BY r.bundle_id""",
+                (provider,),
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+    for bundle_id, target in candidates:
+        try:
+            reconcile_bundle_delivery(
+                db_path=db_path, bundle_id=bundle_id, target=target,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("delivery reconcile failed for %s: %s", bundle_id, exc)
+    return len(candidates)
 
 
 def reconcile_bundle_delivery(
