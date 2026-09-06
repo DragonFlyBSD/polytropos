@@ -57,10 +57,27 @@
     <div class="wl-list">
       {% for b in group.occurrences %}
       {% set s = fix_status(b) %}
+      {# How far the agent got on this occurrence, from jobs + job_events --
+         both durable, so a missing count means nothing ran rather than that
+         the record aged out. The intra-job retry detail lives on the job
+         page, where activity_log's eviction caveat is local. #}
+      {% set at = attempts.get(b.bundle_id) %}
       <a class="wl-child" href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">
         <span class="wl-cid">{{ b.bundle_id }}</span>
         <span class="wl-cmid">
           <span class="wl-pill {{ s.cls }} sm">{{ s.label }}</span>
+          {% if at %}
+          <span class="occ-attempts" title="{{ at.jobs }} job{{ 's' if at.jobs != 1 }} worked this occurrence">
+            {{ at.jobs }} job{{ 's' if at.jobs != 1 }}</span>
+          {% if at.furthest_state %}
+          <span class="occ-attempts" title="furthest state reached, at {{ at.furthest_at }}">reached {{ at.furthest_state }}</span>
+          {% endif %}
+          {% if at.outcome %}
+          <span class="occ-attempts" title="how the last job ended, at {{ at.outcome_at }}">ended {{ at.outcome }}</span>
+          {% endif %}
+          {% else %}
+          <span class="occ-attempts" title="no job has been created for this occurrence">no jobs</span>
+          {% endif %}
           <span class="wl-age" title="{{ b.ts_utc }}">{{ b.ts_utc | relative_age }}</span>
         </span>
         <span class="wl-copen">open →</span>
@@ -79,6 +96,7 @@
     .issue-fp { font-family:ui-monospace,Menlo,monospace; font-size: 12px; color:var(--text-dim); margin-top:8px; }
     .issue-controls { display:flex; gap:8px; flex-wrap:wrap; }
     .confirm-panel { margin-top:22px; }
+    .occ-attempts { color:var(--muted); font:12px var(--mono); white-space:nowrap; }
   </style>
 {% endblock %}
 {% block scripts %}

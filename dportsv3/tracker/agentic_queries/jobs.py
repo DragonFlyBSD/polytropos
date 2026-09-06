@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -350,6 +351,85 @@ def job_events_for_job(
             item["detail"] = None
         items.append(item)
     return items
+
+
+def occurrence_attempts(
+    conn: sqlite3.Connection, bundle_ids: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    """Per occurrence: how many jobs worked it, how far the work got, and
+    how it ended.
+
+    One aggregate for a whole page of occurrences rather than a query per
+    row -- the cockpit's selector shows this for every occurrence of an
+    issue at once (poly-0e02.7).
+
+    Both sources are DURABLE. ``jobs`` is the job count and ``job_events``
+    the transition history; neither is ever pruned, so a zero here means
+    nothing ran, not that the record aged out. The intra-job retry detail
+    ("attempt 2 of 3") deliberately is NOT here: it exists only as
+    activity_log rows, which are pruned to a global rolling cap, and a
+    number that silently becomes 0 when it is evicted is worse than no
+    number. That detail stays on the job page, where the caveat is local.
+
+    Returns ``{bundle_id: {jobs, furthest_state, furthest_at, outcome,
+    outcome_at, last_event_at}}``. Occurrences with no jobs are absent.
+    """
+    from dportsv3.agent.lifecycle import (  # noqa: PLC0415
+        JOB_OUTCOME_STATES,
+        JOB_STATE_DEPTH,
+    )
+
+    ids = [str(b) for b in bundle_ids if b]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+
+    out: dict[str, dict[str, Any]] = {}
+    for row in conn.execute(
+        f"SELECT bundle_id, COUNT(*) AS n FROM jobs "
+        f"WHERE bundle_id IN ({placeholders}) GROUP BY bundle_id",
+        ids,
+    ).fetchall():
+        out[str(row["bundle_id"])] = {
+            "jobs": int(row["n"]), "furthest_state": None,
+            "furthest_at": None, "outcome": None, "outcome_at": None,
+            "last_event_at": None,
+        }
+
+    # One row per (occurrence, state ever reached) -- bounded by the number
+    # of states, not by the number of transitions. Ranking happens in Python
+    # so JOB_STATE_DEPTH stays the single definition; a CASE in the SQL
+    # would be a second copy of the state machine.
+    for row in conn.execute(
+        f"SELECT j.bundle_id AS bundle_id, e.to_state AS to_state, "
+        f"       MAX(e.ts) AS at "
+        f"  FROM job_events e JOIN jobs j ON j.job_id = e.job_id "
+        f" WHERE j.bundle_id IN ({placeholders}) "
+        f" GROUP BY j.bundle_id, e.to_state",
+        ids,
+    ).fetchall():
+        entry = out.setdefault(str(row["bundle_id"]), {
+            "jobs": 0, "furthest_state": None, "furthest_at": None,
+            "outcome": None, "outcome_at": None, "last_event_at": None,
+        })
+        state = str(row["to_state"] or "")
+        at = row["at"]
+        if at and (entry["last_event_at"] or "") < at:
+            entry["last_event_at"] = at
+        if state in JOB_OUTCOME_STATES:
+            # The newest ending wins: a retried occurrence has several.
+            if (entry["outcome_at"] or "") <= (at or ""):
+                entry["outcome"] = state
+                entry["outcome_at"] = at
+            continue
+        depth = JOB_STATE_DEPTH.get(state)
+        if depth is None:
+            continue
+        current = JOB_STATE_DEPTH.get(entry["furthest_state"] or "", -1)
+        if depth > current:
+            entry["furthest_state"] = state
+            entry["furthest_at"] = at
+    return out
 
 
 def port_attempt_summary(

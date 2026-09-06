@@ -329,6 +329,32 @@ ACTIVE_WORK_STATES: tuple[JobState, ...] = (
 
 # String-value form for SQL `IN (...)`, template comparisons, and
 # any consumer comparing against the raw `state` column text.
+# How far into the investigation each state is -- "furthest reached" for the
+# occurrence selector (poly-0e02.7). Not a total order over the state
+# machine: a patch job walks triaging -> patching -> verifying while a
+# verify-fix or confirm job jumps straight from claimed to its own state.
+# What it ranks is DEPTH, so "how far did this get" has an answer across job
+# types. The terminals are deliberately absent -- done, escalated and dead
+# are outcomes, not depths, and an occurrence reports both.
+JOB_STATE_DEPTH: dict[str, int] = {
+    JobState.QUEUED.value:        0,
+    JobState.CLAIMED.value:       1,
+    JobState.TRIAGING.value:      2,
+    JobState.TRIAGED.value:       3,
+    JobState.PATCHING.value:      4,
+    JobState.VERIFYING.value:     5,
+    JobState.VERIFYING_FIX.value: 6,
+    JobState.CONFIRMING.value:    7,
+}
+
+# The three ways a job ends. Terminal for the job, which is not the same as
+# terminal for the occurrence -- a dead job leaves the bundle for someone
+# else, and `dead` most often means the runner restarted (poly-h6c).
+JOB_OUTCOME_STATES: frozenset[str] = frozenset({
+    JobState.DONE.value, JobState.ESCALATED.value, JobState.DEAD.value,
+})
+
+
 ACTIVE_WORK_STATE_VALUES: tuple[str, ...] = tuple(
     s.value for s in ACTIVE_WORK_STATES
 )

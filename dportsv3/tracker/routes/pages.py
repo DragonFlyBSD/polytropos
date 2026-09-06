@@ -45,6 +45,7 @@ from dportsv3.tracker.agentic_queries import (
     list_jobs_for_bundle,
     list_manual_requests,
     list_port_bundles,
+    occurrence_attempts,
     port_attempt_summary,
     recent_activity,
     recent_activity_for_bundle,
@@ -494,6 +495,13 @@ def register(app, ctx):
             # and its heartbeat are what let it tell a build that is running
             # from a marker a dead runner left behind.
             confirm = _confirm_for(conn)(issue)
+            # poly-0e02.7: per occurrence, how many jobs worked it and how
+            # far they got. One aggregate for the whole selector rather than
+            # a query per row, over the two DURABLE sources -- jobs and
+            # job_events, neither of which is ever pruned.
+            attempts = occurrence_attempts(
+                conn, [o.get("bundle_id") for o in group["occurrences"]],
+            )
             return templates.TemplateResponse(
                 request,
                 "agentic_issue.html",
@@ -502,6 +510,7 @@ def register(app, ctx):
                     "issue": issue,
                     "group": group,
                     "confirm": confirm,
+                    "attempts": attempts,
                 },
             )
 
