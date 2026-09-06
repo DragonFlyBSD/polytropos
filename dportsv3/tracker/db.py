@@ -26,6 +26,29 @@ _LOG = logging.getLogger(__name__)
 
 VALID_BUILD_RESULTS = frozenset({"success", "failure", "skipped", "ignored"})
 
+# A row is either in flight or finished, never both. enqueue_ports writes
+# result='' status='queued'; record_results writes status = result. So a
+# finished row's status is a copy of its result, and the two columns are one
+# axis, not two -- BUILD_RESULT_STATES is that axis whole.
+INFLIGHT_BUILD_STATUSES = frozenset({"queued", "building"})
+BUILD_RESULT_STATES = VALID_BUILD_RESULTS | INFLIGHT_BUILD_STATUSES
+
+# The evidence one origin's failure produced during one build run. Only
+# failures upload a bundle, so this is NULL for every other row. It stays a
+# correlated subselect rather than a join because SQLite then evaluates it
+# once per row the page returns, not once per row the run recorded -- with
+# LIMIT 50 over 13,440 results that is 50 lookups instead of 13,440. Expects
+# the build_results row to be aliased ``br``.
+BUNDLE_FOR_RESULT_SQL = """(
+        SELECT b.bundle_id
+          FROM bundles b
+          JOIN runs r ON r.run_id = b.run_id
+         WHERE r.build_run_id = br.build_run_id
+           AND b.origin = br.origin
+         ORDER BY b.ts_utc DESC
+         LIMIT 1
+    )"""
+
 
 def open_db(db_path: str | Path) -> sqlite3.Connection:
     """Open one configured SQLite connection for tracker operations.
@@ -547,6 +570,82 @@ def get_build_results(conn: sqlite3.Connection, run_id: int) -> list[dict[str, A
     return [_row_dict_required(row) for row in rows]
 
 
+def get_build_results_page(
+    conn: sqlite3.Connection,
+    run_id: int,
+    *,
+    state: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Return one page of a run's origin results, plus the matching total.
+
+    The searchable, filterable table ``get_build_results`` cannot serve: it
+    reads every row of the run (13,440 for #1842) and carries no link to the
+    evidence a failure produced.
+
+    ``state`` is one value from ``BUILD_RESULT_STATES`` -- see that constant
+    for why status and result are one axis. ``search`` is a case-insensitive
+    substring of the origin; its LIKE wildcards are escaped, so searching for
+    ``_`` finds an underscore rather than everything.
+
+    Ordered by origin, which is free: build_results is keyed
+    (build_run_id, origin), so the WHERE is a primary-key prefix scan already
+    in that order. ``get_build_results`` orders by a CASE over status
+    instead, which costs a temp b-tree over the whole run before LIMIT
+    applies -- 5.94 ms against 0.26 ms at offset 13000. In-flight rows are
+    reached here by filtering for them, not by sorting them to the front.
+    """
+    _require_build_run(conn, run_id)
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+
+    clauses = ["br.build_run_id = ?"]
+    params: list[Any] = [run_id]
+    if state is not None:
+        if state not in BUILD_RESULT_STATES:
+            raise ValueError(f"Invalid build result state: {state}")
+        column = "br.status" if state in INFLIGHT_BUILD_STATUSES else "br.result"
+        clauses.append(f"{column} = ?")
+        params.append(state)
+    if search:
+        clauses.append(r"br.origin LIKE ? ESCAPE '\'")
+        params.append(_like_contains(search))
+    where_sql = " AND ".join(clauses)
+
+    total = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM build_results br WHERE {where_sql}",
+            params,
+        ).fetchone()[0]
+    )
+    rows = conn.execute(
+        f"""
+        SELECT
+            br.build_run_id,
+            br.origin,
+            br.version,
+            br.result,
+            br.log_url,
+            br.recorded_at,
+            br.status,
+            {BUNDLE_FOR_RESULT_SQL} AS bundle_id
+        FROM build_results br
+        WHERE {where_sql}
+        ORDER BY br.origin ASC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, limit, offset),
+    ).fetchall()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "results": [_row_dict_required(row) for row in rows],
+    }
+
+
 def get_port_history(
     conn: sqlite3.Connection,
     target: str,
@@ -873,6 +972,16 @@ def _validate_build_type(conn: sqlite3.Connection, build_type: str) -> None:
 def _validate_build_result(result: str) -> None:
     if result not in VALID_BUILD_RESULTS:
         raise ValueError(f"Invalid build result: {result}")
+
+
+def _like_contains(term: str) -> str:
+    """A LIKE pattern matching ``term`` anywhere, wildcards taken literally.
+
+    Without this an operator searching for ``_`` matches every origin, and
+    one searching for ``%`` matches every origin twice over.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

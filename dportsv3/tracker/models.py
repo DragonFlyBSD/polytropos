@@ -119,6 +119,26 @@ class PortStatusOut(TrackerModel):
     last_success_run_id: int | None = None
 
 
+class BuildResultRow(TrackerModel):
+    # `result` is not BuildResultLiteral: a queued or building row has no
+    # result yet and carries the empty string.
+    build_run_id: int
+    origin: str
+    version: str
+    result: str
+    log_url: str | None = None
+    recorded_at: str
+    status: str
+    bundle_id: str | None = None
+
+
+class BuildResultsPage(TrackerModel):
+    total: int
+    limit: int
+    offset: int
+    results: list[BuildResultRow]
+
+
 class DiffEntry(TrackerModel):
     origin: str
     version_a: str | None = None

@@ -10,6 +10,7 @@ from dportsv3.tracker.db import (
     enqueue_ports,
     finish_build_run,
     get_build_results,
+    get_build_results_page,
     get_build_run,
     get_diff,
     get_failures,
@@ -20,6 +21,7 @@ from dportsv3.tracker.db import (
 )
 from dportsv3.tracker.models import (
     BuildCompareOut,
+    BuildResultsPage,
     BuildRunOut,
     DiffOut,
     EnqueueRequest,
@@ -147,6 +149,30 @@ def register(app, ctx):
                     "build_run": get_build_run(conn, run_id),
                     "results": get_build_results(conn, run_id),
                 }
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise AssertionError("unreachable")
+
+    @app.get("/api/builds/{run_id}/results", response_model=BuildResultsPage)
+    def api_build_results(
+        run_id: int,
+        state: str | None = None,
+        q: str | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        """One page of a run's origins, filterable and searchable.
+
+        GET /api/builds/{run_id} keeps returning the whole run because
+        client.get_build and `dportsv3 tracker get-build` want that shape.
+        This is the bounded read beside it: 13,440 results are 2.2 MiB of
+        JSON there and one page here.
+        """
+        try:
+            with _conn() as conn:
+                return get_build_results_page(
+                    conn, run_id, state=state, search=q, limit=limit, offset=offset
+                )
         except Exception as exc:
             _raise_http_error(exc)
             raise AssertionError("unreachable")

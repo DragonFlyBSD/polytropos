@@ -73,6 +73,109 @@ def test_api_build_lifecycle_round_trip(client: TestClient) -> None:
     assert payload["results"][0]["log_url"] == "https://logs.example/devel/foo.log.gz"
 
 
+def _run_with_results(client: TestClient) -> int:
+    run_id = client.post(
+        "/api/builds",
+        json={
+            "target": "@main",
+            "build_type": "release",
+            "started_at": "2026-03-17T08:00:00+00:00",
+        },
+    ).json()["id"]
+    client.post(
+        f"/api/builds/{run_id}/results",
+        json={
+            "results": [
+                {"origin": "devel/foo", "version": "1.0", "result": "success"},
+                {"origin": "lang/bar", "version": "2.0", "result": "failure"},
+                {"origin": "www/baz", "version": "3.0", "result": "skipped"},
+            ]
+        },
+    )
+    return int(run_id)
+
+
+def test_api_build_results_pages_the_run(client: TestClient) -> None:
+    run_id = _run_with_results(client)
+
+    first = client.get(f"/api/builds/{run_id}/results", params={"limit": 2})
+
+    assert first.status_code == 200
+    payload = first.json()
+    assert payload["total"] == 3
+    assert payload["limit"] == 2
+    assert payload["offset"] == 0
+    assert [row["origin"] for row in payload["results"]] == ["devel/foo", "lang/bar"]
+
+    second = client.get(
+        f"/api/builds/{run_id}/results", params={"limit": 2, "offset": 2}
+    )
+
+    assert [row["origin"] for row in second.json()["results"]] == ["www/baz"]
+
+
+def test_api_build_results_filters_and_searches(client: TestClient) -> None:
+    run_id = _run_with_results(client)
+
+    failures = client.get(f"/api/builds/{run_id}/results", params={"state": "failure"})
+    assert [row["origin"] for row in failures.json()["results"]] == ["lang/bar"]
+
+    search = client.get(f"/api/builds/{run_id}/results", params={"q": "www/"})
+    assert [row["origin"] for row in search.json()["results"]] == ["www/baz"]
+
+
+def test_api_build_results_carries_the_evidence_link(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A failure row's bundle_id is what the Builds table links to; without
+    it the table can say a port failed and nothing about why."""
+    import sqlite3
+
+    run_id = _run_with_results(client)
+    db = sqlite3.connect(tmp_path / "state.db")
+    db.execute(
+        "INSERT INTO runs(run_id, target, build_run_id) VALUES ('r-1', '@main', ?)",
+        (run_id,),
+    )
+    db.execute(
+        "INSERT INTO bundles(bundle_id, run_id, origin, target, ts_utc) "
+        "VALUES ('b-1', 'r-1', 'lang/bar', '@main', '2026-03-17T08:20:00+00:00')"
+    )
+    db.commit()
+    db.close()
+
+    rows = client.get(f"/api/builds/{run_id}/results").json()["results"]
+
+    assert {row["origin"]: row["bundle_id"] for row in rows} == {
+        "devel/foo": None,
+        "lang/bar": "b-1",
+        "www/baz": None,
+    }
+
+
+def test_api_build_results_rejects_a_state_outside_the_vocabulary(
+    client: TestClient,
+) -> None:
+    run_id = _run_with_results(client)
+
+    response = client.get(f"/api/builds/{run_id}/results", params={"state": "broken"})
+
+    assert response.status_code == 400
+    assert "Invalid build result state" in response.json()["detail"]
+
+
+def test_api_build_results_404s_on_an_unknown_run(client: TestClient) -> None:
+    assert client.get("/api/builds/4242/results").status_code == 404
+
+
+def test_api_build_results_refuses_an_unbounded_page(client: TestClient) -> None:
+    run_id = _run_with_results(client)
+
+    assert client.get(
+        f"/api/builds/{run_id}/results", params={"limit": 5000}
+    ).status_code == 422
+
+
 def test_api_rejects_duplicate_active_build_for_same_target_and_type(
     client: TestClient,
 ) -> None:

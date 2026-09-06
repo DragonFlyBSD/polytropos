@@ -32,6 +32,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from dportsv3.tracker.db import BUNDLE_FOR_RESULT_SQL
+
 CHUNK_SIZE = 1000
 
 _RESULT_TO_DSYNTH = {
@@ -155,14 +157,8 @@ def run_history_chunk(
     # 'building' and 'queued' rows are in-flight — they belong in
     # summary.builders, not in the historical record.
     rows = conn.execute(
-        """SELECT br.origin, br.version, br.result, br.recorded_at, br.status,
-                  (SELECT b.bundle_id
-                     FROM bundles b
-                     JOIN runs r ON r.run_id = b.run_id
-                    WHERE r.build_run_id = br.build_run_id
-                      AND b.origin = br.origin
-                    ORDER BY b.ts_utc DESC
-                    LIMIT 1) AS bundle_id
+        f"""SELECT br.origin, br.version, br.result, br.recorded_at, br.status,
+                   {BUNDLE_FOR_RESULT_SQL} AS bundle_id
            FROM build_results br
            WHERE br.build_run_id = ?
              AND br.status NOT IN ('building', 'queued')
