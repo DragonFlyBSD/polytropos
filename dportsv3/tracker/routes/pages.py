@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from dportsv3 import settings
 from dportsv3.tracker import (
@@ -34,6 +35,7 @@ from dportsv3.tracker.agentic_queries import (
     job_events_for_job,
     latest_review_request_for_bundle,
     list_bundles,
+    list_issues,
     list_jobs,
     list_jobs_for_bundle,
     list_manual_requests,
@@ -47,8 +49,11 @@ from dportsv3.tracker.agentic_queries import (
     upsert_user_context_text,
 )
 from dportsv3.tracker.db import (
+    INFLIGHT_BUILD_STATUSES,
+    build_filter_options,
     compare_builds,
     get_active_builds_summary,
+    get_build_results_page,
     get_build_run,
     get_diff,
     get_port_history,
@@ -81,24 +86,190 @@ from dportsv3.tracker.routes._common import (
 )
 
 
+# One screen of origins. 13,440 rows is a run, not a page.
+_ORIGIN_PAGE = 50
+
+# The chips over the origin table, each paired with the run count that
+# fills it. A state the run never produced gets no chip -- an operator does
+# not need a "Skipped 0" to click.
+_STATE_CHIPS = (
+    ("", "All", "result_count"),
+    ("failure", "Failed", "failure_count"),
+    ("success", "Built", "success_count"),
+    ("building", "Building", "building_count"),
+    ("queued", "Queued", "queued_count"),
+    ("skipped", "Skipped", "skipped_count"),
+    ("ignored", "Ignored", "ignored_count"),
+)
+
+
+def _state_filters(
+    run: dict[str, Any] | None, selected: str
+) -> list[tuple[str, str, int]]:
+    """The state chips this run earns, plus whichever one is selected.
+
+    The selected chip stays even at zero: it is how the operator sees that
+    the filter they are looking through matched nothing, rather than the
+    control vanishing out from under the click.
+    """
+    if run is None:
+        return []
+    chips = []
+    for key, label, count_key in _STATE_CHIPS:
+        count = int(run.get(count_key) or 0)
+        if key == "" or count or key == selected:
+            chips.append((key, label, count))
+    return chips
+
+
+def _port_link(request: Any):
+    """``port_link(target, origin)`` -> the port page, or None.
+
+    dashboard_port_detail routes on cat and port separately, so an origin
+    that is not exactly ``cat/port`` has no page to link to. Resolving that
+    here means the template renders plain text instead of a broken URL.
+    """
+
+    def port_link(target: str, origin: str) -> str | None:
+        parts = str(origin).split("/")
+        if len(parts) != 2 or not all(parts):
+            return None
+        return str(
+            request.url_for(
+                "dashboard_port_detail", target=target, cat=parts[0], port=parts[1]
+            )
+        )
+
+    return port_link
+
+
+def _query_for(base: dict[str, Any]):
+    """A ``query_for(**overrides)`` for one request's templates.
+
+    Every link on the Builds page is this page with one thing changed, so
+    the template says what changed and the rest carries. Empty and None
+    drop out, which is what clears a filter.
+    """
+
+    def query_for(**overrides: Any) -> str:
+        merged = dict(base)
+        merged.update(overrides)
+        return urlencode(
+            [(k, str(v)) for k, v in merged.items() if v not in (None, "")]
+        )
+
+    return query_for
+
+
 def register(app, ctx):
     _conn = ctx.conn
     templates = ctx.templates
 
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard_index(request: RequestType) -> Any:
+    def dashboard_index(
+        request: RequestType,
+        target: str | None = None,
+        build_type: str | None = None,
+        run: int | None = None,
+        state: str | None = None,
+        q: str | None = None,
+        page: int = Query(default=1, ge=1),
+    ) -> Any:
+        """Builds — the landing view: what is running, what finished, and
+        one run's origins.
+
+        The origin table is server-rendered from get_build_results_page, so
+        search, state filter and paging are ordinary links and form GETs
+        rather than a client that has to hold 13,440 rows to filter them.
+        """
         with _conn() as conn:
-            active_builds = get_active_builds_summary(conn)
+            active_builds = [
+                row
+                for row in get_active_builds_summary(conn)
+                if (not target or row["target"] == target)
+                and (not build_type or row["build_type"] == build_type)
+            ]
+            recent_runs = [
+                row
+                for row in list_build_runs(
+                    conn, target=target, build_type=build_type, limit=40
+                )
+                if row["finished_at"]
+            ][:10]
+
+            selected_run = None
+            if run is not None:
+                try:
+                    selected_run = get_build_run(conn, run)
+                except ValueError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+            elif active_builds:
+                selected_run = get_build_run(conn, int(active_builds[0]["id"]))
+            elif recent_runs:
+                selected_run = get_build_run(conn, int(recent_runs[0]["id"]))
+
+            results: dict[str, Any] = {
+                "total": 0, "limit": _ORIGIN_PAGE, "offset": 0, "results": [],
+            }
+            if selected_run is not None:
+                try:
+                    results = get_build_results_page(
+                        conn,
+                        int(selected_run["id"]),
+                        state=state or None,
+                        search=q,
+                        limit=_ORIGIN_PAGE,
+                        offset=(page - 1) * _ORIGIN_PAGE,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            options = build_filter_options(conn)
+
+        base = {
+            "target": target, "build_type": build_type,
+            "run": selected_run["id"] if selected_run else None,
+            "state": state, "q": q, "page": page if page > 1 else None,
+        }
+        return templates.TemplateResponse(
+            request,
+            "builds_dashboard.html",
+            {
+                "title": "Builds",
+                "active_builds": active_builds,
+                "recent_runs": recent_runs,
+                "selected_run": selected_run,
+                "selected_run_id": selected_run["id"] if selected_run else None,
+                "results": results,
+                "page": page,
+                "search": q,
+                "selected_state": state or "",
+                "state_filters": _state_filters(selected_run, state or ""),
+                "inflight_statuses": INFLIGHT_BUILD_STATUSES,
+                "target_options": options["targets"],
+                "build_type_options": options["build_types"],
+                "selected_target": target,
+                "selected_build_type": build_type,
+                "query_for": _query_for(base),
+                "port_link": _port_link(request),
+                "carried_params": [
+                    (k, v) for k, v in base.items()
+                    if v not in (None, "") and k not in ("q", "page")
+                ],
+                "refresh_seconds": 30 if active_builds else None,
+            },
+        )
+
+    @app.get("/targets", response_class=HTMLResponse)
+    def dashboard_targets(request: RequestType) -> Any:
+        """The per-target rollup that used to be the landing page. Builds
+        took / over; this keeps the cumulative view reachable."""
+        with _conn() as conn:
             return templates.TemplateResponse(
                 request,
-                "index.html",
-                {
-                    "title": "Targets",
-                    "targets": get_target_summary(conn),
-                    "active_builds": active_builds,
-                    "refresh_seconds": 30 if active_builds else None,
-                },
+                "targets.html",
+                {"title": "Targets", "targets": get_target_summary(conn)},
             )
 
     # ------------------------------------------------------------------
@@ -860,6 +1031,11 @@ def register(app, ctx):
                 raise HTTPException(
                     status_code=404, detail=f"Unknown port status: {target} {origin}"
                 )
+            # The repair side of the same origin. list_issues orders by
+            # times_seen, so the first row is the problem this port is best
+            # known for. Its stored state only -- `regressed` is derived
+            # from occurrences this page does not load.
+            issues = list_issues(conn, target=target, origin=origin, limit=5)
             return templates.TemplateResponse(
                 request,
                 "port_detail.html",
@@ -869,6 +1045,7 @@ def register(app, ctx):
                     "origin": origin,
                     "status": rows[0],
                     "history": get_port_history(conn, target, origin, limit=20),
+                    "issues": issues,
                 },
             )
 
@@ -884,27 +1061,48 @@ def register(app, ctx):
                 conn, target=target, build_type=build_type, limit=limit
             )
             compare_links = _resolve_compare_links(runs)
+            options = build_filter_options(conn)
             return templates.TemplateResponse(
                 request,
                 "builds.html",
                 {
-                    "title": "Builds",
+                    "title": "Run history",
                     "runs": runs,
                     "compare_links": compare_links,
                     "target": target,
                     "build_type": build_type,
+                    "target_options": options["targets"],
+                    "build_type_options": options["build_types"],
                 },
             )
 
     @app.get("/builds/compare", response_class=HTMLResponse)
-    def dashboard_build_compare(request: RequestType, a: int, b: int) -> Any:
+    def dashboard_build_compare(
+        request: RequestType, a: int | None = None, b: int | None = None
+    ) -> Any:
+        """Origin-level delta between two runs.
+
+        a and b are optional so the section nav can reach this page with
+        nothing chosen yet; it then renders the pickers and says so instead
+        of rejecting the request.
+        """
         with _conn() as conn:
+            runs = list_build_runs(conn, limit=60)
+            compare = None
+            if a is not None and b is not None:
+                try:
+                    compare = compare_builds(conn, a, b)
+                except ValueError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
             return templates.TemplateResponse(
                 request,
                 "build_compare.html",
                 {
                     "title": "Build Compare",
-                    "compare": compare_builds(conn, a, b),
+                    "compare": compare,
+                    "runs": runs,
+                    "run_a": a,
+                    "run_b": b,
                 },
             )
 

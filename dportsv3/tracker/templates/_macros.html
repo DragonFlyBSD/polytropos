@@ -27,3 +27,31 @@
 }.get(state, 'total') -%}
 {{ pill(cls, state) }}
 {%- endmacro -%}
+
+{#- One build_results row's state -> a pill. The state is the whole
+    vocabulary of BUILD_RESULT_STATES: a finished row's result, or the
+    status an in-flight row is sitting in. Colour never carries it alone --
+    the label is the state's own name. -#}
+{%- macro build_state_pill(state) -%}
+{%- set s = state or 'unknown' -%}
+{%- set cls = {
+    'success': 'green', 'failure': 'red', 'skipped': 'amber',
+    'ignored': 'neutral', 'building': 'cyan', 'queued': 'neutral',
+}.get(s, 'neutral') -%}
+<span class="pill {{ cls }}">{{ s }}</span>
+{%- endmacro -%}
+
+{#- The outcome segments of one run, as a single bar. Widths come from the
+    counts the run actually recorded; the remainder is the track showing
+    through, which is what "not yet built" looks like. -#}
+{%- macro progress_bar(run) -%}
+{%- set total = run.total_expected or 0 -%}
+{%- if total -%}
+<div class="pbar" role="img" aria-label="{{ run.success_count }} built, {{ run.failure_count }} failed of {{ total }} expected">
+  {%- for key in ['success', 'failure', 'skipped', 'ignored', 'building'] -%}
+  {%- set n = run.get(key ~ '_count') or 0 -%}
+  {%- if n %}<i class="seg-{{ key }}" style="width:{{ (n * 100 / total)|round(3) }}%"></i>{% endif -%}
+  {%- endfor -%}
+</div>
+{%- endif -%}
+{%- endmacro -%}

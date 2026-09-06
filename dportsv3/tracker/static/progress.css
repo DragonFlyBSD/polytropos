@@ -21,8 +21,10 @@
   /* --cyan, --amber and --faint are a shade darker than the mock's, and the
      dark --faint a shade lighter, because measured against the grounds they
      actually sit on they came in at 4.48, 4.49, 3.84 and 4.48 -- just under
-     the 4.5 AA needs for normal text. Same hues, enough contrast. */
-  color-scheme: light;
+     the 4.5 AA needs for normal text. Same hues, enough contrast.
+     --green moved again in UI-2: 4.40 on --surface-3, the ground a selected
+     row paints. Every accent is now measured against every surface token,
+     not only --bg and --surface. */
   /* Light — the default. Cool-biased neutrals so the greys read as chosen
   against the cyan accent rather than as untinted default grey. */
   --bg: #e9edf2;
@@ -50,7 +52,7 @@
   --amber: #8a570c;
   --amber-soft: #fcf1dc;
   --amber-line: #e3c186;
-  --green: #1a7a4e;
+  --green: #19754b;
   --green-soft: #e0f4ea;
   --green-line: #93d2b3;
   --violet: #5843b5;
@@ -298,6 +300,11 @@ table.data-table th {
 table.data-table td { padding: 7px 12px; border-bottom: 1px solid var(--line); }
 table.data-table tbody tr:hover { background: var(--surface-2); }
 table.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.data-table th.num { text-align: right; }
+/* Figures that line up but read left-to-right: timestamps and versions. A
+   right-aligned ISO timestamp under a left-aligned header looks broken, and
+   the alignment buys nothing -- they are all the same width already. */
+table.data-table .tabular { font-variant-numeric: tabular-nums; }
 /* Wide content scrolls inside its own frame; the page body never does. */
 .table-scroll { overflow-x: auto; }
 
@@ -336,6 +343,213 @@ select, option { background: var(--surface); color: var(--text); }
 @keyframes live-blip { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 @media (prefers-reduced-motion: reduce) {
   .live-dot.on::before { animation: none; }
+}
+
+/* --- breadcrumbs -----------------------------------------------------------
+ * _tracker_nav renders these on every page that passes nav_crumbs. UI-1
+ * shipped the markup without the rules, so they were rendering as bare
+ * inline links under the header.
+ */
+.crumbs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  min-height: 34px; padding: 4px 20px;
+  background: var(--head-deep); border-bottom: 1px solid var(--line);
+  color: var(--faint); font: 12px/1.5 var(--mono);
+}
+.crumbs a { color: var(--cyan); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+.crumbs [aria-current="page"] { color: var(--text); font-weight: 650; }
+.crumb-sep { color: var(--faint); }
+
+/* Label that only a screen reader needs -- the control beside it already
+   says what it filters. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+/* --- Builds ----------------------------------------------------------------
+ * The three-view console's first view. Composed in normal document flow
+ * rather than the mock's viewport-locked app grid: the mock is one page that
+ * swaps innerHTML, these are separate server-rendered documents, and a
+ * 100vh grid would fight the browser's own scrolling for no gain.
+ */
+
+/* Section nav — the view's own tabs, below the primary nav. */
+.section-nav {
+  display: flex; align-items: stretch; min-width: 0; overflow-x: auto;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.section-nav a {
+  display: inline-flex; align-items: center; min-width: max-content;
+  min-height: 40px; padding: 0 17px;
+  color: var(--muted); border-right: 1px solid var(--line);
+  font: 650 13px/1 var(--sans); text-decoration: none; white-space: nowrap;
+}
+.section-nav a:hover { color: var(--text); background: var(--surface-2); }
+.section-nav a.active { color: var(--text); box-shadow: inset 0 -2px var(--cyan); }
+.section-context {
+  display: flex; align-items: center; margin-left: auto; padding: 0 18px;
+  color: var(--faint); font: 12px var(--mono); white-space: nowrap;
+}
+
+/* Page heading strip. */
+.page-heading {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+  min-width: 0; padding: 14px 20px;
+  background: var(--surface); border-bottom: 1px solid var(--line-hot);
+}
+.page-heading h1 {
+  margin: 0; font-size: 22px; font-weight: 700;
+  letter-spacing: -.02em; text-wrap: balance;
+}
+.page-heading p { margin: 3px 0 0; color: var(--muted); font-size: 14px; }
+.heading-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  margin-left: auto;
+}
+
+/* Page body: the normal-flow container for everything under the heading. */
+.page-body { padding: 16px 20px 32px; }
+.stack { display: flex; flex-direction: column; gap: 14px; }
+
+/* Form controls, matched to .action's metrics so they line up in a row. */
+.control {
+  appearance: none; min-height: 32px; padding: 0 10px;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--line-hot); border-radius: 3px;
+  font: 500 13px/1 var(--sans);
+}
+.control:hover { border-color: var(--cyan); }
+.control:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+/* A select keeps its native arrow. Stripped, it is indistinguishable from
+   the buttons beside it and nobody knows it opens. */
+select.control { appearance: auto; padding: 0 4px 0 8px; }
+
+/* The dashboard's two summary panels, side by side while there is room. */
+.build-dashboard {
+  display: grid; gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 1000px) {
+  .build-dashboard { grid-template-columns: minmax(0, 1fr); }
+}
+
+.panel-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  min-height: 40px; padding: 6px 14px;
+  background: var(--head); border-bottom: 1px solid var(--line);
+}
+.panel-head h2 { margin: 0; font: 650 15px/1.3 var(--sans); }
+.panel-head .count { color: var(--faint); font: 12px var(--mono); }
+.panel-head .spacer { flex: 1 1 auto; }
+
+/* An active run: identity, progress, and the three counts worth watching. */
+.active-builds { max-height: 340px; overflow-y: auto; }
+.build-row {
+  display: grid; gap: 16px; align-items: center;
+  grid-template-columns: 200px minmax(200px, 1fr) 210px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  color: inherit; text-decoration: none;
+}
+.build-row:last-child { border-bottom: 0; }
+.build-row:hover { background: var(--surface-2); }
+.build-row.selected { background: var(--surface-3); box-shadow: inset 3px 0 var(--cyan); }
+table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow: inset 3px 0 var(--cyan); }
+.run-id { color: var(--cyan); font: 700 14px var(--mono); }
+.run-target { display: block; margin-top: 4px; font: 700 15px var(--mono); }
+.run-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 13px;
+            overflow-wrap: anywhere; }
+.build-progress-top {
+  display: flex; justify-content: space-between; gap: 12px;
+  color: var(--muted); font: 13px var(--mono);
+}
+.build-progress-top strong { color: var(--text); }
+.build-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.build-count { padding-left: 9px; border-left: 1px solid var(--line); }
+.build-count span {
+  display: block; color: var(--faint);
+  font: 12px var(--mono); text-transform: uppercase;
+}
+.build-count strong { display: block; margin-top: 2px; font: 700 14px var(--mono); }
+.build-count strong.red { color: var(--red); }
+.build-count strong.amber { color: var(--amber); }
+.build-count strong.cyan { color: var(--cyan); }
+
+/* Progress bar. Segmented by outcome, so it says what happened and not
+   only how far along the run is. */
+.pbar {
+  display: flex; height: 7px; margin: 5px 0;
+  background: var(--track); border-radius: 2px; overflow: hidden;
+}
+.pbar i { display: block; height: 100%; }
+.pbar .seg-success { background: var(--green); }
+.pbar .seg-failure { background: var(--red); }
+.pbar .seg-skipped { background: var(--amber); }
+.pbar .seg-ignored { background: var(--faint); }
+.pbar .seg-building { background: var(--cyan); }
+
+/* The selected run's origins. */
+.detail-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  min-width: 0; padding: 8px 14px;
+  background: var(--head); border-bottom: 1px solid var(--line-hot);
+}
+.detail-toolbar h2 { margin: 0; font: 650 16px/1.3 var(--sans); }
+.detail-note { color: var(--muted); font: 13px var(--mono); }
+.toolbar-spacer { flex: 1 1 auto; }
+/* display:contents is fine in current browsers but leaves nothing to fall
+   back to; a flex row is the same layout without the cliff. */
+.toolbar-form { display: flex; align-items: center; gap: 8px; }
+.result-search {
+  width: 220px; min-width: 150px; min-height: 32px; padding: 0 10px;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--line-hot); border-radius: 3px;
+  font: 13px var(--mono);
+}
+.result-search:focus { outline: 2px solid var(--cyan); outline-offset: 1px; }
+.result-filters { display: flex; flex-wrap: wrap; }
+.result-filter {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px;
+  color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--line-hot); border-left: 0;
+  font: 700 12px/1 var(--sans); text-decoration: none;
+}
+.result-filter:first-child { border-left: 1px solid var(--line-hot); border-radius: 3px 0 0 3px; }
+.result-filter:last-child { border-radius: 0 3px 3px 0; }
+.result-filter:hover { color: var(--text); }
+.result-filter.active { color: var(--on-accent); background: var(--cyan); border-color: var(--cyan); }
+.result-filter .n { margin-left: 6px; font-family: var(--mono); opacity: .75; }
+
+/* Paging strip under a table. */
+.pager {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-top: 1px solid var(--line);
+  color: var(--muted); font: 13px var(--mono);
+}
+.pager .spacer { flex: 1 1 auto; }
+
+/* Tables wide enough to need their own scroller. */
+.table-scroll-x { overflow-x: auto; }
+.table-scroll-x > table.data-table { min-width: 640px; }
+
+/* Compare deltas. */
+.delta { font: 700 12px var(--mono); text-transform: uppercase; }
+.delta.fixed { color: var(--green); }
+.delta.broke { color: var(--red); }
+.delta.still { color: var(--amber); }
+.delta.moved { color: var(--violet); }
+
+@media (max-width: 760px) {
+  .section-context { display: none; }
+  .page-heading { padding: 12px 14px; }
+  .page-heading h1 { font-size: 20px; }
+  .page-body { padding: 12px 14px 24px; }
+  .crumbs { padding: 4px 14px; }
+  .build-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .build-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .result-search { width: 100%; }
 }
 
 /* --- shell -----------------------------------------------------------------

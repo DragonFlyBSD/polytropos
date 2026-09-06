@@ -1,53 +1,99 @@
 {% extends "_base.html" %}
+{% from "_macros.html" import build_state_pill %}
 {% block title %}Build compare — DeltaPorts Tracker{% endblock %}
-{% block head_extra %}
-  <style>
-    details.compare-section { background: var(--bg-card); border: 1px solid var(--amber-border); border-radius: 4px; margin-bottom: 8px; }
-    details.compare-section summary { cursor: pointer; padding: 8px 12px; font-weight: 600; color: var(--text); user-select: none; }
-    details.compare-section summary::marker { color: var(--amber); }
-    details.compare-section summary .count { color: var(--text-dim); font-weight: normal; margin-left: 6px; }
-  </style>
-{% endblock %}
 {% block body %}
-  {% with nav_crumbs = [{"label": "Builds", "url": request.url_for('dashboard_builds')}, {"label": "Compare"}] %}
-    {% include "_tracker_nav.html" %}
-  {% endwith %}
+  {% include "_tracker_nav.html" %}
+  {% with section = 'compare' %}{% include "_builds_subnav.html" %}{% endwith %}
 
-  <div class="tracker-page">
-    <h1>Build compare</h1>
-    <p class="lede">{{ compare.run_a.target }} {{ compare.run_a.build_type }} run {{ compare.run_a.id }} vs {{ compare.run_b.target }} {{ compare.run_b.build_type }} run {{ compare.run_b.id }}</p>
-
-    <div class="tracker-card">
-      <table style="font-size:12px;">
-        {% for key, value in compare.summary.items() %}
-        <tr>
-          <th style="text-align:left;color:var(--text-dim);padding-right:16px;">{{ key }}</th>
-          <td style="font-variant-numeric:tabular-nums;">{{ value }}</td>
-        </tr>
-        {% endfor %}
-      </table>
+  <div class="page-heading">
+    <div>
+      <h1>Compare runs</h1>
+      {% if compare %}
+      <p>Origin-level outcome delta between
+         run #{{ compare.run_a.id }} ({{ compare.run_a.target }} {{ compare.run_a.build_type }})
+         and run #{{ compare.run_b.id }} ({{ compare.run_b.target }} {{ compare.run_b.build_type }}).</p>
+      {% else %}
+      <p>Origin-level outcome delta between two recorded runs.</p>
+      {% endif %}
     </div>
+    <form class="heading-actions" method="get" action="{{ request.url_for('dashboard_build_compare') }}">
+      <label class="visually-hidden" for="cmp-a">Run A</label>
+      <select class="control" id="cmp-a" name="a">
+        <option value="">Run A</option>
+        {% for r in runs %}
+        <option value="{{ r.id }}"{% if r.id == run_a %} selected{% endif %}>#{{ r.id }} {{ r.target }} {{ r.build_type }}{% if not r.finished_at %} (running){% endif %}</option>
+        {% endfor %}
+      </select>
+      <label class="visually-hidden" for="cmp-b">Run B</label>
+      <select class="control" id="cmp-b" name="b">
+        <option value="">Run B</option>
+        {% for r in runs %}
+        <option value="{{ r.id }}"{% if r.id == run_b %} selected{% endif %}>#{{ r.id }} {{ r.target }} {{ r.build_type }}{% if not r.finished_at %} (running){% endif %}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="action primary">Compare</button>
+    </form>
+  </div>
 
-    {% for section in ['new_failures', 'new_successes', 'still_failing', 'added', 'removed', 'version_changes'] %}
-    <details class="compare-section"{% if section == 'new_failures' %} open{% endif %}>
-      <summary>{{ section }}<span class="count">({{ compare[section]|length }})</span></summary>
-      <table class="tracker-table" style="border-radius:0;">
-        <thead>
-          <tr><th>Origin</th><th>Run A</th><th>Run B</th></tr>
-        </thead>
-        <tbody>
-          {% for row in compare[section] %}
-          <tr>
-            <td>{{ row.origin }}</td>
-            <td>{{ row.result_a or '—' }} {{ row.version_a or '' }}</td>
-            <td>{{ row.result_b or '—' }} {{ row.version_b or '' }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="3" style="color:var(--text-dim);">none</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </details>
+  <div class="page-body stack">
+    {% if not compare %}
+    <section class="panel">
+      <div class="empty">
+        {% if runs %}
+        <strong>Pick two runs</strong>
+        Choose a run in each list above to see where their origin outcomes differ.
+        {% else %}
+        <strong>Nothing to compare</strong>
+        No run has been recorded yet. Runs appear here as the farm reports them.
+        {% endif %}
+      </div>
+    </section>
+    {% else %}
+
+    <section class="panel">
+      <div class="content-head">Summary<strong>#{{ compare.run_a.id }} → #{{ compare.run_b.id }}</strong></div>
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr>{% for key in compare.summary %}<th class="num">{{ key|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+          <tbody><tr>{% for value in compare.summary.values() %}<td class="num">{{ value }}</td>{% endfor %}</tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    {% set sections = [
+      ('new_failures', 'Broke in #' ~ compare.run_b.id, 'broke'),
+      ('new_successes', 'Fixed in #' ~ compare.run_b.id, 'fixed'),
+      ('still_failing', 'Still failing in both', 'still'),
+      ('version_changes', 'Version changed', 'moved'),
+      ('added', 'Only in #' ~ compare.run_b.id, 'moved'),
+      ('removed', 'Only in #' ~ compare.run_a.id, 'moved'),
+    ] %}
+    {% for key, label, delta in sections %}
+    <section class="panel">
+      <div class="content-head">
+        <span class="delta {{ delta }}">{{ label }}</span>
+        <strong>{{ compare[key]|length }} origins</strong>
+      </div>
+      {% if compare[key] %}
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr><th>Origin</th><th>#{{ compare.run_a.id }}</th><th>#{{ compare.run_b.id }}</th></tr></thead>
+          <tbody>
+            {% for row in compare[key] %}
+            <tr>
+              <td>{{ row.origin }}</td>
+              <td>{% if row.result_a %}{{ build_state_pill(row.result_a) }} <span class="num">{{ row.version_a or '' }}</span>{% else %}<span style="color:var(--faint)">absent</span>{% endif %}</td>
+              <td>{% if row.result_b %}{{ build_state_pill(row.result_b) }} <span class="num">{{ row.version_b or '' }}</span>{% else %}<span style="color:var(--faint)">absent</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">Nothing in this bucket.</div>
+      {% endif %}
+    </section>
     {% endfor %}
+    {% endif %}
   </div>
 {% endblock %}

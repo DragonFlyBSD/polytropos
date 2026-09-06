@@ -118,16 +118,34 @@ def _token(block: str, name: str) -> str:
     return m.group(1)
 
 
+# Every ground a token can paint. UI-1 checked --bg and --surface only, and
+# --surface-3 -- which a selected row uses -- then came in at 4.40 for
+# --green. An accent has to clear AA on every surface it can land on, so the
+# list is the surfaces, not the ones that happened to be checked.
+GROUNDS = ("--bg", "--surface", "--surface-2", "--surface-3",
+           "--head", "--head-deep", "--nav")
+
+
 @pytest.mark.parametrize("name", ["--cyan", "--red", "--amber", "--green",
-                                  "--violet", "--muted", "--faint", "--text"])
+                                  "--violet", "--muted", "--faint", "--text",
+                                  "--prose"])
 def test_every_accent_clears_aa_on_the_grounds_it_sits_on(name):
-    """4.5:1 is AA for normal text. Measured against BOTH the page ground and
-    the panel surface, because an accent is used on each."""
+    """4.5:1 is AA for normal text, measured against every surface token."""
     light = _block(r"^:root \{(.*?)\n\}")
     dark = _block(r':root\[data-theme="dark"\] \{(.*?)\n\}')
-    for block, grounds in ((light, ("--bg", "--surface")),
-                           (dark, ("--bg", "--surface"))):
+    for label, block in (("light", light), ("dark", dark)):
         fg = _token(block, name)
-        for ground in grounds:
-            assert _ratio(fg, _token(block, ground)) >= 4.5, (
-                f"{name} on {ground}")
+        for ground in GROUNDS:
+            ratio = _ratio(fg, _token(block, ground))
+            assert ratio >= 4.5, f"{label} {name} on {ground}: {ratio:.2f}"
+
+
+def test_the_pill_accents_clear_aa_on_their_own_tinted_grounds():
+    """A .pill paints its accent on the matching --*-soft tint, which is not
+    any of the surface tokens."""
+    light = _block(r"^:root \{(.*?)\n\}")
+    dark = _block(r':root\[data-theme="dark"\] \{(.*?)\n\}')
+    for label, block in (("light", light), ("dark", dark)):
+        for hue in ("cyan", "red", "amber", "green", "violet"):
+            ratio = _ratio(_token(block, f"--{hue}"), _token(block, f"--{hue}-soft"))
+            assert ratio >= 4.5, f"{label} --{hue} on --{hue}-soft: {ratio:.2f}"

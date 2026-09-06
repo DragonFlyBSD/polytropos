@@ -1,0 +1,220 @@
+{% extends "_base.html" %}
+{% from "_macros.html" import build_state_pill, progress_bar %}
+{% block title %}Builds — DeltaPorts Tracker{% endblock %}
+{% block body %}
+  {% include "_tracker_nav.html" %}
+  {% with section = 'active' %}{% include "_builds_subnav.html" %}{% endwith %}
+
+  <div class="page-heading">
+    <div>
+      <h1>Builds</h1>
+      <p>Farm activity, current origin status, and run history.</p>
+    </div>
+    <form class="heading-actions" method="get" action="{{ request.url_for('dashboard_index') }}">
+      <label class="visually-hidden" for="f-target">Target</label>
+      <select class="control" id="f-target" name="target" onchange="this.form.submit()">
+        <option value="">All targets</option>
+        {% for t in target_options %}
+        <option value="{{ t }}"{% if t == selected_target %} selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <label class="visually-hidden" for="f-type">Build type</label>
+      <select class="control" id="f-type" name="build_type" onchange="this.form.submit()">
+        <option value="">All build types</option>
+        {% for t in build_type_options %}
+        <option value="{{ t }}"{% if t == selected_build_type %} selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="control">Apply</button></noscript>
+    </form>
+  </div>
+
+  <div class="page-body stack">
+    <div class="build-dashboard">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Active builds</h2>
+          <span class="count">{{ active_builds|length }} unfinished</span>
+          <span class="spacer"></span>
+          {% if active_builds %}
+          {% if search or selected_state or page > 1 %}
+          <span class="live-dot">paused while filtered</span>
+          {% else %}<span class="live-dot on">polling {{ refresh_seconds }}s</span>{% endif %}
+          {% endif %}
+        </div>
+        {% if active_builds %}
+        <div class="active-builds">
+          {% for ab in active_builds %}
+          {% set done = ab.done_count or 0 %}
+          <a class="build-row{% if ab.id == selected_run_id %} selected{% endif %}"
+             href="{{ request.url_for('dashboard_index') }}?{{ query_for(run=ab.id, page=None, q=None, state=None) }}">
+            <div>
+              <span class="run-id">RUN #{{ ab.id }}</span>
+              <span class="run-target">{{ ab.target }}</span>
+              <span class="run-meta">{{ ab.build_type }} · started {{ ab.started_at }}</span>
+            </div>
+            <div>
+              <div class="build-progress-top">
+                <strong>{{ done }} final</strong>
+                <span>of {{ ab.total_expected or '?' }} expected</span>
+              </div>
+              {{ progress_bar(ab) }}
+              <span class="run-meta">
+                {% if ab.stale %}
+                <span class="pill amber">stale</span>
+                no result since {{ ab.last_activity_at or 'the run started' }}
+                {% elif ab.last_activity_at %}last result {{ ab.last_activity_at }}
+                {% else %}nothing recorded yet{% endif %}
+              </span>
+            </div>
+            <div class="build-counts">
+              <div class="build-count"><span>Building</span><strong class="cyan">{{ ab.building_count or 0 }}</strong></div>
+              <div class="build-count"><span>Queued</span><strong class="amber">{{ ab.queued_count or 0 }}</strong></div>
+              <div class="build-count"><span>Failed</span><strong class="red">{{ ab.failure_count or 0 }}</strong></div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty">
+          <strong>Nothing building</strong>
+          No run is in flight. Completed runs are listed alongside.
+        </div>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent history</h2>
+          <span class="count">{{ recent_runs|length }} completed</span>
+          <span class="spacer"></span>
+          <a class="control" href="{{ request.url_for('dashboard_builds') }}">all runs</a>
+        </div>
+        {% if recent_runs %}
+        <div class="table-scroll-x">
+          <table class="data-table">
+            <thead><tr><th>Run</th><th>Target</th><th>Finished</th><th class="num">Pass / fail</th></tr></thead>
+            <tbody>
+              {% for run in recent_runs %}
+              <tr{% if run.id == selected_run_id %} class="is-selected"{% endif %}>
+                <td><a href="{{ request.url_for('dashboard_index') }}?{{ query_for(run=run.id, page=None, q=None, state=None) }}">#{{ run.id }}</a></td>
+                <td>{{ run.target }}</td>
+                <td class="tabular">{{ run.finished_at }}</td>
+                <td class="num">
+                  <span style="color:var(--green)">{{ run.success_count }}</span> /
+                  <span style="color:var(--red)">{{ run.failure_count }}</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">
+          <strong>No completed runs</strong>
+          Finished runs are archived here as the farm reports them.
+        </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="panel" id="origins">
+      {% if selected_run %}
+      <div class="detail-toolbar">
+        <h2>Run #{{ selected_run.id }} · {{ selected_run.target }} · {{ selected_run.build_type }}</h2>
+        <span class="detail-note">
+          showing {{ results.results|length }} of {{ results.total }} matching
+          {%- if results.total != selected_run.result_count %}, {{ selected_run.result_count }} recorded{% endif %}
+        </span>
+        <span class="toolbar-spacer"></span>
+        <a class="control" href="{{ request.url_for('dashboard_build_detail', run_id=selected_run.id) }}">Live progress</a>
+        <form method="get" action="{{ request.url_for('dashboard_index') }}" class="toolbar-form">
+          {% for name, value in carried_params %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+          <label class="visually-hidden" for="res-q">Search origins</label>
+          <input class="result-search" id="res-q" type="search" name="q" value="{{ search or '' }}"
+                 placeholder="Search origin">
+          <button type="submit" class="control">Search</button>
+        </form>
+      </div>
+      <div class="detail-toolbar" style="border-bottom:0;padding-top:0">
+        <div class="result-filters">
+          {% for key, label, count in state_filters %}
+          <a class="result-filter{% if key == selected_state %} active{% endif %}"
+             href="{{ request.url_for('dashboard_index') }}?{{ query_for(state=key, page=None) }}#origins"
+             {% if key == selected_state %}aria-current="true"{% endif %}>{{ label }}<span class="n">{{ count }}</span></a>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% if results.results %}
+      <div class="table-scroll-x">
+        <table class="data-table results-table">
+          <thead>
+            <tr><th>State</th><th>Origin</th><th>Version</th><th>Recorded</th><th>Evidence</th></tr>
+          </thead>
+          <tbody>
+            {% for row in results.results %}
+            <tr>
+              <td>{{ build_state_pill(row.status if row.status in inflight_statuses else row.result) }}</td>
+              <td>
+                {%- set href = port_link(selected_run.target, row.origin) -%}
+                {% if href %}<a href="{{ href }}">{{ row.origin }}</a>{% else %}{{ row.origin }}{% endif %}
+              </td>
+              <td class="tabular">{{ row.version or '—' }}</td>
+              <td class="tabular">{{ row.recorded_at or '—' }}</td>
+              <td>
+                {% if row.bundle_id %}
+                <a href="{{ request.url_for('agentic_bundle_detail', bundle_id=row.bundle_id) }}">Open repair</a>
+                {% elif row.log_url %}
+                <a href="{{ row.log_url }}">Build log</a>
+                {% else %}<span style="color:var(--faint)">—</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if results.total > results.limit %}
+      <div class="pager">
+        <span>{{ results.offset + 1 }}–{{ results.offset + results.results|length }} of {{ results.total }}</span>
+        <span class="spacer"></span>
+        {% if page > 1 %}
+        <a class="control" href="{{ request.url_for('dashboard_index') }}?{{ query_for(page=page - 1) }}#origins">Previous</a>
+        {% endif %}
+        {% if results.offset + results.limit < results.total %}
+        <a class="control" href="{{ request.url_for('dashboard_index') }}?{{ query_for(page=page + 1) }}#origins">Next</a>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="empty">
+        <strong>No origins match</strong>
+        {% if search or selected_state %}Clear the search or pick a different state.
+        {% else %}This run has recorded no results yet.{% endif %}
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="detail-toolbar"><h2>Origins</h2></div>
+      <div class="empty">
+        <strong>No run selected</strong>
+        Pick a run once the farm has reported one.
+      </div>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}
+{% block scripts %}
+{% if refresh_seconds and not search and not selected_state and page == 1 %}
+  <script src="{{ request.url_for('static', path='live.js') }}?v={{ static_v }}" defer></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", function () {
+      window.dpLive({
+        intervalMs: {{ refresh_seconds }} * 1000,
+        url: function () { return "/api/health"; },
+        onData: function () { location.reload(); return "stop"; },
+      }).start({{ refresh_seconds }} * 1000);
+    });
+  </script>
+{% endif %}
+{% endblock %}

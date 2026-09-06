@@ -646,6 +646,28 @@ def get_build_results_page(
     }
 
 
+def build_filter_options(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """The distinct targets and build types the Builds filters offer.
+
+    ``get_target_summary`` also knows the targets, but it runs two queries
+    per target to aggregate port_status; a pair of select boxes needs the
+    names and nothing else.
+    """
+    targets = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT target FROM build_runs ORDER BY target ASC"
+        ).fetchall()
+    ]
+    build_types = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT build_type FROM build_runs ORDER BY build_type ASC"
+        ).fetchall()
+    ]
+    return {"targets": targets, "build_types": build_types}
+
+
 def get_port_history(
     conn: sqlite3.Connection,
     target: str,

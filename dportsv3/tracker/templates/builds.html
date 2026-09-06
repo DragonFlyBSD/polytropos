@@ -1,54 +1,79 @@
 {% extends "_base.html" %}
-{% block title %}Builds — DeltaPorts Tracker{% endblock %}
+{% from "_macros.html" import progress_bar %}
+{% block title %}Run history — DeltaPorts Tracker{% endblock %}
 {% block body %}
-  {% with nav_crumbs = [{"label": "Builds"}] %}{% include "_tracker_nav.html" %}{% endwith %}
+  {% include "_tracker_nav.html" %}
+  {% with section = 'history' %}{% include "_builds_subnav.html" %}{% endwith %}
 
-  <div class="tracker-page">
-    <h1>Builds</h1>
-    <p class="lede">Recent build runs across targets and build types.</p>
-
-    <table class="tracker-table">
-      <thead>
-        <tr>
-          <th>Run</th>
-          <th>Target</th>
-          <th>Type</th>
-          <th>Started</th>
-          <th>Finished</th>
-          <th>Pass / Fail</th>
-          <th>Compare</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-        <tr>
-          <td><a href="{{ request.url_for('dashboard_build_detail', run_id=run.id) }}">{{ run.id }}</a></td>
-          <td>{{ run.target }}</td>
-          <td>{{ run.build_type }}</td>
-          <td>{{ run.started_at }}</td>
-          <td>
-            {% if run.finished_at %}
-              {{ run.finished_at }}
-            {% else %}
-              <span class="stat-pill skipped">running{% if run.total_expected %} {{ run.success_count + run.failure_count + run.skipped_count + run.ignored_count }}/{{ run.total_expected }}{% endif %}</span>
-            {% endif %}
-          </td>
-          <td>
-            <span class="stat-pill built">{{ run.success_count }}</span>
-            <span class="stat-pill failed">{{ run.failure_count }}</span>
-          </td>
-          <td>
-            {% if compare_links.get(run.id) %}
-            <a href="{{ request.url_for('dashboard_build_compare') }}?a={{ compare_links[run.id] }}&amp;b={{ run.id }}">vs {{ compare_links[run.id] }}</a>
-            {% else %}
-            —
-            {% endif %}
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7" style="color:var(--text-dim);">No build runs yet.</td></tr>
+  <div class="page-heading">
+    <div>
+      <h1>Run history</h1>
+      <p>Every recorded build run, newest first. Compare a run with the one
+         before it on the same target and type.</p>
+    </div>
+    <form class="heading-actions" method="get" action="{{ request.url_for('dashboard_builds') }}">
+      <label class="visually-hidden" for="h-target">Target</label>
+      <select class="control" id="h-target" name="target" onchange="this.form.submit()">
+        <option value="">All targets</option>
+        {% for t in target_options %}
+        <option value="{{ t }}"{% if t == target %} selected{% endif %}>{{ t }}</option>
         {% endfor %}
-      </tbody>
-    </table>
+      </select>
+      <label class="visually-hidden" for="h-type">Build type</label>
+      <select class="control" id="h-type" name="build_type" onchange="this.form.submit()">
+        <option value="">All build types</option>
+        {% for t in build_type_options %}
+        <option value="{{ t }}"{% if t == build_type %} selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="control">Apply</button></noscript>
+    </form>
+  </div>
+
+  <div class="page-body">
+    <section class="panel">
+      {% if runs %}
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Run</th><th>Target</th><th>Type</th><th>Started</th><th>Finished</th>
+              <th class="num">Expected</th><th class="num">Built</th><th class="num">Failed</th>
+              <th class="num">Skipped</th><th class="num">Ignored</th><th>Compare</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in runs %}
+            <tr>
+              <td><a href="{{ request.url_for('dashboard_index') }}?run={{ run.id }}">#{{ run.id }}</a></td>
+              <td>{{ run.target }}</td>
+              <td>{{ run.build_type }}</td>
+              <td class="tabular">{{ run.started_at }}</td>
+              <td class="tabular">
+                {% if run.finished_at %}{{ run.finished_at }}
+                {% else %}<span class="pill cyan">running</span>{% endif %}
+              </td>
+              <td class="num">{{ run.total_expected or '—' }}</td>
+              <td class="num" style="color:var(--green)">{{ run.success_count }}</td>
+              <td class="num" style="color:var(--red)">{{ run.failure_count }}</td>
+              <td class="num" style="color:var(--amber)">{{ run.skipped_count }}</td>
+              <td class="num" style="color:var(--faint)">{{ run.ignored_count }}</td>
+              <td>
+                {% if compare_links.get(run.id) %}
+                <a href="{{ request.url_for('dashboard_build_compare') }}?a={{ compare_links[run.id] }}&amp;b={{ run.id }}">vs #{{ compare_links[run.id] }}</a>
+                {% else %}<span style="color:var(--faint)">—</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>No build runs recorded</strong>
+        Runs appear here once a farm build reports in through the ingest API.
+      </div>
+      {% endif %}
+    </section>
   </div>
 {% endblock %}

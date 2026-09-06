@@ -1,45 +1,99 @@
 {% extends "_base.html" %}
+{% from "_macros.html" import build_state_pill %}
 {% block title %}{{ origin }} — DeltaPorts Tracker{% endblock %}
 {% block body %}
-  {% with nav_crumbs = [{"label": target, "url": request.url_for('dashboard_target', target=target)}, {"label": origin}] %}
+  {% with nav_crumbs = [
+       {"label": "Builds", "url": request.url_for('dashboard_index')},
+       {"label": target, "url": request.url_for('dashboard_target', target=target)},
+       {"label": origin}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
 
-  <div class="tracker-page">
-    <h1>{{ origin }}</h1>
-    <p class="lede">{{ target }}</p>
-
-    <div class="tracker-card">
-      {% set r = status.last_attempt_result or 'unknown' %}
-      <table style="font-size:12px;">
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Current result</th>
-            <td><span class="stat-pill {% if r == 'success' %}built{% elif r == 'failure' %}failed{% else %}total{% endif %}">{{ r }}</span></td></tr>
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Last attempt</th>
-            <td>{{ status.last_attempt_version or '—' }} in run {{ status.last_attempt_run_id or '—' }} at {{ status.last_attempt_at or '—' }}</td></tr>
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Last success</th>
-            <td>{{ status.last_success_version or '—' }} in run {{ status.last_success_run_id or '—' }} at {{ status.last_success_at or '—' }}</td></tr>
-      </table>
+  <div class="page-heading">
+    <div>
+      <h1>{{ origin }}</h1>
+      <p>Per-run outcome for this origin on {{ target }}.</p>
     </div>
+    {% if issues %}
+    <div class="heading-actions">
+      <a class="action primary" href="{{ request.url_for('agentic_issue_detail', issue_key=issues[0].issue_key) }}">Open repair issue</a>
+    </div>
+    {% endif %}
+  </div>
 
-    <h2>Recent history</h2>
-    <table class="tracker-table">
-      <thead>
-        <tr><th>Run</th><th>Type</th><th>Version</th><th>Result</th><th>Log</th><th>Recorded</th></tr>
-      </thead>
-      <tbody>
-        {% for row in history %}
-        <tr>
-          <td><a href="{{ request.url_for('dashboard_build_detail', run_id=row.build_run_id) }}">{{ row.build_run_id }}</a></td>
-          <td>{{ row.build_type }}</td>
-          <td>{{ row.version }}</td>
-          <td><span class="stat-pill {% if row.result == 'success' %}built{% elif row.result == 'failure' %}failed{% else %}total{% endif %}">{{ row.result }}</span></td>
-          <td>{% if row.log_url %}<a href="{{ row.log_url }}">View log</a>{% else %}—{% endif %}</td>
-          <td>{{ row.recorded_at }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="6" style="color:var(--text-dim);">No build history for this origin.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="page-body stack">
+    <section class="panel">
+      <div class="content-head">Current status</div>
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr><th>Last attempt</th><th>Version</th><th>Run</th><th>When</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>{{ build_state_pill(status.last_attempt_result) }}</td>
+              <td class="tabular">{{ status.last_attempt_version or '—' }}</td>
+              <td>{% if status.last_attempt_run_id %}<a href="{{ request.url_for('dashboard_index') }}?run={{ status.last_attempt_run_id }}">#{{ status.last_attempt_run_id }}</a>{% else %}—{% endif %}</td>
+              <td class="tabular">{{ status.last_attempt_at or '—' }}</td>
+            </tr>
+            <tr>
+              <td>{% if status.last_success_at %}<span class="pill green">last success</span>
+                  {% else %}<span class="pill neutral">never succeeded</span>{% endif %}</td>
+              <td class="tabular">{{ status.last_success_version or '—' }}</td>
+              <td>{% if status.last_success_run_id %}<a href="{{ request.url_for('dashboard_index') }}?run={{ status.last_success_run_id }}">#{{ status.last_success_run_id }}</a>{% else %}—{% endif %}</td>
+              <td class="tabular">{{ status.last_success_at or '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if issues %}
+    <section class="panel">
+      <div class="content-head">Repair issues<strong>{{ issues|length }} fingerprinted</strong></div>
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr><th>Issue</th><th>State</th><th class="num">Seen</th><th>First</th><th>Last</th></tr></thead>
+          <tbody>
+            {% for issue in issues %}
+            <tr>
+              <td><a href="{{ request.url_for('agentic_issue_detail', issue_key=issue.issue_key) }}">{{ issue.issue_key }}</a></td>
+              <td><span class="pill neutral">{{ issue.state }}</span></td>
+              <td class="num">{{ issue.times_seen }}</td>
+              <td class="tabular">{{ issue.first_seen_at or '—' }}</td>
+              <td class="tabular">{{ issue.last_seen_at or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="panel">
+      <div class="content-head">Build history<strong>{{ history|length }} runs</strong></div>
+      {% if history %}
+      <div class="table-scroll-x">
+        <table class="data-table">
+          <thead><tr><th>Run</th><th>Type</th><th>State</th><th>Version</th><th>Recorded</th><th>Log</th></tr></thead>
+          <tbody>
+            {% for row in history %}
+            <tr>
+              <td><a href="{{ request.url_for('dashboard_index') }}?run={{ row.build_run_id }}">#{{ row.build_run_id }}</a></td>
+              <td>{{ row.build_type }}</td>
+              <td>{{ build_state_pill(row.result) }}</td>
+              <td class="tabular">{{ row.version }}</td>
+              <td class="tabular">{{ row.recorded_at }}</td>
+              <td>{% if row.log_url %}<a href="{{ row.log_url }}">Build log</a>{% else %}<span style="color:var(--faint)">—</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>Never built</strong>
+        No run has reported a result for this origin on {{ target }}.
+      </div>
+      {% endif %}
+    </section>
   </div>
 {% endblock %}

@@ -1,0 +1,41 @@
+{% extends "_base.html" %}
+{% block title %}Targets — DeltaPorts Tracker{% endblock %}
+{% block body %}
+  {% include "_tracker_nav.html" %}
+  {% with section = 'targets' %}{% include "_builds_subnav.html" %}{% endwith %}
+
+  <div class="page-heading">
+    <div>
+      <h1>Targets</h1>
+      <p>Cumulative port status per target, from the latest attempt recorded
+         for each origin. Open a target for its live progress view.</p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    {% if targets %}
+    <div class="target-grid">
+      {% for row in targets %}
+      <a class="target-card" href="{{ request.url_for('dashboard_target', target=row.target) }}">
+        <div class="target-name">{{ row.target }}</div>
+        <div class="target-meta">
+          {% if row.last_build_at %}last build {{ row.last_build_at }}{% else %}no builds yet{% endif %}
+        </div>
+        <div class="target-stats">
+          <span class="pill neutral">{{ row.total_ports }} ports</span>
+          {% if row.successes %}<span class="pill green">{{ row.successes }} built</span>{% endif %}
+          {% if row.failures %}<span class="pill red">{{ row.failures }} failed</span>{% endif %}
+          {% if row.skipped %}<span class="pill amber">{{ row.skipped }} skipped</span>{% endif %}
+          {% if row.ignored %}<span class="pill neutral">{{ row.ignored }} ignored</span>{% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <strong>No targets recorded yet</strong>
+      A target appears once a build run or a port status is recorded against it.
+    </div>
+    {% endif %}
+  </div>
+{% endblock %}

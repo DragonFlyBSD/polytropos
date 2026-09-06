@@ -1,0 +1,16 @@
+{# The Builds view's own sections, below the primary nav. Active is the
+   landing surface (/), History is the full run list, and Live progress is
+   reached from a run rather than from here -- it needs a run to show. #}
+<nav class="section-nav" aria-label="Builds sections">
+  <a href="{{ request.url_for('dashboard_index') }}"
+     {% if section == 'active' %}class="active" aria-current="page"{% endif %}>Active</a>
+  <a href="{{ request.url_for('dashboard_builds') }}"
+     {% if section == 'history' %}class="active" aria-current="page"{% endif %}>History</a>
+  <a href="{{ request.url_for('dashboard_build_compare') }}"
+     {% if section == 'compare' %}class="active" aria-current="page"{% endif %}>Compare</a>
+  <a href="{{ request.url_for('dashboard_diff') }}"
+     {% if section == 'diff' %}class="active" aria-current="page"{% endif %}>Target Diff</a>
+  <a href="{{ request.url_for('dashboard_targets') }}"
+     {% if section == 'targets' %}class="active" aria-current="page"{% endif %}>Targets</a>
+  <span class="section-context">Farm build tracker</span>
+</nav>
