@@ -97,6 +97,17 @@
 # few seconds. Set 0 to sweep on every render.
 #delivery_sweep_seconds = 60
 
+# How long runner_status.updated_at may go unrefreshed before the UI
+# reports the runner as not running.
+#
+# The runner's heartbeat thread touches that column every 5 seconds,
+# so anything approaching a minute means the process is gone. This
+# is what separates a confirm build that is genuinely running from
+# an in-flight marker left behind by a runner that died mid-build --
+# the marker itself survives until the next runner start clears it,
+# so without a liveness check the two look identical.
+#runner_heartbeat_stale_seconds = 60
+
 # How long a build run may record nothing before start-build treats
 # it as dead and supersedes it.
 #

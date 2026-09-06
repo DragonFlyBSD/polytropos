@@ -30,7 +30,7 @@
   </style>
 {% endblock %}
 {% block body %}
-  {% with nav_crumbs = [{"label": "Agentic", "url": request.url_for('agentic_index')}, {"label": "Jobs", "url": request.url_for('agentic_jobs')}, {"label": job.job_id}] %}
+  {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Jobs", "url": request.url_for('agentic_jobs')}, {"label": job.job_id}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}

@@ -265,7 +265,11 @@ _ISSUE_STATUS: dict[str, IssueStatus] = {
     # Derived, never stored — reached only via `effective_state`.
     ISSUE_REGRESSED: IssueStatus("regressed", "regressed", "failed"),   # loud
     ISSUE_RESOLVED: IssueStatus("resolved", "resolved", "built"),
-    ISSUE_RESOLVING: IssueStatus("resolving", "awaiting delivery", "total"),
+    # NOT "awaiting delivery". Since A2 a merge explicitly does not resolve a
+    # `resolving` issue -- delivery_sync leaves it for the confirm build --
+    # so the old label named the one thing that provably will not move it.
+    # Delivery is real, but it lives on the occurrence (fix_state).
+    ISSUE_RESOLVING: IssueStatus("resolving", "confirming", "skipped"),
     ISSUE_MUTED: IssueStatus("muted", "muted", "ignored"),
 }
 
@@ -282,6 +286,173 @@ def issue_status(issue: dict[str, Any]) -> IssueStatus:
     )
 
 
+# --- Confirm-build projection (C1/C2 + A1-A4) ------------------------------
+#
+# `resolving` is one word covering a whole loop: a fix has been accepted and
+# a confirm build must prove it. Seven columns say where in that loop the
+# issue is, and until this projection existed none of them reached a screen
+# -- an operator could see that an issue was stuck but not whether a build
+# was running, queued, backing off, or given up on.
+#
+# The predicates here mirror `issues_needing_build` exactly, so the badge
+# cannot disagree with the reconcile feed about whether a build is coming.
+
+CONFIRM_ABSENT = "absent"            # no confirm build is in play
+CONFIRM_QUEUED = "queued"            # the feed will claim it next pass
+CONFIRM_BUILDING = "building"        # claimed, single-flight marker set
+CONFIRM_STALLED = "stalled"          # marked in flight, runner is not up
+CONFIRM_WAITING = "waiting"          # backing off after a could-not-run
+CONFIRM_SPENT = "spent"              # retry budget gone; the next
+                                     # could-not-run reopens the issue
+CONFIRM_PROVISIONAL = "provisional"  # green, but not enough greens yet
+CONFIRM_WITHDRAWN = "withdrawn"      # the request was cancelled
+CONFIRM_CONFIRMED = "confirmed"      # a build proved it
+CONFIRM_MANUAL = "manual"            # resolved by an operator, never built
+
+
+@dataclass(frozen=True)
+class ConfirmStatus:
+    """Where an issue is in the confirm-build loop.
+
+    ``pill`` is the primitive vocabulary from UI-1 (green/red/amber/cyan/
+    neutral), not the legacy set ``IssueStatus.pill`` still carries -- that
+    one moves when UI-5 restyles the badge.
+    """
+    key: str
+    label: str
+    pill: str
+    detail: str            # one sentence: what it means and what happens next
+    greens: int
+    threshold: int
+    generation: int | None       # the in-flight generation, when there is one
+    green_head_run_id: int | None
+
+
+def _int(issue: dict[str, Any], name: str, default: int = 0) -> int:
+    value = issue.get(name)
+    return default if value is None else int(value)
+
+
+def confirm_status(
+    issue: dict[str, Any],
+    *,
+    threshold: int = 2,
+    max_failures: int = 3,
+    now: str | None = None,
+    runner_live: bool | None = None,
+) -> ConfirmStatus:
+    """Project the confirm-build columns into one operator-facing status.
+
+    ``threshold`` and ``max_failures`` are the runner's own settings
+    (``runner.confirm_green_threshold`` / ``runner.confirm_max_failures``);
+    they are parameters rather than reads so this module stays pure over
+    dicts. ``now`` is an ISO timestamp for comparing the backoff, and
+    ``runner_live`` says whether the runner is actually up -- without it an
+    in-flight marker left behind by a dead runner is indistinguishable from
+    a build that is genuinely running.
+    """
+    state = issue.get("state")
+    requested = _int(issue, "requested_build_generation")
+    confirmed = _int(issue, "last_confirmed_build_generation")
+    building = issue.get("building_generation")
+    building = None if building is None else int(building)
+    greens = _int(issue, "confirm_green_count")
+    failures = _int(issue, "confirm_failure_count")
+    eligible_at = issue.get("next_eligible_at")
+    head = issue.get("green_head_run_id")
+    head = None if head is None else int(head)
+
+    def out(key: str, label: str, pill: str, detail: str) -> ConfirmStatus:
+        return ConfirmStatus(
+            key=key, label=label, pill=pill, detail=detail,
+            greens=greens, threshold=threshold,
+            generation=building, green_head_run_id=head,
+        )
+
+    if state == ISSUE_RESOLVED:
+        if head is not None:
+            return out(
+                CONFIRM_CONFIRMED, "confirmed by build", "green",
+                f"A confirm build proved the fix. Build #{head} is the "
+                f"known-good watermark: a later build re-emitting this "
+                f"fingerprint is a regression.",
+            )
+        return out(
+            CONFIRM_MANUAL, "resolved by hand", "neutral",
+            "An operator resolved this without a confirm build, so there is "
+            "no known-good watermark and a recurrence is compared by "
+            "timestamp instead of by build ordinal.",
+        )
+
+    if state != ISSUE_RESOLVING:
+        return out(
+            CONFIRM_ABSENT, "no confirm build", "neutral",
+            "A confirm build is requested when a fix is accepted.",
+        )
+
+    if requested <= confirmed:
+        return out(
+            CONFIRM_WITHDRAWN, "build withdrawn", "amber",
+            "No confirm build is wanted: the request was cancelled. The "
+            "issue stays here until one is requested or an operator "
+            "resolves it.",
+        )
+
+    if building is not None and building >= requested:
+        if runner_live is False:
+            return out(
+                CONFIRM_STALLED, "confirm build stalled", "red",
+                f"Generation {building} is marked in flight, but the runner "
+                f"is not running, so nothing is building it. The marker is "
+                f"cleared by the next runner start and the build re-derived.",
+            )
+        return out(
+            CONFIRM_BUILDING, "confirm build running", "cyan",
+            f"Generation {building} is building now. A green verdict "
+            f"{'resolves the issue' if greens + 1 >= threshold else 'counts toward the ' + str(threshold) + ' consecutive greens needed'}"
+            f"; a red one reopens it.",
+        )
+
+    if failures >= max_failures:
+        # A corner, not the normal give-up. _record_confirm_failure reopens
+        # the issue to `unresolved` and resets the tally in the SAME
+        # transaction that reaches the cap, so nothing observes a `resolving`
+        # issue at or past it -- unless runner.confirm_max_failures was
+        # lowered under a row already counting. Saying what happens next
+        # beats mislabelling an out-of-range value.
+        return out(
+            CONFIRM_SPENT, "retry budget spent", "red",
+            f"{failures} attempts could not run at all -- a missing "
+            f"environment, no diff to replay, or an unreachable tracker -- "
+            f"against a cap of {max_failures}. The next failure reopens this "
+            f"to the worklist with the reason attached rather than leaving "
+            f"it here.",
+        )
+
+    if eligible_at and now and str(eligible_at) > str(now):
+        return out(
+            CONFIRM_WAITING, "waiting to retry", "amber",
+            f"{failures} attempt(s) could not run. The next is held until "
+            f"{eligible_at}, backing off so a transient outage is not "
+            f"mistaken for a permanent one at loop speed.",
+        )
+
+    if greens > 0:
+        return out(
+            CONFIRM_PROVISIONAL, f"provisional green {greens}/{threshold}",
+            "amber",
+            f"{greens} of {threshold} consecutive green builds. A single "
+            f"green can be build flakiness, so the issue does not resolve "
+            f"until the run repeats; a red resets the count to zero.",
+        )
+
+    return out(
+        CONFIRM_QUEUED, "confirm build queued", "cyan",
+        f"Generation {requested} is requested and waiting for the reconcile "
+        f"loop to claim it.",
+    )
+
+
 # --- Actionable occurrence + worklist bucketing -----------------------------
 
 # Bucket key -> (heading, pill class) in display order. Extends the
@@ -292,7 +463,7 @@ ISSUE_WORKLIST_SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("verify", "Needs verify", "skipped"),
     ("decide", "Needs a decision", "failed"),
     ("owned", "You own", "total"),
-    ("delivering", "Awaiting delivery", "built"),
+    ("confirming", "Awaiting build confirmation", "skipped"),
     ("done", "Resolved", "ignored"),
     ("muted", "Muted", "ignored"),
 )
@@ -325,7 +496,8 @@ def issue_bucket(
       it — nothing to do yet);
     - open, latest occurrence still actionable → its own band
       (ready/verify/decide/owned);
-    - resolving (a fix was accepted) → ``delivering`` (awaiting delivery);
+    - resolving (a fix was accepted) → ``confirming`` (a confirm build must
+      prove it; see :func:`confirm_status` for where in that it is);
     - open, latest occurrence accepted → ``decide``: the issue is open while
       its fix is not in the delivery path, so delivery was abandoned or its
       confirm build failed;
@@ -344,7 +516,7 @@ def issue_bucket(
     if state == ISSUE_RESOLVED:
         return "done"
     if state == ISSUE_RESOLVING:
-        return "delivering"              # fix accepted, awaiting delivery
+        return "confirming"              # fix accepted, build must prove it
 
     act = actionable_occurrence(occurrences)
     if act is None:
@@ -365,7 +537,7 @@ def issue_bucket(
     # delivery was abandoned (operator reopen) or its confirm build came back
     # red (A3). Both need an operator decision; calling it "awaiting delivery"
     # left an unfixed issue looking as good as fixed.
-    return "decide"                      # accepted-but-not-delivering /
+    return "decide"                      # accepted-but-not-confirming /
                                          # rejected / discarded / reopened-merged
 
 

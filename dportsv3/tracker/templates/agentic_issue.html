@@ -2,7 +2,7 @@
 {% block title %}{{ issue.origin }} — Issue — DeltaPorts Tracker{% endblock %}
 {% block body %}
   {% with nav_crumbs = [
-      {"label": "Agentic", "url": request.url_for('agentic_index')},
+      {"label": "Repairs", "url": request.url_for('agentic_index')},
       {"label": "Issues", "url": request.url_for('agentic_issues')},
       {"label": issue.origin}] %}
     {% include "_tracker_nav.html" %}
@@ -34,6 +34,25 @@
       </div>
     </div>
 
+    {# Where this issue is in the confirm-build loop. Rendered from
+       issue_state.confirm_status -- the template never re-derives it, and
+       its predicates mirror issues_needing_build so the panel cannot
+       disagree with the reconcile feed about whether a build is coming. #}
+    <section class="panel confirm-panel">
+      <div class="content-head">
+        Build confirmation
+        <span class="pill {{ confirm.pill }}">{{ confirm.label }}</span>
+        <strong>
+          {% if confirm.key in ('provisional', 'building', 'stalled', 'queued') %}
+          {{ confirm.greens }}/{{ confirm.threshold }} greens
+          {% elif confirm.green_head_run_id %}
+          green head #{{ confirm.green_head_run_id }}
+          {% endif %}
+        </strong>
+      </div>
+      <div class="content-copy"><p>{{ confirm.detail }}</p></div>
+    </section>
+
     <h2 style="margin-top:26px;">Occurrences · {{ group.count }}</h2>
     <div class="wl-list">
       {% for b in group.occurrences %}
@@ -59,6 +78,7 @@
     .issue-meta { color:var(--text-dim); font-size:13px; }
     .issue-fp { font-family:ui-monospace,Menlo,monospace; font-size: 12px; color:var(--text-dim); margin-top:8px; }
     .issue-controls { display:flex; gap:8px; flex-wrap:wrap; }
+    .confirm-panel { margin-top:22px; }
   </style>
 {% endblock %}
 {% block scripts %}

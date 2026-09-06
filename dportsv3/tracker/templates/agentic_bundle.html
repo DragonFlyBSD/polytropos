@@ -45,7 +45,7 @@
   </style>
 {% endblock %}
 {% block body %}
-  {% set crumbs = [{"label": "Agentic", "url": request.url_for('agentic_index')}, {"label": "Issues", "url": request.url_for('agentic_issues')}] %}
+  {% set crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Issues", "url": request.url_for('agentic_issues')}] %}
   {% if issue %}{% set crumbs = crumbs + [{"label": issue.origin, "url": request.url_for('agentic_issue_detail', issue_key=issue.issue_key)}] %}{% endif %}
   {% set crumbs = crumbs + [{"label": bundle.bundle_id}] %}
   {% with nav_crumbs = crumbs %}

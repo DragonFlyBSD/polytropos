@@ -85,6 +85,43 @@ def runner_status(conn: sqlite3.Connection) -> dict[str, Any]:
     return _row_dict(row)
 
 
+def runner_is_live(
+    conn: sqlite3.Connection, *, now: str | None = None,
+) -> bool:
+    """Whether the runner's heartbeat is fresh enough to believe it is up.
+
+    The runner touches ``runner_status.updated_at`` every 5 seconds from a
+    background thread, so a stale column means the process is gone. This is
+    the only signal the tracker has: a confirm build's in-flight marker
+    (``issues.building_generation``) survives a crash until the next runner
+    start clears it, so without this a dead runner's leftover marker is
+    indistinguishable from a build that is genuinely running.
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+
+    row = conn.execute(
+        "SELECT updated_at FROM runner_status WHERE id = 1"
+    ).fetchone()
+    stamp = row["updated_at"] if row is not None else None
+    if not stamp:
+        return False
+    limit = int(settings.get("tracker.runner_heartbeat_stale_seconds") or 0)
+    if limit <= 0:
+        return True
+    try:
+        seen = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return False
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    reference = (
+        datetime.fromisoformat(now) if now else datetime.now(timezone.utc)
+    )
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return (reference - seen).total_seconds() <= limit
+
+
 def distinct_targets(conn: sqlite3.Connection) -> list[str]:
     """Sorted list of non-NULL targets seen across bundles/jobs/runs.
 

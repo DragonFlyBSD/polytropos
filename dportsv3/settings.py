@@ -200,6 +200,18 @@ SETTINGS: list[Setting] = [
         "few seconds. Set 0 to sweep on every render.",
     ),
     Setting(
+        "tracker.runner_heartbeat_stale_seconds", "int", 60,
+        "How long runner_status.updated_at may go unrefreshed before the UI\n"
+        "reports the runner as not running.\n"
+        "\n"
+        "The runner's heartbeat thread touches that column every 5 seconds,\n"
+        "so anything approaching a minute means the process is gone. This\n"
+        "is what separates a confirm build that is genuinely running from\n"
+        "an in-flight marker left behind by a runner that died mid-build --\n"
+        "the marker itself survives until the next runner start clears it,\n"
+        "so without a liveness check the two look identical.",
+    ),
+    Setting(
         "tracker.stale_build_run_hours", "int", 6,
         "How long a build run may record nothing before start-build treats\n"
         "it as dead and supersedes it.\n"

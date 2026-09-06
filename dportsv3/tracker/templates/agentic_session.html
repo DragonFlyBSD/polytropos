@@ -69,7 +69,7 @@
 {% endblock %}
 {% block body %}
   {% with nav_crumbs = [
-      {"label": "Agentic", "url": request.url_for('agentic_index')},
+      {"label": "Repairs", "url": request.url_for('agentic_index')},
       {"label": "Bundles", "url": request.url_for('agentic_bundles')},
       {"label": bundle.bundle_id, "url": request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id)},
       {"label": "sessions"},

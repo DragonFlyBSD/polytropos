@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -43,6 +44,7 @@ from dportsv3.tracker.agentic_queries import (
     port_attempt_summary,
     recent_activity,
     recent_activity_for_bundle,
+    runner_is_live,
     runner_status,
     token_usage_for_job,
     token_usage_for_port,
@@ -392,6 +394,17 @@ def register(app, ctx):
             group = issue_state.issue_group(
                 issue, issue.get("occurrences") or []
             )
+            # `resolving` is one word covering a whole loop. The projection
+            # says where in it this issue is; the runner's own thresholds
+            # and its heartbeat are what let it tell a build that is running
+            # from a marker a dead runner left behind.
+            confirm = issue_state.confirm_status(
+                issue,
+                threshold=int(settings.get("runner.confirm_green_threshold")),
+                max_failures=int(settings.get("runner.confirm_max_failures")),
+                now=datetime.now(timezone.utc).isoformat(),
+                runner_live=runner_is_live(conn),
+            )
             return templates.TemplateResponse(
                 request,
                 "agentic_issue.html",
@@ -399,6 +412,7 @@ def register(app, ctx):
                     "title": issue.get("origin") or "Issue",
                     "issue": issue,
                     "group": group,
+                    "confirm": confirm,
                 },
             )
 

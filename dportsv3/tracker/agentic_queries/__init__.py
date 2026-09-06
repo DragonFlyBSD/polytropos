@@ -11,6 +11,7 @@ from dportsv3.tracker.agentic_queries._util import (
 )
 from dportsv3.tracker.agentic_queries.overview import (
     agentic_status,
+    runner_is_live,
     runner_status,
     distinct_targets,
 )
@@ -80,6 +81,7 @@ __all__ = [
     "_maybe",
     "_decode_extra_json",
     "agentic_status",
+    "runner_is_live",
     "runner_status",
     "distinct_targets",
     "recent_activity_for_bundle",
