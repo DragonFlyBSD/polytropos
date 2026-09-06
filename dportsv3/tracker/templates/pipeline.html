@@ -17,35 +17,83 @@
 
   <div class="page-body stack pipeline">
 
-    {# --- health strip: quiet in steady state ------------------------- #}
-    {% set env_broken = env_health | selectattr('status', 'equalto', 'broken') | list %}
-    <div class="health-strip">
-      <span class="health-item">
-        <span class="dot {% if runner_live %}ok{% else %}bad{% endif %}"></span>
-        <b>Runner</b>
-        {% if runner_live %}{{ runner.status }}{% if runner.current_stage %} · {{ runner.current_stage }}{% endif %}
-        {% else %}not running{% endif %}
-      </span>
-      <span class="health-item">
-        <span class="dot {% if env_broken %}bad{% else %}ok{% endif %}"></span>
-        <b>Dev-env</b>
-        {% if env_broken %}{{ env_broken|length }} broken
-          ({{ env_broken|map(attribute='env')|join(', ') }})
-        {% else %}healthy{% endif %}
-      </span>
-      <span class="health-item">
-        <span class="dot {% if preflight.healthy %}ok{% else %}bad{% endif %}"></span>
-        <b>Delivery</b>
-        {% if preflight.healthy %}preflight clean
-        {% else %}{{ preflight.findings|length }} preflight
-          {{ 'finding' if preflight.findings|length == 1 else 'findings' }}{% endif %}
-        {% if preflight.checked_at %}
-        <span class="health-when">
-          as of {{ preflight.checked_at }}{% if preflight.deferred %} · not re-checked, a delivery holds the clone{% endif %}
-        </span>
-        {% endif %}
-      </span>
+    {# --- where the failures come from ------------------------------- #}
+    {% if active_runs %}
+    <div class="source-strip">
+      <div class="source-label"><strong>Source</strong>
+        failures enter from these runs</div>
+      {% for run in active_runs %}
+      <a class="source-build" href="{{ request.url_for('dashboard_index') }}?run={{ run.id }}">
+        <strong>#{{ run.id }} {{ run.target }}</strong>
+        <span>{{ run.failure_count or 0 }} failed · {{ run.build_type }}</span>
+      </a>
+      {% endfor %}
     </div>
+    {% endif %}
+
+    <div class="pipeline-panel">
+      {# The caption for the diagram below it. It used to be a substitute
+         for the diagram, which is why it ran to five lines (M2). #}
+      <p class="pipeline-note">
+        Work <strong>branches</strong> here — it is not one row advancing
+        through six states. Triage and patch are separate jobs; a failed
+        verification or new operator context enqueues fresh work; an issue
+        can reopen after it resolved. Every figure below is an inventory
+        count, not a rate — and the arrows are a shape, not an accounting:
+        a single port is counted in several of these at once, so the
+        <strong>totals do not add up</strong> to anything.
+      </p>
+
+      <ol class="pipeline-flow">
+        {% for node in flow %}
+        <li class="pipe-node {{ node.tint }}" id="stage-{{ node.key }}">
+          <span class="pipe-code">{{ '%02d' % node.n }} / {{ node.name }}</span>
+          <span class="pipe-value tabular">{{ node.value }}</span><span
+                class="pipe-unit">{{ node.unit }}</span>
+          <span class="pipe-sub">{{ node.sub }}</span>
+          <span class="pipe-src" title="The query behind this figure">{{ node.src }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+
+      {# Work that comes back. The arrows above run one way; this is the
+         edge that makes the whole thing a graph and not a queue. #}
+      <div class="retry-loop">
+        <span>retry / re-triage</span><span class="retry-line"></span>
+        <span>&larr; feeds back</span>
+      </div>
+
+      {# Health belongs under the flow it describes, not above the page. #}
+      {% set env_broken = env_health | selectattr('status', 'equalto', 'broken') | list %}
+      <div class="pipeline-health">
+        <span class="health-item">
+          <span class="dot {% if runner_live %}ok{% else %}bad{% endif %}"></span>
+          <b>Runner</b>
+          {% if runner_live %}{{ runner.status }}{% if runner.current_stage %} · {{ runner.current_stage }}{% endif %}
+          {% else %}not running{% endif %}
+        </span>
+        <span class="health-item">
+          <span class="dot {% if env_broken %}bad{% else %}ok{% endif %}"></span>
+          <b>Dev-env</b>
+          {% if env_broken %}{{ env_broken|length }} broken
+            ({{ env_broken|map(attribute='env')|join(', ') }})
+          {% else %}healthy{% endif %}
+        </span>
+        <span class="health-item">
+          <span class="dot {% if preflight.healthy %}ok{% else %}bad{% endif %}"></span>
+          <b>Delivery</b>
+          {% if preflight.healthy %}preflight clean
+          {% else %}{{ preflight.findings|length }} preflight
+            {{ 'finding' if preflight.findings|length == 1 else 'findings' }}{% endif %}
+          {% if preflight.checked_at %}
+          <span class="health-when">
+            as of {{ preflight.checked_at }}{% if preflight.deferred %} · not re-checked, a delivery holds the clone{% endif %}
+          </span>
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
     {% if not preflight.healthy and preflight.findings %}
     <details class="stage-drawer preflight-detail">
       <summary>What the delivery preflight found</summary>
@@ -56,18 +104,6 @@
       </ul>
     </details>
     {% endif %}
-
-    {# --- the shape of the thing, said once --------------------------- #}
-    <p class="pipeline-note">
-      These are inventories, not stages of a queue. Work does not advance
-      through them in order: triage and patch are <strong>separate jobs</strong>
-      (a triage that decides to patch enqueues a new row and finishes), a
-      failed verification or fresh operator context <strong>enqueues new
-      work</strong> on a problem that had already been through once, and an
-      issue can <strong>reopen after resolving</strong> when its fingerprint
-      comes back. A single port can be counted in several of these at once,
-      and the totals do not add up to anything.
-    </p>
 
     <div class="stage-grid">
 

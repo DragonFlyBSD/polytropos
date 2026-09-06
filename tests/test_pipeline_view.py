@@ -40,6 +40,8 @@ from dportsv3.tracker.agentic_queries import (
 from dportsv3.tracker.server import create_app
 
 TARGET = "@main"
+CSS = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker" / "static"
+       / "progress.css")
 
 
 def _flat(body: str) -> str:
@@ -50,6 +52,14 @@ def _seed(db: sqlite3.Connection) -> None:
     db.execute(
         "INSERT INTO build_runs(id, target, build_type, started_at, "
         "finished_at) VALUES (1, ?, 'release', 't0', 't1')", (TARGET,))
+    # Unfinished, so the pipeline has a source to name.
+    db.execute(
+        "INSERT INTO build_runs(id, target, build_type, started_at, "
+        "total_expected) VALUES (2, ?, 'test', 't2', 3)", (TARGET,))
+    db.execute(
+        "INSERT INTO build_results(build_run_id, origin, version, result, "
+        "recorded_at, status) VALUES (2, 'devel/alpha', '1.0', 'failure', "
+        "'t2', 'recorded')")
     db.execute(
         "INSERT INTO runs(run_id, target, build_run_id) VALUES ('r-1', ?, 1)",
         (TARGET,))
@@ -126,8 +136,12 @@ def _seed(db: sqlite3.Connection) -> None:
     db.commit()
 
 
-def _make(tmp_path: Path, *, seed=_seed) -> Path:
-    path = tmp_path / "state.db"
+def _make(tmp_path: Path, *, seed=_seed, name: str | None = None) -> Path:
+    # Its own file per fixture. A shared name means a test that takes both
+    # gets one database, and the "empty" client is looking at the seeded
+    # rows -- which is exactly how the operator-work tint test first
+    # passed against a tracker that was not empty.
+    path = tmp_path / (name or ("seeded.db" if seed else "blank.db"))
     db = sqlite3.connect(str(path))
     db.row_factory = sqlite3.Row
     init_db(db)
@@ -234,8 +248,9 @@ def test_the_page_shows_no_rates(client) -> None:
     for rate in ("per hour", "per day", "/hr", "/day", "throughput",
                  "velocity"):
         assert rate not in body
-    # word-boundary: "separate jobs" is the note saying the flow branches
-    assert not re.search(r"\brates?\b", body)
+    # The caption's own "not a rate" is the page saying so, not a figure.
+    without_caption = body.replace("count, not a rate", "")
+    assert not re.search(r"\brates?\b", without_caption)
 
 
 # --- it is not a queue ----------------------------------------------------
@@ -244,10 +259,14 @@ def test_the_page_shows_no_rates(client) -> None:
 def test_the_page_says_the_flow_branches(client) -> None:
     body = _flat(_page(client))
 
-    assert "not stages of a queue" in body
-    assert "separate jobs" in body           # triage and patch
-    assert "enqueues new work" in body       # failed verify / new context
-    assert "reopen after resolving" in body  # an issue can come back
+    # The caption for the diagram, in the mock's own words (M2).
+    assert "not one row advancing through six states" in body
+    assert "separate jobs" in body            # triage and patch
+    assert "enqueues fresh work" in body      # failed verify / new context
+    assert "reopen after it resolved" in body  # an issue can come back
+    # ...and the loop the arrows cannot draw on their own.
+    assert "retry / re-triage" in body
+    assert "feeds back" in body
 
 
 def test_the_totals_are_not_presented_as_adding_up(client) -> None:
@@ -256,15 +275,22 @@ def test_the_totals_are_not_presented_as_adding_up(client) -> None:
     assert "do not add up" in body
 
 
-def test_no_stage_is_numbered(client) -> None:
-    """Numbering encodes a sequence. There isn't one, so step markers would
-    be the single most misleading thing this page could draw."""
-    body = _page(client)
-    heads = re.findall(r'<h2>([^<]*)</h2>', body)
+def test_the_stages_are_numbered_and_still_not_a_queue(client) -> None:
+    """UI-4 banned numbering, reasoning that "numbering encodes a sequence
+    and there isn't one". The mock numbers them, says it branches, and
+    draws a feedback loop, all at once -- the numbers are addresses, and
+    the branching is carried by the caption and the loop rather than by
+    withholding them.
 
-    assert heads
-    for head in heads:
-        assert not re.match(r"\s*\d", head), head
+    What the page must never do is imply the six are a queue. That is
+    asserted next door, on the caption and the loop."""
+    body = _flat(_page(client))
+
+    for n, name in enumerate([
+        "Build failures", "Issues", "Automated work", "Operator work",
+        "Delivery", "Outcome",
+    ], start=1):
+        assert f"{n:02d} / {name}" in body
 
 
 # --- empty states ---------------------------------------------------------
@@ -512,3 +538,162 @@ def test_a_filter_that_matches_nothing_says_how_many_exist(client) -> None:
 
     assert "Nothing matches this filter" in body
     assert "Nothing has been delivered" not in body
+
+
+# --- the flow (M2) --------------------------------------------------------
+
+
+def test_the_source_strip_names_the_runs_failures_come_from(client) -> None:
+    """Where is this coming from -- a question six inventory cards cannot
+    answer, and the first thing the mock puts on the page."""
+    body = _flat(_page(client))
+
+    assert "failures enter from these runs" in body
+    assert "#2 @main" in body
+
+
+def test_a_tracker_with_no_active_run_has_no_source_strip(empty) -> None:
+    body = _page(empty)
+
+    assert "source-strip" not in body
+
+
+def test_the_flow_is_an_ordered_list_of_six(client) -> None:
+    body = _page(client)
+    flow = body[body.index('class="pipeline-flow"'):]
+    flow = flow[:flow.index("</ol>")]
+
+    assert flow.count('class="pipe-node') == 6
+
+
+def test_the_edges_are_drawn_and_one_of_them_is_different() -> None:
+    """Automated work handing off to a person is a different kind of
+    transition from the rest, so it is a different colour."""
+    css = CSS.read_text()
+    block = css[css.index("/* --- The pipeline flow (M2)"):]
+    block = block[:block.index("/* --- Pipeline overview (UI-4)")]
+
+    assert ".pipe-node:not(:last-child)::after" in block
+    assert ".pipe-node:nth-child(3)::after" in block
+    assert "var(--amber)" in block
+
+
+def test_the_edges_are_decoration_and_not_the_only_signal() -> None:
+    """Pseudo-elements are invisible to a screen reader. The caption has
+    to carry the branching in text, which is why it says so."""
+    css = CSS.read_text()
+    block = css[css.index("/* --- The pipeline flow (M2)"):]
+
+    assert "::after" in block and "content: \"\"" in block
+
+
+def test_the_loop_is_on_the_page(client) -> None:
+    """The arrows run one way. This is the edge that makes it a graph and
+    not a queue, and it is the thing a row of cards cannot show."""
+    body = _flat(_page(client))
+
+    assert "retry / re-triage" in body
+    assert "retry-line" in body
+
+
+def test_every_node_names_the_query_behind_it(client) -> None:
+    """UI-4's bead said every number needs a named real query. The mock
+    puts the name on the screen; this checks they are OUR names, because
+    the mock's own labels guess at several and get them wrong."""
+    body = _flat(_page(client))
+
+    for src in ("agentic_status()", "issue_inventory()",
+                "regressed_issue_count()", "worklist_band_counts()",
+                "delivery_counts()", "job_outcome_counts()"):
+        assert src in body
+
+
+@pytest.mark.parametrize("src", [
+    "list_bundles(limit=200)", "open_delivery_bundle_ids()",
+    "issues WHERE state='resolved'",
+])
+def test_the_mocks_wrong_query_names_are_not_used(client, src) -> None:
+    """Naming the query is the whole point of the label. Naming one that
+    does not produce the figure is worse than naming none."""
+    assert src not in _page(client)
+
+
+# --- the tint is a condition, not a census --------------------------------
+
+
+def test_a_working_system_is_not_painted_red(client) -> None:
+    """The mock tints node 01 whenever any failure has been ingested and
+    node 02 whenever any issue exists -- which is every working system,
+    permanently. A tint that is always on is not a signal."""
+    body = _page(client)
+    flow = body[body.index('class="pipeline-flow"'):body.index("</ol>")]
+    failures = flow[flow.index("stage-failures") - 200:flow.index("stage-issues")]
+
+    assert "alert" not in failures
+    assert "warning" not in failures
+
+
+def test_queued_work_with_no_runner_is_an_alert(tmp_path: Path) -> None:
+    """Not "there are jobs" -- there are always jobs. Jobs nobody is
+    doing, which is a fault an operator would act on."""
+    path = tmp_path / "state.db"
+    db = sqlite3.connect(str(path))
+    db.row_factory = sqlite3.Row
+    init_db(db)
+    for n in range(3):
+        db.execute(
+            "INSERT INTO jobs(job_id, origin, state, created_ts_utc, target, "
+            "type) VALUES (?, 'devel/x', 'queued', 't1', '@main', 'triage')",
+            (f"q-{n}",))
+    db.commit()
+    db.close()
+
+    with TestClient(create_app(path)) as client:
+        body = _page(client)
+
+    flow = body[body.index('class="pipeline-flow"'):body.index("</ol>")]
+    node = flow[flow.index("stage-automation") - 200:flow.index("stage-operator")]
+    assert "alert" in node
+
+
+def test_operator_work_warns_only_when_something_is_waiting(client, empty) -> None:
+    busy = _page(client)
+    quiet = _page(empty)
+
+    def node(body: str) -> str:
+        flow = body[body.index('class="pipeline-flow"'):body.index("</ol>")]
+        return flow[flow.index("stage-operator") - 200:flow.index("stage-delivery")]
+
+    assert "warning" in node(busy)
+    assert "warning" not in node(quiet)
+
+
+def test_a_never_sent_delivery_does_not_paint_the_node_forever(
+    client,
+) -> None:
+    """create_failed rows are terminal and historical. Telling today's
+    from last quarter's needs a time-window query, and this page has none
+    -- so the count is in the sub-line and the tint is not."""
+    body = _page(client)
+    flow = body[body.index('class="pipeline-flow"'):body.index("</ol>")]
+    node = flow[flow.index("stage-delivery") - 200:flow.index("stage-outcome")]
+
+    assert "never sent" in node
+    assert "alert" not in node
+
+
+def test_delivery_still_shows_both_axes_in_the_flow(client) -> None:
+    """The mock's node 05 reads "1 open PRs / awaiting confirm build" as
+    one figure. poly-8e2 measured 17 live counterexamples."""
+    body = _flat(_page(client))
+
+    assert "open upstream" in body
+    assert "awaiting a confirm build" in body
+
+
+def test_the_health_strip_sits_under_the_flow_it_describes(client) -> None:
+    body = _page(client)
+
+    assert (body.index('class="pipeline-flow"')
+            < body.index('class="pipeline-health"')
+            < body.index("</div>", body.index('class="pipeline-health"')))

@@ -56,6 +56,7 @@ from dportsv3.tracker.agentic_queries import (
     port_attempt_summary,
     recent_activity,
     recent_activity_for_bundle,
+    RUNNER_BAND,
     regressed_issue_count,
     runner_is_live,
     runner_status,
@@ -336,6 +337,76 @@ def register(app, ctx):
     # Pipeline: the system overview (UI-4).
     # ------------------------------------------------------------------
 
+    def _pipeline_flow(status, issues, regressed, bands, deliveries,
+                       outcomes, active_runs, runner_live):
+        """The six nodes, as data.
+
+        Assembled here rather than in the template so that each one names
+        the query it came from in one place -- that label is on the page,
+        and naming the wrong function is worse than naming none.
+
+        The tint is a CONDITION, not a census. The mock paints node 01 red
+        whenever any failure has been ingested and node 02 amber whenever
+        any issue exists, which is every working system, permanently; a
+        tint that is always on stops being a signal. These fire on
+        something an operator would act on.
+        """
+        band_work = sum(
+            n for key, n in bands.items()
+            if key not in (RUNNER_BAND, "confirming")
+        )
+        queued = status["jobs"]["pending"]
+        inflight = status["jobs"]["inflight"]
+        return [
+            {"key": "failures", "n": 1, "name": "Build failures",
+             "value": status["bundles"], "unit": "occurrences",
+             "sub": (f"ingested from {len(active_runs)} active "
+                     f"{'run' if len(active_runs) == 1 else 'runs'}"
+                     if active_runs else "no active runs"),
+             "tint": "", "src": "agentic_status()"},
+            {"key": "issues", "n": 2, "name": "Issues",
+             "value": issues["total"], "unit": "fingerprints",
+             "sub": (f"{issues['systemic']} systemic · {regressed} regressed"
+                     if issues["total"] else "nothing fingerprinted"),
+             "tint": "",
+             "src": "issue_inventory() · regressed_issue_count()"},
+            {"key": "automation", "n": 3, "name": "Automated work",
+             "value": inflight, "unit": "in flight",
+             "sub": (f"{queued} queued · {bands[RUNNER_BAND]} "
+                     f"issue{'' if bands[RUNNER_BAND] == 1 else 's'} held"),
+             # Queued work and no runner to do it is a fault, not a census.
+             "tint": "alert" if queued and not runner_live else "",
+             "src": "agentic_status() · worklist_band_counts()"},
+            {"key": "operator", "n": 4, "name": "Operator work",
+             "value": band_work, "unit": "need you",
+             "sub": (f"{status['manual_pending']} waiting for context"
+                     if status["manual_pending"] else "no manual escalations"),
+             "tint": "warning" if band_work else "",
+             "src": "worklist_band_counts()"},
+            {"key": "delivery", "n": 5, "name": "Delivery",
+             "value": deliveries["open"], "unit": "open upstream",
+             # Two axes, named apart. The mock has one node reading
+             # "open PRs / awaiting confirm build" and poly-8e2 measured
+             # 17 live counterexamples to their being the same thing.
+             "sub": (f"{deliveries['awaiting_confirm_build']} awaiting a "
+                     f"confirm build · {deliveries['failed']} never sent"),
+             # No tint. A never-sent delivery IS a stranded fix (poly-8e2)
+             # but the rows are terminal and historical, so alerting on
+             # them is red forever on any system with a past -- the same
+             # census-not-condition mistake the mock makes on nodes 01 and
+             # 02. Telling today's from last quarter's needs a time-window
+             # query, which is the one thing this page has none of.
+             "tint": "",
+             "src": "delivery_counts()"},
+            {"key": "outcome", "n": 6, "name": "Outcome",
+             "value": issues["by_state"]["resolved"], "unit": "resolved",
+             "sub": (f"{regressed} came back after resolve" if regressed
+                     else f"{outcomes['dead']['failed']} jobs failed "
+                          f"the work"),
+             "tint": "success",
+             "src": "issue_inventory() · job_outcome_counts()"},
+        ]
+
     @app.get("/pipeline", response_class=HTMLResponse)
     def pipeline_overview(request: RequestType) -> Any:
         """Is the system healthy and moving -- a different question from
@@ -347,26 +418,39 @@ def register(app, ctx):
         trusted is worse than no figure.
         """
         with _conn() as conn:
+            status = agentic_status(conn)
+            issues = issue_inventory(conn)
+            regressed = regressed_issue_count(conn)
+            bands = worklist_band_counts(conn)
+            deliveries = delivery_counts(conn)
+            outcomes = job_outcome_counts(conn)
+            active_runs = get_active_builds_summary(conn)
+            live = runner_is_live(conn)
             return templates.TemplateResponse(
                 request,
                 "pipeline.html",
                 {
                     "title": "Pipeline",
-                    "status": agentic_status(conn),
-                    "issues": issue_inventory(conn),
-                    "regressed": regressed_issue_count(conn),
-                    "bands": worklist_band_counts(conn),
+                    "status": status,
+                    "issues": issues,
+                    "regressed": regressed,
+                    "bands": bands,
                     "band_labels": dict(
                         (key, label)
                         for key, label, _cls in
                         issue_state.ISSUE_WORKLIST_SECTIONS
                     ),
-                    "deliveries": delivery_counts(conn),
-                    "outcomes": job_outcome_counts(conn),
+                    "deliveries": deliveries,
+                    "outcomes": outcomes,
                     "runner": runner_status(conn),
-                    "runner_live": runner_is_live(conn),
+                    "runner_live": live,
                     "env_health": env_health_statuses(conn),
                     "preflight": preflight_status.current(),
+                    "active_runs": active_runs,
+                    "flow": _pipeline_flow(
+                        status, issues, regressed, bands, deliveries,
+                        outcomes, active_runs, live,
+                    ),
                 },
             )
 
