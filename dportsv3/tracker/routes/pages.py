@@ -31,6 +31,7 @@ from dportsv3.tracker.agentic_queries import (
     get_job,
     count_bundles,
     count_deliveries,
+    count_manual_requests,
     count_issues,
     count_jobs,
     delivery_counts,
@@ -1115,6 +1116,10 @@ def register(app, ctx):
                     "title": "Manual Queue",
                     "requests": list_manual_requests(conn, open_only=open_only),
                     "open_only": open_only,
+                    # open_only is the default view, not a filter anyone
+                    # chose, so an empty page needs to know whether any
+                    # request has ever existed to say which nothing it is.
+                    "total_requests": count_manual_requests(conn),
                 },
             )
 

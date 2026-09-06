@@ -1,10 +1,13 @@
 {% extends "_base.html" %}
 {% block title %}Deliveries — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Pipeline", "url": request.url_for('pipeline_overview')}, {"label": "Deliveries"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -40,8 +43,8 @@
       <div class="table-scroll-x">
         <table class="data-table">
           <thead>
-            <tr><th>Status</th><th>Origin</th><th>Issue</th><th>Review</th>
-                <th>Branch</th><th>Occurrence</th><th>Opened</th></tr>
+            <tr><th scope="col">Status</th><th scope="col">Origin</th><th scope="col">Issue</th><th scope="col">Review</th>
+                <th scope="col">Branch</th><th scope="col">Occurrence</th><th scope="col">Opened</th></tr>
           </thead>
           <tbody>
             {% for d in deliveries %}

@@ -1,4 +1,5 @@
     <div class="tracker-card">
+      <div class="table-scroll-x">
       <table style="font-size:12px;">
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">State</th><td>{{ job.state }}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Retire reason</th><td>{{ job.retire_reason or '—' }}</td></tr>
@@ -16,6 +17,7 @@
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;vertical-align:top;">Last error</th><td><pre style="margin:0;padding:8px;background:var(--c-failed-bg);color:var(--c-failed);white-space:pre-wrap;">{{ job.last_error }}</pre></td></tr>
         {% endif %}
       </table>
+      </div>
       {% if is_active %}
       <div style="margin-top:12px;">
         <button type="button" id="abandon-btn" class="btn btn-danger"

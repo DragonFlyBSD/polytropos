@@ -1,11 +1,14 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import job_state_pill %}
 {% block title %}Jobs — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Jobs"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>Jobs</h1>
@@ -23,7 +26,7 @@
     <div class="table-scroll-x">
     <table class="tracker-table">
       <thead>
-        <tr><th>Job</th><th>State</th><th>Retire reason</th><th>Type</th><th>Origin</th><th>Target</th><th>Created</th></tr>
+        <tr><th scope="col">Job</th><th scope="col">State</th><th scope="col">Retire reason</th><th scope="col">Type</th><th scope="col">Origin</th><th scope="col">Target</th><th scope="col">Created</th></tr>
       </thead>
       <tbody>
         {% for j in jobs %}
@@ -39,7 +42,14 @@
           <td>{{ j.created_ts_utc or '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="7" style="color:var(--text-dim);">No jobs match this filter.</td></tr>
+        <tr><td colspan="7">
+          {% with filtered = search or selected_state or selected_target or page > 1,
+                  noun = "jobs",
+                  clear_url = "?" ~ query_for(q=None, page=None, state=None, target=None),
+                  blank = "A job is one piece of work the runner does on one occurrence: triage, patch, verify or a confirm build." %}
+            {% include "_list_empty.html" %}
+          {% endwith %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>

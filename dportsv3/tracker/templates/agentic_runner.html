@@ -1,10 +1,13 @@
 {% extends "_base.html" %}
 {% block title %}Runner — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Runner"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>Runner status</h1>
@@ -22,6 +25,7 @@
     </p>
 
     <div class="tracker-card">
+      <div class="table-scroll-x">
       <table style="font-size:12px;">
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Status</th>
             <td><span id="runner-status">{{ runner.status }}</span>
@@ -38,6 +42,7 @@
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;vertical-align:top;">Extra</th><td><pre id="runner-extra" style="margin:0;font-size:12px;">{{ runner.extra_json }}</pre></td></tr>
         {% endif %}
       </table>
+      </div>
       {% if not runner_live %}
       <p style="margin:8px 0 0;font-size:12px;color:var(--text-dim);">
         The status above is whatever the runner last wrote. It survives the

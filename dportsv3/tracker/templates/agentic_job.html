@@ -29,11 +29,14 @@
     @keyframes fade-in { from { background: #fffae0; } to { background: transparent; } }
   </style>
 {% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Jobs", "url": request.url_for('agentic_jobs')}, {"label": job.job_id}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>{{ job.job_id }}
@@ -91,8 +94,9 @@
         ({{ transitions|length }} of last {{ limit }})
       </span>
     </h2>
+    <div class="table-scroll-x">
     <table class="tracker-table">
-      <thead><tr><th>When</th><th>Event</th><th>From</th><th>To</th><th>Actor</th><th>Detail</th></tr></thead>
+      <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Actor</th><th scope="col">Detail</th></tr></thead>
       <tbody>
         {% for e in transitions %}
         <tr>
@@ -106,6 +110,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}
     <div class="empty-state">No lifecycle transitions recorded for this job.</div>
     {% endif %}

@@ -1,9 +1,12 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import build_state_pill %}
 {% block title %}Build compare — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% include "_tracker_nav.html" %}
   {% with section = 'compare' %}{% include "_builds_subnav.html" %}{% endwith %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -54,7 +57,7 @@
       <div class="content-head">Summary<strong>#{{ compare.run_a.id }} → #{{ compare.run_b.id }}</strong></div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr>{% for key in compare.summary %}<th class="num">{{ key|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+          <thead><tr>{% for key in compare.summary %}<th scope="col" class="num">{{ key|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
           <tbody><tr>{% for value in compare.summary.values() %}<td class="num">{{ value }}</td>{% endfor %}</tr></tbody>
         </table>
       </div>
@@ -77,7 +80,7 @@
       {% if compare[key] %}
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Origin</th><th>#{{ compare.run_a.id }}</th><th>#{{ compare.run_b.id }}</th></tr></thead>
+          <thead><tr><th scope="col">Origin</th><th scope="col">#{{ compare.run_a.id }}</th><th scope="col">#{{ compare.run_b.id }}</th></tr></thead>
           <tbody>
             {% for row in compare[key] %}
             <tr>

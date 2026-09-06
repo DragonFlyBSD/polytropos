@@ -51,6 +51,7 @@ from dportsv3.tracker.agentic_queries.bundles import (
     bundles_for_run,
 )
 from dportsv3.tracker.agentic_queries.manual import (
+    count_manual_requests,
     list_manual_requests,
     get_manual_request,
     discard_manual_request,
@@ -132,6 +133,7 @@ __all__ = [
     "get_artifact_ref",
     "list_port_bundles",
     "bundles_for_run",
+    "count_manual_requests",
     "list_manual_requests",
     "get_manual_request",
     "discard_manual_request",

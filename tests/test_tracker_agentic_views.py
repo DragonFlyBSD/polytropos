@@ -878,7 +878,7 @@ def test_markdown_renders_github_table():
     out = _render_markdown(md)
     assert "<table class=\"artifact-table\">" in out
     assert "<thead>" in out and "<tbody>" in out
-    assert "<th>Status</th>" in out
+    assert '<th scope="col">Status</th>' in out
     assert 'style="text-align:right;"' in out  # second column right-aligned
     assert "<strong>ok</strong>" in out
     assert "<code>1234</code>" in out

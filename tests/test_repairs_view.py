@@ -217,7 +217,9 @@ def test_the_issues_list_filters_on_the_derived_state(client) -> None:
 def test_the_issues_list_carries_the_confirm_column(client) -> None:
     body = client.get("/agentic/issues").text
 
-    assert "<th>Confirm build</th>" in body
+    # scope="col" since UI-7: every header cell names its column for a
+    # screen reader rather than being a bare <th>.
+    assert '<th scope="col">Confirm build</th>' in body
     assert "confirm build queued" in body
     assert "confirmed by build" in body
 

@@ -1,8 +1,11 @@
 {% extends "_base.html" %}
 {% block title %}Repairs — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs"}] %}{% include "_tracker_nav.html" %}{% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   {# Per-band primary action: label + button style. Buttons link to the
      (latest attempt's) bundle detail, where the action executes. #}
@@ -41,7 +44,14 @@
       <span class="wl-focus-num">{{ focus_count }}</span>
       <span class="wl-focus-cap">need<br>you</span>
       {% else %}
+      {# Two different nothings, and the queue said the first one on a
+         fresh install where nothing had ever been ingested (UI-7). #}
+      {% if issue_total %}
       <span class="wl-clear">✓ Nothing needs you right now</span>
+      {% else %}
+      <span class="wl-clear">No issues yet — nothing has been fingerprinted
+        on this tracker</span>
+      {% endif %}
       {% endif %}
       <div class="wl-chips">
         {% for band in bands %}
@@ -240,8 +250,9 @@
     </div>
     {% if env_health %}
     <div class="wl-tablecard">
+    <div class="table-scroll-x">
     <table class="tracker-table">
-      <thead><tr><th>Active</th><th>Env</th><th>Status</th><th>Probed</th><th>Operator action</th><th>Checks</th></tr></thead>
+      <thead><tr><th scope="col">Active</th><th scope="col">Env</th><th scope="col">Status</th><th scope="col">Probed</th><th scope="col">Operator action</th><th scope="col">Checks</th></tr></thead>
       <tbody>
         {% for h in env_health %}
         <tr {% if h.env == active_env %}class="env-row-active"{% endif %}>
@@ -272,6 +283,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     </div>
     {% else %}
     <div class="empty-state">No environment health probes recorded yet.</div>

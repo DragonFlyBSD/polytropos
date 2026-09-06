@@ -1,11 +1,14 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import status_pill %}
 {% block title %}Bundles — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Bundles"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>Bundles</h1>
@@ -23,7 +26,7 @@
     <div class="table-scroll-x">
     <table class="tracker-table">
       <thead>
-        <tr><th>Bundle</th><th>Origin</th><th>Flavor</th><th>Target</th><th>Result</th><th>Status</th><th>When</th><th>Run</th></tr>
+        <tr><th scope="col">Bundle</th><th scope="col">Origin</th><th scope="col">Flavor</th><th scope="col">Target</th><th scope="col">Result</th><th scope="col">Status</th><th scope="col">When</th><th scope="col">Run</th></tr>
       </thead>
       <tbody>
         {% for b in bundles %}
@@ -38,7 +41,14 @@
           <td>{% if b.run_id %}<a href="{{ request.url_for('agentic_run_detail', run_id=b.run_id) }}">{{ b.run_id }}</a>{% else %}—{% endif %}</td>
         </tr>
         {% else %}
-        <tr><td colspan="8" style="color:var(--text-dim);">No bundles match this filter.</td></tr>
+        <tr><td colspan="8">
+          {% with filtered = search or selected_target or selected_origin or page > 1,
+                  noun = "occurrences",
+                  clear_url = "?" ~ query_for(q=None, page=None, target=None, origin=None),
+                  blank = "An occurrence is one failure of one port, uploaded by the dsynth hooks when a build fails." %}
+            {% include "_list_empty.html" %}
+          {% endwith %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -1,10 +1,13 @@
 {% extends "_base.html" %}
 {% block title %}Issues — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Issues"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -38,7 +41,7 @@
     <div class="table-scroll-x">
     <table class="data-table">
       <thead>
-        <tr><th>Issue</th><th>Target</th><th>State</th><th>Confirm build</th><th class="num">Seen</th><th>First</th><th>Last</th></tr>
+        <tr><th scope="col">Issue</th><th scope="col">Target</th><th scope="col">State</th><th scope="col">Confirm build</th><th scope="col" class="num">Seen</th><th scope="col">First</th><th scope="col">Last</th></tr>
       </thead>
       <tbody>
         {% for i in issues %}
@@ -57,7 +60,14 @@
           <td title="{{ i.last_seen_at }}">{{ i.last_seen_at | relative_age if i.last_seen_at else '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="7" style="color:var(--text-dim);">No issues match this filter.</td></tr>
+        <tr><td colspan="7">
+          {% with filtered = search or selected_state or selected_target or page > 1,
+                  noun = "issues",
+                  clear_url = "?" ~ query_for(q=None, page=None, state=None, target=None),
+                  blank = "An issue is one fingerprinted problem. They are created as failure evidence arrives from the build farm." %}
+            {% include "_list_empty.html" %}
+          {% endwith %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>

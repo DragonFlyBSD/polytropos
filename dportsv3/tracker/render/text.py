@@ -206,8 +206,10 @@ def render_markdown(text: str) -> str:
             for idx, cell in enumerate(header_cells):
                 align = alignments[idx] if idx < len(alignments) else ""
                 style = f' style="text-align:{align};"' if align else ""
+                # scope="col" like every template's header cell: an
+                # artifact's markdown table is on a page too (UI-7).
                 out.append(
-                    f"<th{style}>"
+                    f'<th scope="col"{style}>'
                     + _render_inline(html.escape(cell))
                     + "</th>"
                 )

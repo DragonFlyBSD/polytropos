@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% block title %}{{ issue.origin }} — Issue — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [
       {"label": "Repairs", "url": request.url_for('agentic_index')},
       {"label": "Issues", "url": request.url_for('agentic_issues')},
@@ -8,6 +8,9 @@
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   {% set st = issue_status(issue) %}
   {% set acts = issue_actions(issue, can_operate=can_operate()) %}

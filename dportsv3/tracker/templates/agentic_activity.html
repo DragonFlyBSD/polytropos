@@ -1,10 +1,13 @@
 {% extends "_base.html" %}
 {% block title %}Activity — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Activity"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>Activity log</h1>
@@ -14,8 +17,13 @@
 
     <form method="get" style="font-size:12px;margin:8px 0;">
       {% if selected_target %}<input type="hidden" name="target" value="{{ selected_target }}">{% endif %}
+      {# "Show ... events" reads fine on screen and names nothing: a
+         <select>'s own text is its options (UI-7). #}
+      <label class="visually-hidden" for="activity-limit">How many events to
+        show</label>
       Show
-      <select name="limit" onchange="this.form.submit()">
+      <select class="control" id="activity-limit" name="limit"
+              onchange="this.form.submit()">
         {% for n in limit_options %}
         <option value="{{ n }}" {% if n == limit %}selected{% endif %}>{{ n }}</option>
         {% endfor %}
@@ -23,8 +31,9 @@
       events
     </form>
 
+    <div class="table-scroll-x">
     <table class="tracker-table">
-      <thead><tr><th>When</th><th>Job</th><th>Stage</th><th>Dur (ms)</th><th>Message</th></tr></thead>
+      <thead><tr><th scope="col">When</th><th scope="col">Job</th><th scope="col">Stage</th><th scope="col">Dur (ms)</th><th scope="col">Message</th></tr></thead>
       <tbody>
         {% for a in activity %}
         <tr {% if a.stage == 'attempt_start' %}style="background:var(--c-info-bg, var(--surface));font-weight:600;"
@@ -58,9 +67,17 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" style="color:var(--text-dim);">No activity yet.</td></tr>
+        <tr><td colspan="5">
+          {% with filtered = selected_target,
+                  noun = "activity",
+                  clear_url = request.url_for("agentic_activity"),
+                  blank = "The runner writes a line here for every stage it starts and ends." %}
+            {% include "_list_empty.html" %}
+          {% endwith %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 {% endblock %}

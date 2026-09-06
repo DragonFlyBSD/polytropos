@@ -1,13 +1,16 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import build_state_pill %}
 {% block title %}{{ origin }} — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [
        {"label": "Builds", "url": request.url_for('dashboard_index')},
        {"label": target, "url": request.url_for('dashboard_target', target=target)},
        {"label": origin}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -26,7 +29,7 @@
       <div class="content-head">Current status</div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Last attempt</th><th>Version</th><th>Run</th><th>When</th></tr></thead>
+          <thead><tr><th scope="col">Last attempt</th><th scope="col">Version</th><th scope="col">Run</th><th scope="col">When</th></tr></thead>
           <tbody>
             <tr>
               <td>{{ build_state_pill(status.last_attempt_result) }}</td>
@@ -51,7 +54,7 @@
       <div class="content-head">Repair issues<strong>{{ issues|length }} fingerprinted</strong></div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Issue</th><th>State</th><th class="num">Seen</th><th>First</th><th>Last</th></tr></thead>
+          <thead><tr><th scope="col">Issue</th><th scope="col">State</th><th scope="col" class="num">Seen</th><th scope="col">First</th><th scope="col">Last</th></tr></thead>
           <tbody>
             {% for issue in issues %}
             <tr>
@@ -73,7 +76,7 @@
       {% if history %}
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Run</th><th>Type</th><th>State</th><th>Version</th><th>Recorded</th><th>Log</th></tr></thead>
+          <thead><tr><th scope="col">Run</th><th scope="col">Type</th><th scope="col">State</th><th scope="col">Version</th><th scope="col">Recorded</th><th scope="col">Log</th></tr></thead>
           <tbody>
             {% for row in history %}
             <tr>

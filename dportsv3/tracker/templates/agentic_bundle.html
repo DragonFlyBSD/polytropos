@@ -33,7 +33,7 @@
     .occ-h1 { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
   </style>
 {% endblock %}
-{% block body %}
+{% block nav %}
   {% set crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Issues", "url": request.url_for('agentic_issues')}] %}
   {% if issue %}{% set crumbs = crumbs + [{"label": issue.origin, "url": request.url_for('agentic_issue_detail', issue_key=issue.issue_key)}] %}{% endif %}
   {% set crumbs = crumbs + [{"label": bundle.bundle_id}] %}
@@ -41,6 +41,9 @@
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -142,8 +145,9 @@
     {% if tool_trace %}
     <details class="section-collapse">
     <summary>Tool trace <span class="muted">({{ tool_trace|length }} events)</span></summary>
+    <div class="table-scroll-x">
     <table class="tracker-table" style="margin-top:8px;">
-      <thead><tr><th>Attempt</th><th>Turn</th><th>Event</th><th>Tool</th><th>Status</th><th>Duration</th><th>Summary</th></tr></thead>
+      <thead><tr><th scope="col">Attempt</th><th scope="col">Turn</th><th scope="col">Event</th><th scope="col">Tool</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Summary</th></tr></thead>
       <tbody>
         {% for ev in tool_trace %}
         {% set res = ev.result if ev.result is mapping else {} %}
@@ -186,6 +190,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     </details>
     {% endif %}
 

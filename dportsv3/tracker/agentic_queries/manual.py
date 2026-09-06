@@ -15,6 +15,20 @@ from dportsv3.tracker.agentic_queries._util import (
 )
 
 
+def count_manual_requests(conn: sqlite3.Connection) -> int:
+    """How many manual requests exist at all, regardless of state.
+
+    The queue's default view is open-only, which is a filter the operator
+    never chose. Without this the empty list could not tell "you have
+    answered everything" from "nothing has ever asked" and said the former
+    on a fresh install (UI-7).
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM user_context_requests"
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
 def list_manual_requests(
     conn: sqlite3.Connection,
     open_only: bool = True,

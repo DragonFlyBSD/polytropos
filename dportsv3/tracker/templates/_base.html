@@ -3,8 +3,14 @@
    templates. Children override:
      title       — the <title> text (defaults to the bare tracker name)
      head_extra  — per-page <style>/<meta>/<base>/<script src> in <head>
-     body        — everything inside <body> (nav include + page content)
-     scripts     — end-of-body <script> hooks (used from Phase 4c on) #}
+     nav         — the shell header and this view's section nav
+     body        — the page's own content, wrapped in <main> here
+     scripts     — end-of-body <script> hooks (used from Phase 4c on)
+
+   nav and body are separate blocks so the landmark is right: the header
+   and both navs sit OUTSIDE <main>, which is what makes "skip to content"
+   skip anything. They used to be one block, so every page had a <main>
+   that either wrapped its own navigation or did not exist (UI-7). #}
 <!DOCTYPE html>
 {# The theme is applied before first paint. Deferring it to the end of the
    body would show a light flash on a dark install, and the attribute is what
@@ -29,7 +35,17 @@
   </script>
 </head>
 <body>
+{# First focusable thing on the page: a keyboard reader lands here and can
+   step past the header and two navs in one key press. Off-screen until
+   focused -- display:none or visibility:hidden would take it out of the
+   tab order, which is the whole point of it. #}
+<a class="skip-link" href="#content">Skip to content</a>
+{% block nav %}{% include "_tracker_nav.html" %}{% endblock %}
+{# tabindex="-1" so the skip link can move focus here; without it the jump
+   moves the viewport and leaves focus behind in the nav. #}
+<main id="content" tabindex="-1">
 {% block body %}{% endblock %}
+</main>
 {% block scripts %}{% endblock %}
 <script>
   (function () {

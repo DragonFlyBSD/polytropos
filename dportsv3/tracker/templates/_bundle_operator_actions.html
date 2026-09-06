@@ -20,8 +20,9 @@
                   {% endif %}>
             Verify
           </button>
-          <select id="op-verify-env"
-                  style="font-size:12px;padding:3px 6px;"
+          <select class="control" id="op-verify-env"
+                  style="font-size:12px;"
+                  aria-label="Dev-env to run the verify build in"
                   {% if not operator_actions.verify_envs %}disabled{% endif %}
                   title="Dev-env to run the verify build in">
             {% if not operator_actions.verify_envs %}
@@ -140,7 +141,8 @@
       <div id="op-retry-form"
            data-bundle="{{ bundle.bundle_id }}"
            style="display:none;margin-top:10px;">
-        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;">
+        <label for="op-retry-text"
+               style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;">
           Operator context (required; max 8000 chars). The agent will
           see this verbatim in the next triage's ## User Context
           section.

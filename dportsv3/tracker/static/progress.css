@@ -329,7 +329,8 @@ select, option { background: var(--surface); color: var(--text); }
 .action:disabled { opacity: .5; cursor: not-allowed; }
 .action.primary { background: var(--cyan); border-color: var(--cyan); color: var(--on-accent); }
 .action.danger  { color: var(--red); border-color: var(--red-line); }
-@media (pointer: coarse) { .action { min-height: 40px; padding: 0 16px; } }
+/* Touch sizing for .action and everything else lives in one
+   (pointer: coarse) block further down -- see Touch targets. */
 
 /* Empty state. Says which kind of nothing this is. */
 .empty {
@@ -1016,7 +1017,11 @@ button.btn:disabled {
 }
 .diff-line .ln-old,
 .diff-line .ln-new {
-  color: var(--faint);
+  /* --muted, not --faint. The gutter sits on four different grounds --
+     code-bg, surface, green-soft, red-soft -- and --faint measures 3.98 on
+     --green-soft in dark, the one pairing in the whole sheet that missed AA
+     (UI-7). --muted is 5.82 on the same ground and still reads as quiet. */
+  color: var(--muted);
   text-align: right;
   padding: 0 8px;
   user-select: none;
@@ -1515,6 +1520,58 @@ a.wl-port:hover { color: var(--amber-dim); }
 
 @media (max-width: 760px) {
   .occ-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+}
+
+/* --- Skip link (UI-7) -----------------------------------------------------
+ * Off-screen, not hidden: display:none and visibility:hidden both take it
+ * out of the tab order, which is the only thing it is for.
+ */
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 100;
+  padding: 10px 16px; background: var(--cyan); color: var(--nav);
+  font: 650 13px/1 var(--sans); text-decoration: none;
+}
+.skip-link:focus { left: 0; }
+/* The jump target takes focus programmatically; it must not then draw a
+   ring around the entire page. */
+main:focus { outline: none; }
+main:focus-visible { outline: none; }
+
+/* --- Inline filter bar ---------------------------------------------------- */
+.filter-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-bottom: 14px;
+}
+.filter-label { font-size: 12px; color: var(--muted); }
+
+/* --- Touch targets --------------------------------------------------------
+ * (pointer: coarse) and not a width breakpoint: it fires on a touch device
+ * at any width, and a narrow window on a laptop is still a mouse.
+ *
+ * 24px is WCAG 2.2 2.5.8 at AA; the controls a finger actually aims at get
+ * 40. Text links inside a sentence are exempt by the same criterion and are
+ * deliberately left alone -- padding them would break the line box.
+ */
+@media (pointer: coarse) {
+  .action, .control, .btn { min-height: 40px; }
+  .action, .control { padding: 0 16px; }
+  select.control { padding-right: 8px; }
+  .primary-nav a, .section-nav a, .result-filter, .cockpit-tab,
+  .crumbs a, .worklist .wl-ops a, .occ-facts a {
+    min-height: 40px; display: inline-flex; align-items: center;
+  }
+  .worklist .wl-port { min-height: 40px; display: inline-flex;
+    align-items: center; }
+  .stage-row, .occ-row, .wl-chip, .a-row { min-height: 40px; }
+  summary, .stage-drawer > summary, .occ-selector > summary,
+  details.wl-archive > summary { min-height: 40px; display: flex;
+    align-items: center; }
+  .worklist .wl-chev { min-width: 32px; min-height: 32px; }
+  .worklist .wl-btn { min-height: 36px; }
+  /* A link that is the only thing in a table cell is a target, not prose. */
+  .data-table td > a:only-child, .tracker-table td > a:only-child {
+    display: inline-block; min-height: 24px; line-height: 24px;
+  }
 }
 
 /* --- Pipeline overview (UI-4) ---------------------------------------------

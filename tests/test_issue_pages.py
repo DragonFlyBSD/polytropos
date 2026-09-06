@@ -70,7 +70,11 @@ def test_issues_list_state_filter(client):
     c, db = client
     # unresolved shows both; resolved shows none
     assert "ftp/curl" in c.get("/agentic/issues?state=unresolved").text
-    assert "No issues match" in c.get("/agentic/issues?state=resolved").text
+    # The empty state tells the two nothings apart since UI-7: a filter
+    # matching nothing is not the same message as a tracker with no issues.
+    empty = c.get("/agentic/issues?state=resolved").text
+    assert "Nothing matches this filter" in empty
+    assert "No issues yet" not in empty
 
 
 def test_issue_detail_shows_occurrences_and_controls(client):

@@ -9,14 +9,15 @@
   <summary>Prior attempts for this origin
     <span class="muted">({{ prior_attempts | length }} of last 10)</span>
   </summary>
+<div class="table-scroll-x">
 <table class="tracker-table" style="font-size:12px;margin-top:8px;">
   <thead>
     <tr>
-      <th>Bundle</th>
-      <th>When</th>
-      <th>Result</th>
-      <th>Status</th>
-      <th>Run</th>
+      <th scope="col">Bundle</th>
+      <th scope="col">When</th>
+      <th scope="col">Result</th>
+      <th scope="col">Status</th>
+      <th scope="col">Run</th>
     </tr>
   </thead>
   <tbody>
@@ -45,5 +46,6 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 </details>
 {% endif %}

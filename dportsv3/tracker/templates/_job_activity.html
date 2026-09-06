@@ -42,8 +42,11 @@
       </span>
       <form method="get" style="margin:0;">
         {% if stage_filter %}<input type="hidden" name="stage_filter" value="{{ stage_filter }}">{% endif %}
+        <label class="visually-hidden" for="job-activity-limit">How many
+          events to show</label>
         Show
-        <select name="limit" onchange="this.form.submit()">
+        <select class="control" id="job-activity-limit" name="limit"
+                onchange="this.form.submit()">
           {% for n in limit_options %}
           <option value="{{ n }}" {% if n == limit %}selected{% endif %}>{{ n }}</option>
           {% endfor %}
@@ -65,17 +68,18 @@
       .activity-table th.sort-asc::after { content: " ▲"; font-size: 12px; }
       .activity-table th.sort-desc::after { content: " ▼"; font-size: 12px; }
     </style>
+    <div class="table-scroll-x">
     <table class="tracker-table activity-table" id="activity-table">
       <thead>
         <tr>
-          <th>When</th>
-          <th>Stage</th>
-          <th>Dur (ms)</th>
-          <th class="tok sortable" data-sort="prompt">Prompt</th>
-          <th class="tok sortable" data-sort="completion">Compl</th>
-          <th class="tok sortable" data-sort="total">Total</th>
-          <th class="tok sortable" data-sort="cumulative" title="Cumulative billable (uncached) tokens — the real running cost">Cum (billable)</th>
-          <th>Message / tools</th>
+          <th scope="col">When</th>
+          <th scope="col">Stage</th>
+          <th scope="col">Dur (ms)</th>
+          <th scope="col" class="tok sortable" data-sort="prompt">Prompt</th>
+          <th scope="col" class="tok sortable" data-sort="completion">Compl</th>
+          <th scope="col" class="tok sortable" data-sort="total">Total</th>
+          <th scope="col" class="tok sortable" data-sort="cumulative" title="Cumulative billable (uncached) tokens — the real running cost">Cum (billable)</th>
+          <th scope="col">Message / tools</th>
         </tr>
       </thead>
       <tbody id="activity-tbody">
@@ -84,6 +88,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
 
     {% else %}
     {# Review view (terminal jobs): one collapsible block per attempt, with
@@ -107,13 +112,14 @@
         {% if g.outcome %}<span class="stat-pill {{ g.outcome_cls }}">{{ g.outcome }}</span>{% endif %}
         <span class="muted">{{ g.rows|length }} events{% if g.tokens %} · {{ '{:,}'.format(g.tokens) }} billable tokens{% endif %}{% if g.n_tools %} · {{ g.n_tools }} tool call{{ 's' if g.n_tools != 1 else '' }}{% endif %}</span>
       </summary>
+      <div class="table-scroll-x">
       <table class="tracker-table activity-table">
         <thead>
           <tr>
-            <th>When</th><th>Stage</th><th>Dur (ms)</th>
-            <th class="tok">Prompt</th><th class="tok">Compl</th>
-            <th class="tok">Total</th><th class="tok">Cum (billable)</th>
-            <th>Message / tools</th>
+            <th scope="col">When</th><th scope="col">Stage</th><th scope="col">Dur (ms)</th>
+            <th scope="col" class="tok">Prompt</th><th scope="col" class="tok">Compl</th>
+            <th scope="col" class="tok">Total</th><th scope="col" class="tok">Cum (billable)</th>
+            <th scope="col">Message / tools</th>
           </tr>
         </thead>
         <tbody>
@@ -122,6 +128,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </details>
     {% endfor %}
     {% endif %}

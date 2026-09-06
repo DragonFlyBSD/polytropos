@@ -30,6 +30,7 @@
         <li><span class="swatch tok-compl"></span>Completion — {{ '{:,}'.format(c) }}{% if total %} ({{ '%0.1f' % (100 * c / total) }}%){% endif %}</li>
       </ul>
     </div>
+    <div class="table-scroll-x">
     <table class="tracker-card token-card">
       <tr class="row-billable" style="border-bottom:1px solid var(--border, var(--line));">
         <th style="text-align:left;">Billable (real cost)</th>
@@ -72,5 +73,6 @@
       </tr>
       {% endif %}
     </table>
+    </div>
     </details>
     {% endif %}

@@ -1,10 +1,13 @@
 {% extends "_base.html" %}
 {% block title %}Manual Queue — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Manual Queue"}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>Manual Queue</h1>
@@ -19,14 +22,15 @@
       </a>
     </p>
 
+    <div class="table-scroll-x">
     <table class="tracker-table">
       <thead>
         <tr>
-          <th>Origin</th><th>Target</th><th>Run</th>
-          <th>What the agent did</th><th>Attempts</th>
-          <th>Classification</th><th>Confidence</th>
-          <th>Status</th><th>Context rev</th>
-          <th>Requested</th><th></th>
+          <th scope="col">Origin</th><th scope="col">Target</th><th scope="col">Run</th>
+          <th scope="col">What the agent did</th><th scope="col">Attempts</th>
+          <th scope="col">Classification</th><th scope="col">Confidence</th>
+          <th scope="col">Status</th><th scope="col">Context rev</th>
+          <th scope="col">Requested</th><th scope="col"></th>
         </tr>
       </thead>
       <tbody>
@@ -77,10 +81,18 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="11" style="color:var(--text-dim);">No manual requests match this filter.</td></tr>
+        <tr><td colspan="11">
+          {% with filtered = open_only and total_requests,
+                  noun = "manual requests",
+                  clear_url = "?open_only=false",
+                  blank = "The agent files one of these when it cannot proceed without something only an operator knows." %}
+            {% include "_list_empty.html" %}
+          {% endwith %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 
   <script>

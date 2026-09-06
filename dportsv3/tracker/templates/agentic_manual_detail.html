@@ -15,7 +15,7 @@
     .manual-flash.err { background:#fde7e7; border:1px solid #c00; }
   </style>
 {% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [
       {"label": "Repairs", "url": request.url_for('agentic_index')},
       {"label": "Manual Queue", "url": request.url_for('agentic_manual_list')},
@@ -24,6 +24,9 @@
     {% include "_tracker_nav.html" %}
   {% endwith %}
   {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
 
   <div class="tracker-page">
     <h1>{{ request_row.origin }}</h1>
@@ -139,7 +142,13 @@
 
     <form class="manual-form" id="manual-form"
           data-endpoint="/api/manual-requests/{{ request_row.run_id }}/{{ request_row.origin }}/context">
-      <textarea name="context_text" maxlength="8000" required
+      {# A placeholder is not an accessible name: it disappears the moment
+         anyone types, so a screen reader user loses it exactly when they
+         would want to re-read it (UI-7). #}
+      <label class="visually-hidden" for="manual-context">Context for the
+        agent</label>
+      <textarea id="manual-context" name="context_text" maxlength="8000"
+                required
                 placeholder="What should the agent know or do differently?"></textarea>
       <div class="btn-group" style="margin-top:10px;">
         <button type="submit" class="btn btn-success">Try again with this context</button>

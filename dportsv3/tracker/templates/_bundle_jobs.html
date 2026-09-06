@@ -9,8 +9,9 @@
     — open one to see its phase-by-phase activity (triage, patch, verify)
   </span>
 </h2>
+<div class="table-scroll-x">
 <table class="tracker-table" style="font-size:12px;">
-  <thead><tr><th>Job</th><th>Type</th><th>State</th><th>Retire reason</th><th>Created</th></tr></thead>
+  <thead><tr><th scope="col">Job</th><th scope="col">Type</th><th scope="col">State</th><th scope="col">Retire reason</th><th scope="col">Created</th></tr></thead>
   <tbody>
     {% for j in bundle_jobs %}
     <tr>
@@ -23,4 +24,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}

@@ -11,12 +11,15 @@
      root-relative URL so <base> cannot rewrite it. #}
   <base href="{{ progress_base }}">
 {% endblock %}
-{% block body %}
+{% block nav %}
   {% with nav_crumbs = [
        {"label": "Builds", "url": request.url_for('dashboard_index')},
        {"label": (('#' ~ run.id ~ ' ') if run else '') ~ target}] %}
     {% include "_tracker_nav.html" %}
   {% endwith %}
+{% endblock %}
+
+{% block body %}
 
   {% if not run %}
   <div class="page-heading">
@@ -87,7 +90,7 @@
       </div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Origin</th><th>Version</th></tr></thead>
+          <thead><tr><th scope="col">Origin</th><th scope="col">Version</th></tr></thead>
           <tbody id="builders-body"></tbody>
         </table>
       </div>
@@ -118,7 +121,7 @@
       <div class="table-scroll-x" id="results-table-wrap">
         <table class="data-table results-table">
           <thead>
-            <tr><th>No.</th><th>State</th><th>Origin</th><th>Version</th><th>Recorded</th><th>Evidence</th></tr>
+            <tr><th scope="col">No.</th><th scope="col">State</th><th scope="col">Origin</th><th scope="col">Version</th><th scope="col">Recorded</th><th scope="col">Evidence</th></tr>
           </thead>
           <tbody id="results-body"></tbody>
         </table>

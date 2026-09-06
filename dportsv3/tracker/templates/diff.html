@@ -1,9 +1,12 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import build_state_pill %}
 {% block title %}Target diff — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% include "_tracker_nav.html" %}
   {% with section = 'diff' %}{% include "_builds_subnav.html" %}{% endwith %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -50,7 +53,7 @@
       </div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th>Origin</th><th>{{ target_a }}</th><th>{{ target_b }}</th></tr></thead>
+          <thead><tr><th scope="col">Origin</th><th scope="col">{{ target_a }}</th><th scope="col">{{ target_b }}</th></tr></thead>
           <tbody>
             {% for row in diff.differ %}
             <tr>

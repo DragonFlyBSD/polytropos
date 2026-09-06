@@ -1,0 +1,25 @@
+{# The two kinds of nothing, told apart.
+
+   Every operator list used to render one line -- "No issues match this
+   filter" -- whether or not a filter was set. On a fresh install, where
+   nothing has ever been ingested and no filter is applied, that reads as a
+   broken query rather than an empty system (UI-7).
+
+   Expects:
+     filtered  bool   -- is any filter or search actually applied
+     noun      str    -- "issues", "occurrences", ...
+     blank     str    -- what this page will hold once the system runs
+     clear_url str    -- optional, where "show everything" goes #}
+<div class="empty">
+  {% if filtered %}
+  <strong>Nothing matches this filter</strong>
+  {# Noun-free: "activity" is a mass noun and "No activity match" is not a
+     sentence. The clear link carries the noun instead, where it is
+     singular-or-plural agnostic. #}
+  Nothing here matches what you asked for.
+  {% if clear_url %}<a href="{{ clear_url }}">Show all {{ noun }}</a>{% endif %}
+  {% else %}
+  <strong>No {{ noun }} yet</strong>
+  {{ blank }}
+  {% endif %}
+</div>

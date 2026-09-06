@@ -1,9 +1,12 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import build_state_pill, progress_bar %}
 {% block title %}Builds — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% include "_tracker_nav.html" %}
   {% with section = 'active' %}{% include "_builds_subnav.html" %}{% endwith %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -93,7 +96,7 @@
         {% if recent_runs %}
         <div class="table-scroll-x">
           <table class="data-table">
-            <thead><tr><th>Run</th><th>Target</th><th>Finished</th><th class="num">Pass / fail</th></tr></thead>
+            <thead><tr><th scope="col">Run</th><th scope="col">Target</th><th scope="col">Finished</th><th scope="col" class="num">Pass / fail</th></tr></thead>
             <tbody>
               {% for run in recent_runs %}
               <tr{% if run.id == selected_run_id %} class="is-selected"{% endif %}>
@@ -150,7 +153,7 @@
       <div class="table-scroll-x">
         <table class="data-table results-table">
           <thead>
-            <tr><th>State</th><th>Origin</th><th>Version</th><th>Recorded</th><th>Evidence</th></tr>
+            <tr><th scope="col">State</th><th scope="col">Origin</th><th scope="col">Version</th><th scope="col">Recorded</th><th scope="col">Evidence</th></tr>
           </thead>
           <tbody>
             {% for row in results.results %}

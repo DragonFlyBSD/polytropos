@@ -1,25 +1,35 @@
-{# Inline target+origin filter form used by agentic list pages. #}
-<form method="get" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px;padding:8px 12px;background:var(--bg-card);border:1px solid var(--amber-border);border-radius:4px;">
-  <label style="color:var(--text-dim);">Target</label>
-  <select name="target" onchange="this.form.submit()" style="font:inherit;padding:2px 6px;border:1px solid var(--amber-border);background:var(--bg);">
-    <option value="">(all)</option>
+{# Inline target/state/origin filter for the agentic list pages.
+
+   Every control is named. The three <label>s used to be bare text next to
+   their controls with no `for` and no wrapping, so a screen reader read
+   three unnamed widgets; the selects and the input also carried their own
+   inline styling, which meant no focus ring and no coarse-pointer size
+   (UI-7). They are on the shell's .control primitive now. #}
+<form class="filter-bar" method="get">
+  <label class="filter-label" for="tf-target">Target</label>
+  <select class="control" id="tf-target" name="target"
+          onchange="this.form.submit()">
+    <option value="">All targets</option>
     {% for t in target_options %}
     <option value="{{ t }}"{% if t == selected_target %} selected{% endif %}>{{ t }}</option>
     {% endfor %}
   </select>
   {% if show_state %}
-  <label style="color:var(--text-dim);margin-left:12px;">State</label>
-  <select name="state" onchange="this.form.submit()" style="font:inherit;padding:2px 6px;border:1px solid var(--amber-border);background:var(--bg);">
-    <option value="">(all)</option>
+  <label class="filter-label" for="tf-state">State</label>
+  <select class="control" id="tf-state" name="state"
+          onchange="this.form.submit()">
+    <option value="">All states</option>
     {% for s in ['pending', 'inflight', 'done', 'dead', 'escalated'] %}
     <option value="{{ s }}"{% if s == selected_state %} selected{% endif %}>{{ s }}</option>
     {% endfor %}
   </select>
   {% endif %}
   {% if show_origin %}
-  <label style="color:var(--text-dim);margin-left:12px;">Origin</label>
-  <input type="text" name="origin" value="{{ selected_origin or '' }}" placeholder="cat/port"
-         style="font:inherit;padding:2px 6px;border:1px solid var(--amber-border);background:var(--bg);">
-  <button type="submit" class="btn btn-sm">Apply</button>
+  <label class="filter-label" for="tf-origin">Origin</label>
+  <input class="control" type="text" id="tf-origin" name="origin"
+         value="{{ selected_origin or '' }}" placeholder="cat/port">
   {% endif %}
+  {# Always submittable without JS: the onchange handlers are the fast path,
+     not the only one. #}
+  <button type="submit" class="control">Apply</button>
 </form>

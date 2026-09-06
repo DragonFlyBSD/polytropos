@@ -1,9 +1,12 @@
 {% extends "_base.html" %}
 {% from "_macros.html" import progress_bar %}
 {% block title %}Run history — DeltaPorts Tracker{% endblock %}
-{% block body %}
+{% block nav %}
   {% include "_tracker_nav.html" %}
   {% with section = 'history' %}{% include "_builds_subnav.html" %}{% endwith %}
+{% endblock %}
+
+{% block body %}
 
   <div class="page-heading">
     <div>
@@ -37,9 +40,9 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>Run</th><th>Target</th><th>Type</th><th>Started</th><th>Finished</th>
-              <th class="num">Expected</th><th class="num">Built</th><th class="num">Failed</th>
-              <th class="num">Skipped</th><th class="num">Ignored</th><th>Compare</th>
+              <th scope="col">Run</th><th scope="col">Target</th><th scope="col">Type</th><th scope="col">Started</th><th scope="col">Finished</th>
+              <th scope="col" class="num">Expected</th><th scope="col" class="num">Built</th><th scope="col" class="num">Failed</th>
+              <th scope="col" class="num">Skipped</th><th scope="col" class="num">Ignored</th><th scope="col">Compare</th>
             </tr>
           </thead>
           <tbody>
