@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}Agentic — DeltaPorts Tracker{% endblock %}
+{% block title %}Repairs — DeltaPorts Tracker{% endblock %}
 {% block body %}
   {% with nav_crumbs = [{"label": "Repairs"}] %}{% include "_tracker_nav.html" %}{% endwith %}
   {% include "_agentic_subnav.html" %}
@@ -13,18 +13,27 @@
       'owned':  ('Open',          'wl-btn-take'),
   } %}
 
-  <div class="tracker-page worklist">
-    <h1>Agentic worklist</h1>
-    <p class="lede">
-      Failure fixes that need you, most urgent first.
-      {%- if issue_total > worklist_cap %}
-      Reading the {{ worklist_cap }} most-seen of {{ issue_total }} issues;
-      the rest are on
-      <a href="{{ request.url_for('agentic_issues') }}">Issues</a>, which is
-      searchable.
-      {%- endif %}
-      <a href="{{ request.url_for('agentic_bundles') }}">All bundles &rarr;</a>
-    </p>
+  <div class="page-heading">
+    <div>
+      <h1>Repairs</h1>
+      <p>
+        Fingerprinted problems that need you, most urgent first. The stable
+        unit is the issue; the occurrences under it are individual failures.
+        {%- if issue_total > worklist_cap %}
+        Reading the {{ worklist_cap }} most-seen of {{ issue_total }} issues;
+        the rest are on
+        <a href="{{ request.url_for('agentic_issues') }}">Issues</a>, which is
+        searchable.
+        {%- endif %}
+      </p>
+    </div>
+    <div class="heading-actions">
+      <a class="control" href="{{ request.url_for('agentic_issues') }}">All issues</a>
+      <a class="control" href="{{ request.url_for('agentic_bundles') }}">All occurrences</a>
+    </div>
+  </div>
+
+  <div class="page-body worklist">
 
     {# Focus header: one number + action-named jump chips. #}
     <div class="wl-focus">
@@ -88,6 +97,10 @@
               {% endfor %}
             </div>
             <div class="wl-mid">
+              {% if band.key == 'confirming' %}
+              {% set cf = confirm_for(g.issue) %}
+              <span class="pill {{ cf.pill }}" title="{{ cf.detail }}">{{ cf.label }}</span>
+              {% endif %}
               <span class="wl-age" title="last failure {{ g.latest_ts }}">last {{ g.latest_ts | relative_age }}</span>
             </div>
             <div class="wl-actions">
@@ -143,7 +156,12 @@
             <span class="wl-subid">{{ b.bundle_id }}</span>
           </div>
           <div class="wl-mid">
+            {% if band.key == 'confirming' %}
+            {% set cf = confirm_for(g.issue) %}
+            <span class="pill {{ cf.pill }}" title="{{ cf.detail }}">{{ cf.label }}</span>
+            {% else %}
             <span class="wl-pill {{ s.cls }}">{{ s.label }}</span>
+            {% endif %}
             <span class="wl-age" title="{{ b.ts_utc }}">{{ b.ts_utc | relative_age }}</span>
           </div>
           <div class="wl-actions">
@@ -170,7 +188,7 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
             {% if g.times_seen > 1 %}<span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>{% endif %}
           </div>
           <div class="wl-mid">
@@ -194,7 +212,7 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
             {% if g.times_seen > 1 %}<span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>{% endif %}
             <span class="wl-recur" title="Muted — no surfacing, no auto-triage">muted</span>
           </div>

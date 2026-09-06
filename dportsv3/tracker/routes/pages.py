@@ -166,6 +166,27 @@ def _port_link(request: Any):
     return port_link
 
 
+def _confirm_for(conn: Any):
+    """A ``confirm_for(issue)`` for one request's templates.
+
+    `resolving` is one word covering a whole loop, and the list views show
+    it as often as the detail page does. The runner's thresholds and its
+    heartbeat are read once here rather than per row.
+    """
+    threshold = int(settings.get("runner.confirm_green_threshold"))
+    max_failures = int(settings.get("runner.confirm_max_failures"))
+    now = datetime.now(timezone.utc).isoformat()
+    live = runner_is_live(conn)
+
+    def confirm_for(issue: dict[str, Any]) -> Any:
+        return issue_state.confirm_status(
+            issue, threshold=threshold, max_failures=max_failures,
+            now=now, runner_live=live,
+        )
+
+    return confirm_for
+
+
 def _query_for(base: dict[str, Any]):
     """A ``query_for(**overrides)`` for one request's templates.
 
@@ -347,6 +368,7 @@ def register(app, ctx):
                     "muted_groups": worklist["muted"],
                     "issue_total": issue_total,
                     "worklist_cap": _WORKLIST_CAP,
+                    "confirm_for": _confirm_for(conn),
                 },
             )
 
@@ -438,6 +460,7 @@ def register(app, ctx):
                 {
                     "title": "Issues",
                     "issues": issues,
+                    "confirm_for": _confirm_for(conn),
                     "total": total,
                     "truncated": truncated,
                     "page": page,
@@ -468,13 +491,7 @@ def register(app, ctx):
             # says where in it this issue is; the runner's own thresholds
             # and its heartbeat are what let it tell a build that is running
             # from a marker a dead runner left behind.
-            confirm = issue_state.confirm_status(
-                issue,
-                threshold=int(settings.get("runner.confirm_green_threshold")),
-                max_failures=int(settings.get("runner.confirm_max_failures")),
-                now=datetime.now(timezone.utc).isoformat(),
-                runner_live=runner_is_live(conn),
-            )
+            confirm = _confirm_for(conn)(issue)
             return templates.TemplateResponse(
                 request,
                 "agentic_issue.html",

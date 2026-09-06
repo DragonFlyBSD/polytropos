@@ -538,7 +538,8 @@ table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow:
 
 /* Tables wide enough to need their own scroller. */
 .table-scroll-x { overflow-x: auto; }
-.table-scroll-x > table.data-table { min-width: 640px; }
+.table-scroll-x > table.data-table,
+.table-scroll-x > table.tracker-table { min-width: 640px; }
 
 /* Run view. The progress panel replaces dsynth's stat-card row and stress
    table: what the tracker measures, and a sentence saying what it does not. */
@@ -1073,8 +1074,7 @@ button.btn:disabled {
   border-radius: 10px;
   overflow: hidden;
   background: var(--bg-card);
-  box-shadow: 0 1px 2px rgba(60, 50, 30, .04),
-              0 6px 22px rgba(60, 50, 30, .05);
+  box-shadow: var(--shadow);
 }
 
 /* left: one grouped list, its own scroll, subtly inset from the card */
@@ -1212,27 +1212,6 @@ button.btn:disabled {
 
 /* Agentic section sub-nav (Phase 6). Matches the tracker chrome; the
    active destination gets an amber underline. */
-#agentic-subnav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-  padding: 8px 16px;
-  font-size: 13px;
-  border-bottom: 1px solid var(--border, var(--line));
-  background: var(--panel-bg, var(--surface));
-}
-#agentic-subnav a {
-  text-decoration: none;
-  color: var(--text-dim, var(--muted));
-  padding: 2px 2px 4px;
-}
-#agentic-subnav a:hover { color: var(--text, var(--text)); }
-#agentic-subnav a.active {
-  color: var(--text, var(--text));
-  font-weight: 600;
-  border-bottom: 2px solid var(--amber, var(--amber-line));
-}
-
 /* Collapsible secondary sections on the detail pages (Phase 6 polish).
    The <summary> stands in for the section's <h2>. */
 details.section-collapse { margin-top: 20px; }
@@ -1272,7 +1251,7 @@ details.section-collapse > summary .muted {
 /* Facts pills (result / dops) inside the bar: small rounded pills. */
 .bundle-header .stat-pill:not(.status-pill) {
   display: inline-flex; align-items: center;
-  padding: 2px 9px; border-radius: 999px;
+  padding: 2px 9px; border-radius: 2px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
 }
 
@@ -1280,7 +1259,7 @@ details.section-collapse > summary .muted {
    wherever it renders: worklist, bundles list, and this bar. */
 .status-pill {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 10px; border-radius: 999px;
+  padding: 3px 10px; border-radius: 2px;
   font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
 }
 .status-pill .pill-dot {
@@ -1300,8 +1279,8 @@ details.section-collapse > summary .muted {
 .worklist .wl-focus {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 14px 18px; margin: 14px 0 10px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(60,50,30,.04), 0 5px 18px rgba(60,50,30,.045);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 3px;
+  box-shadow: var(--shadow);
 }
 .worklist .wl-focus-num {
   font-size: 40px; font-weight: 720; line-height: 1; letter-spacing: -.03em;
@@ -1312,7 +1291,7 @@ details.section-collapse > summary .muted {
 .worklist .wl-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-left: auto; }
 .worklist .wl-chip {
   display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
-  font-size: 12px; padding: 5px 11px; border-radius: 999px;
+  font-size: 12px; padding: 5px 11px; border-radius: 3px;
   border: 1px solid var(--border-strong, var(--line)); color: var(--text-dim); background: var(--bg-card);
 }
 .worklist .wl-chip:hover { border-color: var(--amber-border); }
@@ -1333,7 +1312,7 @@ details.section-collapse > summary .muted {
 .worklist .wl-ops {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px;
   padding: 8px 18px; margin-bottom: 26px; font-size: 12px; color: var(--text-dim);
-  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-sunk, var(--surface-2));
+  border: 1px solid var(--border); border-radius: 3px; background: var(--bg-sunk, var(--surface-2));
 }
 .worklist .wl-ops b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .worklist .wl-ops a { color: var(--amber-dim); text-decoration: none; }
@@ -1353,12 +1332,12 @@ details.section-collapse > summary .muted {
 .worklist .wl-band-head h2 { font-size: 14px; font-weight: 680; margin: 0; }
 .worklist .wl-band-meta { font-size: 12px; color: var(--text-dim); font-weight: normal; }
 .worklist .wl-list {
-  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
-  background: var(--bg-card); box-shadow: 0 1px 2px rgba(60,50,30,.03);
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  background: var(--bg-card); box-shadow: var(--shadow);
 }
 .worklist .wl-empty {
   padding: 9px 16px; margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint, var(--muted));
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: 3px;
 }
 .worklist .wl-empty .lbl { font-weight: 600; color: var(--text-dim); }
 
@@ -1392,7 +1371,7 @@ details.section-collapse > summary .muted {
 a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-x {
   font-size: 12px; font-weight: 700; color: var(--c-failed, var(--red));
-  background: var(--c-failed-bg, var(--red-soft)); border-radius: 999px; padding: 1px 8px;
+  background: var(--c-failed-bg, var(--red-soft)); border-radius: 3px; padding: 1px 8px;
   font-variant-numeric: tabular-nums;
 }
 .worklist .wl-recur {
@@ -1408,7 +1387,7 @@ a.wl-port:hover { color: var(--amber-dim); }
 
 .worklist .wl-pill {
   display: inline-flex; align-items: center; font-size: 12px; font-weight: 600;
-  padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  padding: 2px 9px; border-radius: 3px; white-space: nowrap;
 }
 .worklist .wl-pill.sm { padding: 1px 8px; font-size: 12px; }
 .worklist .wl-pill.built   { background: var(--c-built-bg, var(--surface-2));  color: var(--c-built, var(--green)); }
@@ -1457,13 +1436,13 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist #env-health { font-size: 15px; font-weight: 680; margin-top: 30px; margin-bottom: 10px; }
 .worklist .env-active-banner {
   padding: 11px 16px; margin-bottom: 12px;
-  background: var(--bg-sunk, var(--surface-2)); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-sunk, var(--surface-2)); border: 1px solid var(--border); border-radius: 3px;
   font-size: 12.5px;
 }
 .worklist .env-active-banner strong { color: var(--text); }
 .worklist .wl-tablecard {
-  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
-  background: var(--bg-card); box-shadow: 0 1px 2px rgba(60,50,30,.03);
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  background: var(--bg-card); box-shadow: var(--shadow);
 }
 .worklist .wl-tablecard table.tracker-table { border: none; }
 .worklist .wl-tablecard table.tracker-table th {
@@ -1479,5 +1458,24 @@ a.wl-port:hover { color: var(--amber-dim); }
 /* The status/check words become real pills (base .stat-pill carries no shape). */
 .worklist .wl-tablecard .stat-pill {
   display: inline-flex; align-items: center; margin: 1px 3px 1px 0;
-  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  padding: 2px 9px; border-radius: 3px; font-size: 12px; font-weight: 600;
+}
+
+/* --- Repairs, narrow ------------------------------------------------------
+ * After the .worklist rules, not before: these override at equal
+ * specificity, so source order is what decides.
+ */
+@media (max-width: 760px) {
+  /* The row is a five-track grid built for a wide screen. Narrow, the
+     action button and the status pill run past the edge -- the page itself
+     does not scroll, so the button is simply clipped off. */
+  .worklist .wl-row {
+    grid-template-columns: 3px 20px minmax(0, 1fr);
+    row-gap: 6px;
+  }
+  .worklist .wl-rollup,
+  .worklist .wl-mid,
+  .worklist .wl-actions { grid-column: 3; justify-self: start; }
+  .worklist .wl-focus-num { font-size: 30px; }
+  .worklist .wl-chips { margin-left: 0; }
 }

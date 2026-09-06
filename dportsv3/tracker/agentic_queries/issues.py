@@ -108,8 +108,20 @@ def count_issues(
 # derivation falls back to timestamps. LEFT JOIN because an occurrence whose
 # run predates the link — or whose build the tracker never saw — still counts
 # as an occurrence.
+# The newest job touching this occurrence. fix_state.fix_status reads it to
+# separate `in_progress` -- work the runner is doing, which the operator has
+# nothing to do about -- from `unknown`, which is nobody's and needs a
+# decision. Without it every live occurrence read as `unknown` and landed in
+# the operator's queue while the runner was still patching it. A correlated
+# subselect rather than a join so it costs one indexed lookup per row
+# returned (idx_jobs_bundle_id), and so an occurrence with several jobs
+# yields one row rather than several.
+_OCCURRENCE_JOB_STATE = (
+    "(SELECT j.state FROM jobs j WHERE j.bundle_id = b.bundle_id "
+    " ORDER BY j.created_ts_utc DESC, j.job_id DESC LIMIT 1) AS job_state"
+)
 _OCCURRENCE_SELECT = (
-    "SELECT b.*, r.build_run_id AS build_run_id "
+    f"SELECT b.*, r.build_run_id AS build_run_id, {_OCCURRENCE_JOB_STATE} "
     "FROM bundles b LEFT JOIN runs r ON r.run_id = b.run_id"
 )
 _OCCURRENCE_ORDER = " ORDER BY b.ts_utc DESC, b.bundle_id DESC"

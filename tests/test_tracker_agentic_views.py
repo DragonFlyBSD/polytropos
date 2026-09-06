@@ -283,7 +283,9 @@ def test_view_agentic_index(client: TestClient) -> None:
     resp = client.get("/agentic")
     assert resp.status_code == 200
     body = resp.text
-    assert "Agentic worklist" in body
+    # "Agentic" named the machinery; the view is Repairs (UI-5).
+    assert "<h1>Repairs</h1>" in body
+    assert "Agentic worklist" not in body
     assert "Ready to accept" in body
     assert "Needs verify" in body
     assert "Needs a decision" in body
@@ -539,7 +541,10 @@ def test_agentic_subnav_present_and_highlights_current(client: TestClient) -> No
     The active item is derived from the request path."""
     import re
     body = client.get("/agentic").text
-    assert 'id="agentic-subnav"' in body
+    # UI-5 put it on the same .section-nav shell Builds uses, so the two
+    # views navigate alike.
+    assert 'aria-label="Repairs sections"' in body
+    assert 'id="agentic-subnav"' not in body
     for label in (">Worklist<", ">Issues<", ">Occurrences<", ">Jobs<",
                   ">Runner<", ">Manual<"):
         assert label in body

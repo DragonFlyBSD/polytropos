@@ -99,6 +99,41 @@ def occurrence_past_boundary(
     return bool(resolved_at and ts and ts > resolved_at)
 
 
+#: Issue keys already reported by :func:`_warn_unloaded_occurrences`, so a
+#: pruned issue produces one line rather than one per page render.
+#: Process-lifetime, which is the right scope: a restart says it again.
+_UNLOADED_WARNED: set[str] = set()
+
+
+def _warn_unloaded_occurrences(issue: dict[str, Any]) -> None:
+    """Say that regression could not be derived, and name both reasons.
+
+    An issue with occurrences it cannot see is one of two things, and this
+    signature cannot tell them apart:
+
+    * the caller passed a bare row -- ``list_issues`` returns exactly those;
+      only ``issues_with_occurrences``, ``get_issue`` and
+      ``issue_for_bundle`` attach them. That is a bug, and a resolved issue
+      that is demonstrably broken again would silently read as fixed.
+    * the occurrences were pruned out from under the issue row, which is
+      permanent and not anyone's mistake.
+
+    Either way the honest answer is "cannot tell", not "resolved". The
+    difference is only how often it is worth saying: once per issue.
+    """
+    key = str(issue.get("issue_key") or "")
+    if key in _UNLOADED_WARNED:
+        return
+    _UNLOADED_WARNED.add(key)
+    _LOG.warning(
+        "cannot derive regression for issue %s: times_seen=%s but no "
+        "occurrences were loaded. Either the row came from list_issues() "
+        "rather than issues_with_occurrences() / get_issue(), or its "
+        "occurrences have been pruned.",
+        key, issue.get("times_seen"),
+    )
+
+
 def derived_regression(
     issue: dict[str, Any], occurrences: list[dict[str, Any]],
 ) -> str | None:
@@ -124,22 +159,7 @@ def derived_regression(
     if issue.get("state") != ISSUE_RESOLVED:
         return None
     if not occurrences and (issue.get("times_seen") or 0) > 0:
-        # Every issue has at least one occurrence by construction — the
-        # ingest writer creates the row with times_seen=1 and only ever
-        # increments. So an empty list here never means "it never failed";
-        # it means the caller passed a row whose occurrences were not
-        # loaded, and the honest answer is "cannot tell", not "resolved".
-        # Silently answering `resolved` is how a port that is demonstrably
-        # broken again reads as fixed and stays out of the worklist.
-        # `list_issues` returns exactly such bare rows; only
-        # `issues_with_occurrences`, `get_issue` and `issue_for_bundle`
-        # attach them.
-        _LOG.warning(
-            "cannot derive regression for issue %s: times_seen=%s but no "
-            "occurrences were loaded. Read it with issues_with_occurrences() "
-            "or get_issue(), not list_issues().",
-            issue.get("issue_key"), issue.get("times_seen"),
-        )
+        _warn_unloaded_occurrences(issue)
         return None
     crossings = [
         o.get("ts_utc") for o in occurrences
@@ -575,6 +595,10 @@ def issue_group(
     times_seen = issue.get("times_seen") or len(ordered)
     latest = ordered[0] if ordered else None
     return {
+        # The row itself, so a caller can run a projection this module has
+        # no business knowing about -- confirm_status needs the runner's
+        # settings and its heartbeat, and issue_group is pure over dicts.
+        "issue": issue,
         "issue_key": issue.get("issue_key"),
         "origin": issue.get("origin") or "—",
         "target": issue.get("target"),
