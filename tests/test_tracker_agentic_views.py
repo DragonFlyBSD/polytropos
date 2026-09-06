@@ -553,7 +553,9 @@ def test_agentic_subnav_present_and_highlights_current(client: TestClient) -> No
     assert 'id="agentic-subnav"' not in body
     for label in (">Worklist<", ">Issues<", ">Occurrences<"):
         assert label in body
-    for moved in (">Jobs<", ">Runner<", ">Manual<"):
+    # Matched as links: the command bar names Runner and the queue as
+    # system facts now, and reading one is not navigating to it.
+    for moved in (">Jobs</a>", ">Runner</a>", ">Manual</a>"):
         assert moved not in body
     assert re.search(r'<a[^>]*class="active"[^>]*>Worklist</a>', body)
 

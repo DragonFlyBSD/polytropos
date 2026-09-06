@@ -40,12 +40,45 @@
    focused -- display:none or visibility:hidden would take it out of the
    tab order, which is the whole point of it. #}
 <a class="skip-link" href="#content">Skip to content</a>
-{% block nav %}{% include "_tracker_nav.html" %}{% endblock %}
+{# The application frame: command bar, one scrolling content region, and
+   the status rail, in a viewport-height grid. The chrome stays put while
+   the work scrolls, which is the difference between an operations console
+   and a web page.
+
+   ONE scroller here, deliberately. The mock subdivides the middle row
+   per view -- a pipeline canvas over a drawer, a queue rail beside a
+   detail pane -- and those geometries belong to the views that have
+   them, so they layer their own grid inside <main> rather than this
+   file having to know about every one. #}
+<div class="app">
+{# One wrapper, because the nav block emits a variable number of elements
+   -- header, sometimes crumbs, sometimes a section nav -- and the frame's
+   three rows have to stay three however many that is. #}
+<div class="app-chrome">{% block nav %}{% include "_tracker_nav.html" %}{% endblock %}</div>
 {# tabindex="-1" so the skip link can move focus here; without it the jump
    moves the viewport and leaves focus behind in the nav. #}
 <main id="content" tabindex="-1">
 {% block body %}{% endblock %}
 </main>
+{# What is true of the whole tracker, from the same memoised reading the
+   command bar uses. No polling cadence: it differs per page (30s on
+   Builds while a run is active, 4s on the run view), so a single number
+   here would be a claim about pages it is not describing. #}
+{% set rail = shell_facts() %}
+<footer class="status-rail">
+  <span><strong>{{ rail.targets }}</strong>
+        target{{ '' if rail.targets == 1 else 's' }}</span>
+  <span><strong>{{ rail.issues }}</strong>
+        issue{{ '' if rail.issues == 1 else 's' }}</span>
+  <span><strong>{{ rail.occurrences }}</strong>
+        occurrence{{ '' if rail.occurrences == 1 else 's' }}</span>
+  <span class="rail-push">DeltaPorts operations</span>
+</footer>
+</div>
+{# Announcements of state changes the page has already rendered -- never
+   the only report of an outcome, because a toast does not survive a
+   reload and the thing it is about must. #}
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 {% block scripts %}{% endblock %}
 <script>
   (function () {

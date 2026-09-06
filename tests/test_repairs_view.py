@@ -267,5 +267,11 @@ def test_the_operator_only_destinations_are_hidden_from_a_reader(
         body = client.get("/agentic").text
 
     assert ">Worklist<" in body
-    assert ">Runner<" not in body
-    assert ">Manual<" not in body
+    # Matched as links. The command bar names the runner as a system fact
+    # now, and reading its state is not a destination an anonymous viewer
+    # is being offered.
+    assert ">Runner</a>" not in body
+    assert ">Manual</a>" not in body
+    # ...and the shell says why the controls are missing rather than
+    # leaving holes (M1).
+    assert "anonymous" in body

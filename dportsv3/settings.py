@@ -200,6 +200,18 @@ SETTINGS: list[Setting] = [
         "few seconds. Set 0 to sweep on every render.",
     ),
     Setting(
+        "tracker.shell_facts_seconds", "int", 15,
+        "How long the command bar's Queue / Needs you / Runner figures\n"
+        "may be reused before they are recomputed.\n"
+        "\n"
+        "They sit in the shell, so every page pays for them: measured at\n"
+        "25.8 ms per render on 20,000 issues, almost all of it the\n"
+        "worklist band projection. A topbar figure is a glance -- the page\n"
+        "it links to recomputes on arrival and is the authority -- so a\n"
+        "few seconds of staleness buys every other render. Set 0 to\n"
+        "recompute on every page.",
+    ),
+    Setting(
         "tracker.preflight_refresh_seconds", "int", 300,
         "How often the pipeline's health strip may re-run the delivery\n"
         "preflight.\n"

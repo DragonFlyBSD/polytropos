@@ -134,6 +134,14 @@ def create_app(db_path: str | Path) -> Any:
     # the module that owns the state machine.
     from dportsv3.agent.lifecycle import JOB_STATE_DEPTH  # noqa: PLC0415
     templates.env.globals["job_state_depth"] = JOB_STATE_DEPTH
+    # The command bar's three figures. A lazy global rather than per-route
+    # context: the shell is included by every page, and threading them
+    # through twenty handlers would mean a handler that forgot renders a
+    # header with holes in it. Memoised -- see shell_facts.
+    from dportsv3.tracker import shell_facts  # noqa: PLC0415
+    templates.env.globals["shell_facts"] = (
+        lambda: shell_facts.current(app.state.db_path)
+    )
     # Compact relative ages ("18m ago") for the worklist queue rows.
     templates.env.filters["relative_age"] = render.relative_age
 

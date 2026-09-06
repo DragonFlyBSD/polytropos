@@ -1,13 +1,18 @@
-{# The shared shell header: product mark, the three primary views, and the
-   theme control. Included by every full page, so changing it here changes
-   every page -- which is the point of having one shell.
+{# The shared shell header: product mark, the three primary views, the
+   facts that are true of the whole system, and the theme control.
+   Included by every full page, so changing it here changes every page --
+   which is the point of having one shell.
 
    Builds | Pipeline | Repairs are the three views the migration is built
    around, each with its own overview and its own section nav. #}
 {% set _path = request.url.path %}
+{% set facts = shell_facts() %}
 <header class="app-header">
   <a class="app-brand" href="{{ request.url_for('dashboard_index') }}">
-    <b>POLYTROPOS</b><span>DELTAPORTS OPERATIONS</span>
+    <span class="app-mark" aria-hidden="true">P/</span>
+    <span class="app-wordmark">
+      <b>POLYTROPOS</b><span>DELTAPORTS OPERATIONS</span>
+    </span>
   </a>
   <nav class="primary-nav" aria-label="Primary">
     <a href="{{ request.url_for('dashboard_builds') }}"
@@ -18,6 +23,24 @@
        {% if _path == '/agentic' or _path.startswith('/agentic/issues') or _path.startswith('/agentic/bundles') %}class="active" aria-current="page"{% endif %}>Repairs</a>
   </nav>
   <span class="header-spacer"></span>
+  {# Facts about the whole system, not this page. Memoised on
+     tracker.shell_facts_seconds: the band projection is 24 ms and the
+     shell is on every page. #}
+  <a class="global-fact" href="{{ request.url_for('agentic_jobs') }}">
+    <span>Queue</span><strong class="tabular">{{ facts.queue }}</strong>
+  </a>
+  <a class="global-fact" href="{{ request.url_for('agentic_index') }}">
+    <span>Needs you</span><strong class="tabular">{{ facts.needs_you }}</strong>
+  </a>
+  <span class="global-fact{% if facts.runner_live %} live{% endif %}">
+    <span>Runner</span>
+    <strong>{{ facts.runner_status if facts.runner_live else 'not running' }}</strong>
+  </span>
+  {% if not can_operate() %}
+  {# Say why the controls are missing rather than leaving holes. #}
+  <span class="aud-pill" title="This tracker is serving read-only; every
+        operator control is hidden and refused at the endpoint.">anonymous</span>
+  {% endif %}
   <button class="theme-toggle" id="theme-toggle" type="button"
           aria-label="Switch between light and dark">
     <span id="theme-ic" aria-hidden="true">◑</span><span id="theme-lbl">Light</span>

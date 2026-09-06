@@ -352,7 +352,13 @@ def test_builds_renders_the_same_for_an_anonymous_reader(
         with TestClient(create_app(path)) as client:
             return client.get("/").text
 
-    assert render(True) == render(False)
+    # The <main> content, not the whole document: since M1 the shell
+    # tells an anonymous viewer why the operator controls are missing,
+    # so the chrome differs on purpose. What must not differ is the page.
+    def main_of(body: str) -> str:
+        return body[body.index("<main"):body.index("</main>")]
+
+    assert main_of(render(True)) == main_of(render(False))
 
 
 def test_an_origin_is_escaped_not_interpolated(tmp_path: Path) -> None:

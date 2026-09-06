@@ -97,6 +97,17 @@
 # few seconds. Set 0 to sweep on every render.
 #delivery_sweep_seconds = 60
 
+# How long the command bar's Queue / Needs you / Runner figures
+# may be reused before they are recomputed.
+#
+# They sit in the shell, so every page pays for them: measured at
+# 25.8 ms per render on 20,000 issues, almost all of it the
+# worklist band projection. A topbar figure is a glance -- the page
+# it links to recomputes on arrival and is the authority -- so a
+# few seconds of staleness buys every other render. Set 0 to
+# recompute on every page.
+#shell_facts_seconds = 15
+
 # How often the pipeline's health strip may re-run the delivery
 # preflight.
 #
