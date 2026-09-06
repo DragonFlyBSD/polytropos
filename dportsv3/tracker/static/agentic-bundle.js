@@ -555,3 +555,43 @@
     if (relpath) { show(relpath, false); }
   });
 })();
+
+/* --- Cockpit tabs ---------------------------------------------------------
+ * Four surfaces on one page. Everything is already in the DOM -- switching
+ * fetches nothing, so the artifact reader keeps its state and a 4 MB log
+ * does not reload when you look at the chat and come back.
+ *
+ * Progressive enhancement: with JS off every panel stays visible, which is
+ * exactly how this page read before the tabs (poly-c9ir).
+ */
+(function () {
+  "use strict";
+  var tabs = Array.prototype.slice.call(
+    document.querySelectorAll(".cockpit-tab"));
+  if (!tabs.length) return;
+  var panels = Array.prototype.slice.call(
+    document.querySelectorAll(".cockpit-panel"));
+
+  function show(name) {
+    tabs.forEach(function (t) {
+      var on = t.dataset.panel === name;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", String(on));
+    });
+    panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+  }
+
+  tabs.forEach(function (t) {
+    t.setAttribute("role", "tab");
+    t.addEventListener("click", function () {
+      show(t.dataset.panel);
+      // Addressable, so a link can open the page on the right surface and
+      // a reload keeps it there.
+      history.replaceState(null, "", "#" + t.dataset.panel);
+    });
+  });
+
+  var wanted = (location.hash || "").replace("#", "");
+  show(tabs.some(function (t) { return t.dataset.panel === wanted; })
+       ? wanted : tabs[0].dataset.panel);
+})();

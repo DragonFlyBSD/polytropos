@@ -579,6 +579,12 @@ def register(app, ctx):
             delivery_request = latest_review_request_for_bundle(
                 conn, bundle_id,
             )
+            # The occurrence selector: this occurrence plus its siblings,
+            # each with how many jobs worked it and how far they got.
+            occurrence_ids = [bundle_id] + [
+                b["bundle_id"] for b in prior_attempts
+            ] if bundle is not None else []
+            occurrence_stats = occurrence_attempts(conn, occurrence_ids)
             # poly-0e02.6: the verify request is the ONLY record of which
             # env a verification ran in -- bundles has no env column -- and
             # of a verify that never started at all. Nothing read it back
@@ -669,6 +675,7 @@ def register(app, ctx):
                 "dops_state": dops_state,
                 "operator_actions": operator_actions,
                 "delivery_request": delivery_request,
+                "occurrence_stats": occurrence_stats,
                 "verify": verify,
                 "verify_history": verify_history,
                 "bundle_activity": bundle_activity,

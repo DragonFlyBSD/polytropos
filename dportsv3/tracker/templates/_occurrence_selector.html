@@ -1,0 +1,49 @@
+{% from "_macros.html" import status_pill %}
+{# Every occurrence of this issue, this one included, with how many jobs
+   worked it and how far they got (occurrence_attempts -- jobs + job_events,
+   both durable). A list rather than a card strip so it still works at
+   twenty occurrences, collapsed by default so it does not push the fix
+   below the fold.
+
+   The furthest attempt is marked: it is usually the one worth reading, and
+   it is not always the newest. #}
+{% set occurrences = [bundle] + prior_attempts %}
+{% set ns = namespace(best=None, depth=-1) %}
+{% for o in occurrences %}
+  {% set st = occurrence_stats.get(o.bundle_id) %}
+  {% if st and st.furthest_state and job_state_depth.get(st.furthest_state, -1) > ns.depth %}
+    {% set ns.depth = job_state_depth.get(st.furthest_state, -1) %}
+    {% set ns.best = o.bundle_id %}
+  {% endif %}
+{% endfor %}
+<details class="panel occ-selector"{% if occurrences | length > 1 %} open{% endif %}>
+  <summary>
+    Occurrences of this issue
+    <span class="count">{{ occurrences | length }}{% if prior_attempts | length >= 10 %}+{% endif %}</span>
+  </summary>
+  <div class="occ-list">
+    {% for o in occurrences %}
+    {% set st = occurrence_stats.get(o.bundle_id) %}
+    {% set here = o.bundle_id == bundle.bundle_id %}
+    <a class="occ-row{% if here %} current{% endif %}"
+       href="{{ request.url_for('agentic_bundle_detail', bundle_id=o.bundle_id) }}"
+       {% if here %}aria-current="page"{% endif %}>
+      <span class="occ-row-id">{{ o.bundle_id }}</span>
+      <span class="occ-row-mid">
+        {{ status_pill(o) }}
+        {% if st %}
+        <span class="occ-attempts">{{ st.jobs }} job{{ 's' if st.jobs != 1 }}</span>
+        {% if st.furthest_state %}<span class="occ-attempts">reached {{ st.furthest_state }}</span>{% endif %}
+        {% if st.outcome %}<span class="occ-attempts">ended {{ st.outcome }}</span>{% endif %}
+        {% else %}
+        <span class="occ-attempts">no jobs</span>
+        {% endif %}
+        {% if o.bundle_id == ns.best and occurrences | length > 1 %}
+        <span class="pill cyan" title="got further than any other attempt">furthest</span>
+        {% endif %}
+      </span>
+      <span class="occ-row-when" title="{{ o.ts_utc }}">{{ o.ts_utc | relative_age }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</details>

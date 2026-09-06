@@ -643,30 +643,31 @@ def test_view_agentic_bundle_detail_shows_lifetime_token_cost(client: TestClient
     assert "4,600" in body
 
 
-def test_view_agentic_bundle_detail_shows_prior_attempts(client: TestClient) -> None:
-    """Step 9 — prior-attempts table lists other bundles for the same
-    (origin, target) and excludes the bundle being viewed.
+def test_view_agentic_bundle_detail_lists_the_sibling_occurrences(
+    client: TestClient,
+) -> None:
+    """UI-6 replaced the prior-attempts table here with the occurrence
+    selector: the same (origin, target) siblings, but including the one
+    being viewed and marked as current, because "which of these am I
+    looking at" is the question a selector answers and a table of the
+    OTHERS does not.
 
     Fixture has two ``devel/foo @2026Q2`` bundles (b-q2-foo and
-    b-q2-foo-retry) plus an unrelated ``devel/foo @main`` bundle. From
-    b-q2-foo's page, the table must include b-q2-foo-retry, exclude
-    b-q2-foo itself, and exclude the @main variant."""
+    b-q2-foo-retry) plus an unrelated ``devel/foo @main`` bundle. The job
+    page keeps the prior-attempts table.
+    """
     resp = client.get("/agentic/bundles/b-q2-foo")
     assert resp.status_code == 200
     body = resp.text
-    assert "Prior attempts for this origin" in body
-    # The retry bundle for the same target is listed…
-    assert "b-q2-foo-retry" in body
-    # …the @main variant (different target) is not.
-    assert "b-main-foo" not in body
-    # The current bundle appears in the page title etc., but not as a
-    # row inside the prior-attempts table — assert the table block
-    # itself doesn't contain a row link to the current bundle.
-    prior_section = body.split("Prior attempts for this origin", 1)[1]
-    prior_section = prior_section.split("</table>", 1)[0]
-    assert "b-q2-foo-retry" in prior_section
-    assert "/agentic/bundles/b-q2-foo<" not in prior_section
-    assert ">b-q2-foo</a>" not in prior_section
+    assert "Occurrences of this issue" in body
+
+    selector = body.split("Occurrences of this issue", 1)[1]
+    selector = selector.split("</details>", 1)[0]
+    assert "b-q2-foo-retry" in selector
+    # The one being viewed is in the list, and marked.
+    assert 'aria-current="page"' in selector
+    # The @main variant (different target) is not.
+    assert "b-main-foo" not in selector
 
 
 def test_view_agentic_job_detail_shows_prior_attempts(client: TestClient) -> None:

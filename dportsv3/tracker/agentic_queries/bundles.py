@@ -88,8 +88,15 @@ def count_bundles(
 
 
 def get_bundle(conn: sqlite3.Connection, bundle_id: str) -> dict[str, Any] | None:
+    # build_run_id is the farm build this failure came out of -- the
+    # cockpit's "originating build" link, and the ordinal C3 compares
+    # against an issue's known-good watermark. It lives on `runs`, not on
+    # the bundle, so every reader that wants it has to join.
     row = conn.execute(
-        "SELECT * FROM bundles WHERE bundle_id = ?", (bundle_id,)
+        "SELECT b.*, r.build_run_id AS build_run_id "
+        "FROM bundles b LEFT JOIN runs r ON r.run_id = b.run_id "
+        "WHERE b.bundle_id = ?",
+        (bundle_id,),
     ).fetchone()
     if row is None:
         return None

@@ -108,8 +108,9 @@ def test_occurrence_page_frames_under_its_issue(client):
     c, _ = client
     key = _curl_key()
     body = c.get("/agentic/bundles/c1").text
-    # The issue strip element links up to the issue detail...
-    assert 'class="occ-issue-strip"' in body
+    # UI-6 folded the separate issue strip into the page heading: the same
+    # facts, in the header that names what you are looking at.
+    assert "Open issue" in body
     assert f"/agentic/issues/{key}" in body
     assert "seen ×2" in body                  # rollup from the issue row
     # ...the breadcrumb routes Agentic > Issues > origin > occurrence...

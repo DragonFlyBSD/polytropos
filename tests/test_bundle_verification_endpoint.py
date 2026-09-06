@@ -216,8 +216,11 @@ def test_bundle_detail_renders_verified_status(client, seeded_db):
         json={"ok": True, "applied_diff_sha256": "a" * 64},
     )
     body = client.get("/agentic/bundles/b-verified").text
-    assert ">Status<" in body
+    # ">Status<" used to stand in for this and was matching the
+    # prior-attempts table's column header, which UI-6 replaced with the
+    # occurrence selector. Assert the pill that actually says it.
     assert "verified" in body
+    assert 'class="pill green"' in body
 
 
 def test_bundle_detail_renders_verify_failed_status(client, seeded_db):
@@ -227,7 +230,8 @@ def test_bundle_detail_renders_verify_failed_status(client, seeded_db):
         json={"ok": False, "applied_diff_sha256": "b" * 64},
     )
     body = client.get("/agentic/bundles/b-failed").text
-    assert ">Status<" in body
+    assert "verify failed" in body
+    assert 'class="pill red"' in body
     assert "verify failed" in body  # projected fix_status label
 
 

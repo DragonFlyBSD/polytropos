@@ -122,6 +122,11 @@ def create_app(db_path: str | Path) -> Any:
     # (see _common.can_operate); when operator auth lands it becomes a
     # per-request value and this becomes the place that resolves it.
     templates.env.globals["can_operate"] = _common.can_operate
+    # How deep into the investigation each job state is, so the occurrence
+    # selector can mark the attempt that got furthest. One definition, in
+    # the module that owns the state machine.
+    from dportsv3.agent.lifecycle import JOB_STATE_DEPTH  # noqa: PLC0415
+    templates.env.globals["job_state_depth"] = JOB_STATE_DEPTH
     # Compact relative ages ("18m ago") for the worklist queue rows.
     templates.env.filters["relative_age"] = render.relative_age
 
