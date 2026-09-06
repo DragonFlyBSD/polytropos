@@ -12,6 +12,7 @@ from dportsv3.tracker import (
 from dportsv3.tracker.agentic_queries import (
     activity_for_job,
     agentic_status,
+    runner_is_live,
     env_health_statuses,
     get_active_env,
     get_bundle,
@@ -102,8 +103,15 @@ def register(app, ctx):
 
     @app.get("/api/runner-status")
     def api_runner_status() -> dict[str, Any]:
+        """The singleton runner_status row, plus whether to believe it.
+
+        `status` is whatever the runner last wrote, and it survives the
+        process dying -- a runner killed mid-job leaves `processing` on the
+        row forever. `live` is the heartbeat read (poly-chf), and it is the
+        only thing that separates a runner working from one that stopped.
+        """
         with _conn() as conn:
-            return runner_status(conn)
+            return {**runner_status(conn), "live": runner_is_live(conn)}
 
     @app.get("/api/env-health")
     def api_env_health() -> list[dict[str, Any]]:

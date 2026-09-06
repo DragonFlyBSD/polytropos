@@ -7,31 +7,58 @@
   {% include "_agentic_subnav.html" %}
 
   <div class="tracker-page">
-    <h1>Runner status
-      {# Shares .live-indicator from progress.css with agentic_job.html.
-         The polling JS below toggles the `.active` class when the
-         operator pauses/resumes refresh. #}
-      <span id="live-indicator" class="live-indicator active">
-        <span class="dot"></span><span class="status-text">live</span>
-      </span>
-      <button type="button" id="live-toggle"
-              class="btn btn-ghost btn-sm"
-              style="margin-left:4px;">[pause]</button>
-    </h1>
-    <p class="lede">Heartbeat from the agent queue runner.</p>
+    <h1>Runner status</h1>
+    {# There is one runner. `runners` (runner_id, hostname, pid,
+       last_heartbeat_at) exists in the schema and nothing in the tracker
+       reads it; jobs.owner_id records who moved a job and nothing branches
+       on it. So this page shows the singleton runner_status row and says
+       "the runner", never "a runner" -- stable identity and a per-runner
+       view are poly-fij.3 and poly-fij.6. #}
+    <p class="lede">
+      The single agent queue runner, from its own heartbeat.
+      There is no operator pause: the runner pauses itself when its
+      dev-env is broken, when no env is resolved, or while dsynth holds
+      the build lock, and the stage below says which.
+    </p>
 
     <div class="tracker-card">
       <table style="font-size:12px;">
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Status</th><td id="runner-status">{{ runner.status }}</td></tr>
+        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Status</th>
+            <td><span id="runner-status">{{ runner.status }}</span>
+                <span id="runner-live">
+                  {%- if not runner_live %}
+                  <span class="pill neutral">not running</span>
+                  {%- endif %}
+                </span></td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Current job</th><td id="runner-job">{% if runner.job_id %}<a href="{{ request.url_for('agentic_job_detail', job_id=runner.job_id) }}">{{ runner.job_id }}</a>{% else %}—{% endif %}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Stage</th><td id="runner-stage">{{ runner.current_stage or '—' }}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Started at</th><td id="runner-started">{{ runner.started_at or '—' }}</td></tr>
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Updated at</th><td id="runner-updated">{{ runner.updated_at or '—' }}</td></tr>
+        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Last heartbeat</th><td id="runner-updated">{{ runner.updated_at or '—' }}</td></tr>
         {% if runner.extra_json %}
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;vertical-align:top;">Extra</th><td><pre id="runner-extra" style="margin:0;font-size:12px;">{{ runner.extra_json }}</pre></td></tr>
         {% endif %}
       </table>
+      {% if not runner_live %}
+      <p style="margin:8px 0 0;font-size:12px;color:var(--text-dim);">
+        The status above is whatever the runner last wrote. It survives the
+        process dying, so a runner killed mid-job still reads
+        <code>processing</code>; the heartbeat is what says otherwise.
+      </p>
+      {% endif %}
     </div>
+
+    {# This control refreshes THIS PAGE. It is not a runner control, and it
+       used to be labelled [pause] beside a Status cell that says "paused"
+       when the runner pauses itself (poly-0e02.8). #}
+    <p style="margin-top:10px;font-size:12px;color:var(--text-dim);">
+      <span id="live-indicator" class="live-indicator active">
+        <span class="dot"></span><span class="status-text">live</span>
+      </span>
+      Auto-refreshing this page every 4s.
+      <button type="button" id="live-toggle" class="btn btn-ghost btn-sm">
+        stop refreshing
+      </button>
+    </p>
   </div>
 
 {% endblock %}

@@ -961,7 +961,14 @@ def register(app, ctx):
             return templates.TemplateResponse(
                 request,
                 "agentic_runner.html",
-                {"title": "Runner", "runner": runner_status(conn)},
+                {
+                    "title": "Runner",
+                    "runner": runner_status(conn),
+                    # The row says what the runner last wrote; the heartbeat
+                    # says whether to believe it. A runner killed mid-job
+                    # leaves `processing` on the row forever.
+                    "runner_live": runner_is_live(conn),
+                },
             )
 
     @app.get("/agentic/activity", response_class=HTMLResponse)
