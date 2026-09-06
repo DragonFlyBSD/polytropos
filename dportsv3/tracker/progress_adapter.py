@@ -25,6 +25,46 @@ Result vocabulary mapping:
 Chunk size is fixed at 1000 entries per ``<NN>_history.json``, matching
 dsynth-progress' own chunking. ``kfiles`` in summary.json is the count
 of chunks the UI should fetch.
+
+MEASURED VERSUS DSYNTH SHAPE
+----------------------------
+
+Half of dsynth's payload describes a build farm this tracker does not
+model. Those fields are still emitted, because the lifted progress.js
+writes them straight into the DOM, but they carry no measurement and a
+view must render them as absent rather than as a value:
+
+- ``stats.load``, ``stats.swapinfo``   the literal ``"  -"``
+- ``stats.pkghour``, ``stats.impulse``, ``stats.meta``   the literal 0
+- ``builders[].phase``     always the literal ``"build"``
+- ``builders[].elapsed``   always ``" --:--:--"``, and it cannot be
+                           computed: enqueue_ports writes recorded_at=''
+                           and update_port_status only moves the status, so
+                           nothing anywhere records when a port started
+                           building (poly-0e02.4)
+- ``builders[].lines``     always ``""``
+- ``builders[].ID``        a zero-padded index over ports in 'building'
+                           state -- there is no per-builder-slot model
+- ``entry.ID``             always ``"00"``, same reason
+- ``entry.elapsed``, ``entry.duration``   always ``""``; the tracker
+                           records when a port finished, not how long
+                           it took
+
+Measured, and safe to render as fact: ``profile``, ``kickoff``,
+``active``, ``kfiles``, ``stats.elapsed`` (the run's own wall clock),
+the outcome counts, and every entry's origin / version / result /
+``recorded_at``.
+
+``stats.queued`` is dsynth's meaning of the word -- the whole queue, ie
+total_expected -- and NOT the number of rows sitting in 'queued' status.
+``stats.in_queue`` and ``stats.in_progress`` are those, added because a
+view that filtered on the dsynth name would be wrong by the size of the
+build.
+
+The queued rows themselves are deliberately not in this payload: a run
+starts with every origin queued, so shipping them would put the whole
+tree in summary.json. ``stats.in_queue`` is the count, and the Builds
+dashboard (``/?run=N&state=queued``) is the paged list.
 """
 
 from __future__ import annotations
@@ -112,7 +152,11 @@ def _run_summary_by_id(
         "kfiles": kfiles,
         "active": 1 if run["finished_at"] is None else 0,
         "stats": {
+            # dsynth's "queued" is the whole queue. in_queue / in_progress
+            # are the rows actually in those states.
             "queued": total_expected,
+            "in_queue": int(counts["queued"]),
+            "in_progress": int(counts["building"]),
             "built": int(counts["built"]),
             "failed": int(counts["failed"]),
             "ignored": int(counts["ignored"]),
@@ -179,6 +223,9 @@ def run_history_chunk(
             "origin": str(row["origin"]),
             "info": str(row["version"] or ""),
             "duration": "",
+            # Selected all along and then dropped on the floor, which left a
+            # "Recorded" column with nothing to show.
+            "recorded_at": str(row["recorded_at"] or "") or None,
         }
         # The bundle this port's failure produced, when it produced one.
         # It is what makes the row's logfile link resolvable: the log is a
@@ -199,6 +246,8 @@ def _empty_summary(target: str) -> dict[str, Any]:
         "active": 0,
         "stats": {
             "queued": 0,
+            "in_queue": 0,
+            "in_progress": 0,
             "built": 0,
             "failed": 0,
             "ignored": 0,
@@ -225,21 +274,25 @@ def _active_builders(
     table shape without claiming we have N physical builder slots.
     """
     rows = conn.execute(
-        """SELECT origin, recorded_at
+        """SELECT origin, version
            FROM build_results
            WHERE build_run_id = ? AND status = 'building'
-           ORDER BY recorded_at ASC""",
+           ORDER BY origin ASC""",
         (run_id,),
     ).fetchall()
     out: list[dict[str, Any]] = []
     for i, row in enumerate(rows):
         out.append(
             {
+                # ID / elapsed / phase / lines are dsynth shape and carry no
+                # measurement -- see the module docstring. origin, version
+                # and recorded_at are the row's own.
                 "ID": _two_digit(i),
                 "elapsed": " --:--:--",
                 "phase": "build",
                 "origin": str(row["origin"]),
                 "lines": "",
+                "version": str(row["version"] or "") or None,
             }
         )
     return out

@@ -110,13 +110,36 @@ def test_a_failure_whose_evidence_never_landed_carries_no_bundle(
     assert "bundle_id" not in _entries(client)["lang/rust"]
 
 
-def test_the_rest_of_the_entry_shape_is_unchanged(client: TestClient) -> None:
-    """dsynth-progress' own field set — the UI is lifted, not rewritten."""
+def test_the_entry_shape_is_dsynths_plus_what_the_tracker_knows(
+    client: TestClient,
+) -> None:
+    """dsynth-progress' own field set, and the two fields the tracker adds
+    because it has them and dsynth did not: the evidence bundle a failure
+    produced, and when the row was recorded.
+
+    recorded_at was selected by the chunk query all along and then dropped
+    before the entry was built, which left a "Recorded" column with nothing
+    to fill it (poly-0e02.4).
+    """
     entry = _entries(client)["editors/vim"]
     assert set(entry) == {"entry", "elapsed", "ID", "result", "origin",
-                          "info", "duration"}
+                          "info", "duration", "recorded_at"}
     assert entry["result"] == "built"
     assert entry["info"] == "9.2.0738"
+    assert entry["recorded_at"]
+
+
+def test_the_fields_dsynth_had_and_the_tracker_cannot_measure_stay_empty(
+    client: TestClient,
+) -> None:
+    """elapsed, ID and duration describe a builder-slot model this tracker
+    does not have. They are emitted so the lifted progress.js keeps working
+    and must never be filled in with something plausible."""
+    entry = _entries(client)["editors/vim"]
+
+    assert entry["elapsed"] == ""
+    assert entry["duration"] == ""
+    assert entry["ID"] == "00"
 
 
 # --- the link actually resolves --------------------------------------------
