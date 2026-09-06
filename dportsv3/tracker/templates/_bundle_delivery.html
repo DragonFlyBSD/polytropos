@@ -49,12 +49,12 @@
         {% endif %}
       </div>
       {% if dr.error %}
-      <div style="margin-top:6px;font-size:11px;color:var(--c-fail, #c00);">
+      <div style="margin-top:6px;font-size:12px;color:var(--c-fail, var(--red));">
         Error: <code>{{ dr.error }}</code>
       </div>
       {% endif %}
       {% if dr.note %}
-      <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">
+      <div style="margin-top:6px;font-size:12px;color:var(--text-dim);">
         Note: <code>{{ dr.note }}</code>
       </div>
       {% endif %}
@@ -103,7 +103,7 @@
           Mark closed
         </button>
         <span id="dp-delivery-status"
-              style="color:var(--text-dim);font-size:11px;"></span>
+              style="color:var(--text-dim);font-size:12px;"></span>
       </div>
       {% endif %}
     </div>

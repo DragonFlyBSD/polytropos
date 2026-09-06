@@ -67,7 +67,7 @@
       {% if _msg|length > 240 %}
         <details class="collapse-long">
           <summary>{{ _msg[:200] }}… <em>(click to expand, {{ _msg|length }} chars)</em></summary>
-          <div style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:11px;margin-top:4px;">{{ _msg }}</div>
+          <div style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;margin-top:4px;">{{ _msg }}</div>
         </details>
       {% else %}
         {{ _msg }}
@@ -83,7 +83,7 @@
       {% endif %}
       {% if is_tool and a.extra is mapping and a.extra.ok is false %}
       {% if a.extra.stderr_tail or a.extra.stdout_tail or a.extra.error %}
-      <details class="tool-diagnostic" style="margin-top:4px;font-size:11px;">
+      <details class="tool-diagnostic" style="margin-top:4px;font-size:12px;">
         <summary>
           show diagnostic{% if a.extra.rc is defined %} (rc={{ a.extra.rc }}){% endif %}
         </summary>
@@ -108,7 +108,7 @@
       {% if not is_tool and not is_llm_turn and a.extra is mapping
             and (a.extra.diag_tail or a.extra.stderr_tail
                  or a.extra.stdout_tail or a.extra.error) %}
-      <details class="tool-diagnostic" style="margin-top:4px;font-size:11px;">
+      <details class="tool-diagnostic" style="margin-top:4px;font-size:12px;">
         <summary>
           show diagnostic{% if a.extra.rc is defined %} (rc={{ a.extra.rc }}){% endif %}
         </summary>

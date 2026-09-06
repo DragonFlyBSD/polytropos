@@ -6,6 +6,9 @@
      body        — everything inside <body> (nav include + page content)
      scripts     — end-of-body <script> hooks (used from Phase 4c on) #}
 <!DOCTYPE html>
+{# The theme is applied before first paint. Deferring it to the end of the
+   body would show a light flash on a dark install, and the attribute is what
+   makes an explicit choice beat the OS in both directions. #}
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -14,9 +17,52 @@
   <link href="{{ request.url_for('static', path='progress.css') }}?v={{ static_v }}" type="text/css" rel="stylesheet">
   <link rel="icon" type="image/png" href="{{ request.url_for('static', path='favicon.png') }}">
   {% block head_extra %}{% endblock %}
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("dportsv3.theme");
+        if (t === "dark" || t === "light") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) { /* private mode: fall back to the OS preference */ }
+    })();
+  </script>
 </head>
 <body>
 {% block body %}{% endblock %}
 {% block scripts %}{% endblock %}
+<script>
+  (function () {
+    var btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    var root = document.documentElement;
+    function osDark() {
+      return window.matchMedia
+        && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    function active() {
+      return root.getAttribute("data-theme") || (osDark() ? "dark" : "light");
+    }
+    function paint() {
+      var dark = active() === "dark";
+      var ic = document.getElementById("theme-ic");
+      var lbl = document.getElementById("theme-lbl");
+      if (ic) ic.textContent = dark ? "◐" : "◑";
+      if (lbl) lbl.textContent = dark ? "Dark" : "Light";
+      btn.setAttribute("aria-pressed", String(dark));
+    }
+    btn.addEventListener("click", function () {
+      var next = active() === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("dportsv3.theme", next); } catch (e) {}
+      paint();
+    });
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", paint);
+    }
+    paint();
+  })();
+</script>
 </body>
 </html>

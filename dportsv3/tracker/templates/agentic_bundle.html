@@ -27,7 +27,7 @@
     .chat-msg .artifact-markdown { white-space:normal; }
     .chat-msg .artifact-markdown > :first-child { margin-top:0; }
     .chat-msg .artifact-markdown > :last-child { margin-bottom:0; }
-    .chat-role { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); margin-bottom:3px; }
+    .chat-role { font-size: 12px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); margin-bottom:3px; }
     .chat-input-row { display:flex; gap:8px; margin-top:10px; align-items:flex-end; }
     .chat-input-row textarea { flex:1; min-height:44px; max-height:160px; resize:vertical; font:13px/1.45 inherit; padding:8px 10px; border:1px solid var(--border, #d8dee9); border-radius:6px; box-sizing:border-box; }
     /* WS9c: occurrence-under-issue framing. */
@@ -35,7 +35,7 @@
       border:1px solid var(--border); border-radius:8px; text-decoration:none; color:var(--text);
       background:var(--bg-sunk, #f2efe8); font-size:13px; }
     .occ-issue-strip:hover { border-color:var(--text-dim); }
-    .occ-issue-lbl { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); font-weight:700; }
+    .occ-issue-lbl { font-size: 12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); font-weight:700; }
     .occ-issue-origin { font-weight:640; }
     .occ-issue-meta { color:var(--text-dim); }
     .occ-issue-go { margin-left:auto; color:var(--text-dim); font-size:12px; }
@@ -108,9 +108,9 @@
       <tbody>
         {% for ev in tool_trace %}
         {% set res = ev.result if ev.result is mapping else {} %}
-        <tr {% if ev.type == 'attempt_start' %}style="background:var(--c-info-bg, #f0f4ff);font-weight:600;"
-            {% elif ev.type == 'attempt_end' %}style="background:var(--c-success-bg, #f0fff4);font-weight:600;"
-            {% elif ev.type == 'tool_call' %}style="font-family:ui-monospace,monospace;font-size:11px;"
+        <tr {% if ev.type == 'attempt_start' %}style="background:var(--c-info-bg, var(--surface));font-weight:600;"
+            {% elif ev.type == 'attempt_end' %}style="background:var(--c-success-bg, var(--surface));font-weight:600;"
+            {% elif ev.type == 'tool_call' %}style="font-family:ui-monospace,monospace;font-size:12px;"
             {% endif %}>
           <td>{{ ev.attempt or '—' }}</td>
           <td>{{ ev.turn if ev.turn is defined else '—' }}</td>
@@ -157,21 +157,21 @@
     </summary>
     <div class="target-grid" style="margin:8px 0 14px;">
       <div class="tracker-card">
-        <div style="color:var(--text-dim);font-size:11px;">Prompt</div>
+        <div style="color:var(--text-dim);font-size:12px;">Prompt</div>
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.prompt_tokens) }}</div>
       </div>
       <div class="tracker-card">
-        <div style="color:var(--text-dim);font-size:11px;">Completion</div>
+        <div style="color:var(--text-dim);font-size:12px;">Completion</div>
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.completion_tokens) }}</div>
       </div>
       <div class="tracker-card">
-        <div style="color:var(--text-dim);font-size:11px;">Billable (real cost)</div>
+        <div style="color:var(--text-dim);font-size:12px;">Billable (real cost)</div>
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.billable_tokens or 0) }}</div>
       </div>
       <div class="tracker-card">
         {# Total re-counts the cached prefix every turn, so it runs
            7-21x billable. Kept, but never unlabelled (poly-0g0). #}
-        <div style="color:var(--text-dim);font-size:11px;">Total, incl. re-billed cache</div>
+        <div style="color:var(--text-dim);font-size:12px;">Total, incl. re-billed cache</div>
         <div style="font-size:18px;font-weight:600;">{{ '{:,}'.format(port_token_usage.total_tokens) }}</div>
       </div>
     </div>

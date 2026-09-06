@@ -4,12 +4,12 @@
   <style>
     .session-layout { display: grid; grid-template-columns: 1fr 240px; gap: 16px; align-items: start; }
     @media (max-width: 900px) { .session-layout { grid-template-columns: 1fr; } }
-    .session-toc { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; font-size: 11px; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 8px 10px; background: var(--panel-bg, #f8fafc); }
+    .session-toc { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; font-size: 12px; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 8px 10px; background: var(--panel-bg, #f8fafc); }
     .session-toc a { display: block; padding: 2px 0; text-decoration: none; color: var(--text, #1f2937); }
     .session-toc a:hover { text-decoration: underline; }
     .session-toc .toc-tool-name { font-family: ui-monospace, monospace; color: #6366f1; }
     .session-toc .toc-bytes { color: var(--text-dim, #9ca3af); float: right; }
-    .session-toc .toc-section-label { color: var(--text-dim, #6b7280); text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border, #e5e7eb); }
+    .session-toc .toc-section-label { color: var(--text-dim, #6b7280); text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border, #e5e7eb); }
     .session-toc .toc-section-label:first-child { margin-top: 0; padding-top: 0; border-top: none; }
     .turn-card { border: 1px solid var(--border, #d8dee9); border-radius: 6px; margin-bottom: 10px; padding: 10px 14px; background: #fff; }
     .turn-card.role-system { background: #fdfdfd; }
@@ -18,29 +18,29 @@
     .turn-card.role-tool { background: #fafafa; }
     .turn-header { display: flex; align-items: baseline; gap: 12px; font-size: 12px; color: var(--text-dim, #6b7280); margin-bottom: 6px; }
     .turn-id { font-family: ui-monospace, monospace; color: var(--text, #1f2937); font-weight: 600; }
-    .turn-role-pill { font-size: 10px; padding: 1px 6px; border-radius: 8px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .turn-role-pill { font-size: 12px; padding: 1px 6px; border-radius: 8px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
     .pill-system { background: #e5e7eb; color: #374151; }
     .pill-user { background: #ede9fe; color: #5b21b6; }
     .pill-assistant { background: #dbeafe; color: #1e40af; }
     .pill-tool { background: #fef3c7; color: #92400e; }
-    .turn-byte-badge { color: var(--text-dim, #9ca3af); font-size: 11px; font-family: ui-monospace, monospace; }
+    .turn-byte-badge { color: var(--text-dim, #9ca3af); font-size: 12px; font-family: ui-monospace, monospace; }
     .reasoning-block { margin-top: 8px; }
-    .reasoning-block > summary { cursor: pointer; color: var(--text-dim, #6b7280); font-size: 11px; user-select: none; }
+    .reasoning-block > summary { cursor: pointer; color: var(--text-dim, #6b7280); font-size: 12px; user-select: none; }
     .reasoning-block > summary:hover { color: var(--text, #1f2937); }
     .reasoning-content { white-space: pre-wrap; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f3ff; border-left: 3px solid #a78bfa; padding: 8px 12px; margin-top: 6px; max-height: 50vh; overflow-y: auto; }
     .assistant-text { margin-top: 8px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
     .tool-calls { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-    .tool-call { display: grid; grid-template-columns: max-content 1fr; gap: 8px; font-family: ui-monospace, monospace; font-size: 11px; align-items: baseline; }
+    .tool-call { display: grid; grid-template-columns: max-content 1fr; gap: 8px; font-family: ui-monospace, monospace; font-size: 12px; align-items: baseline; }
     .tool-call .tool-call-name { color: #6366f1; font-weight: 600; }
     .tool-call .tool-call-args { color: var(--text, #1f2937); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tool-summary { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 6px; padding: 4px 8px; background: var(--panel-bg, #f8fafc); border-radius: 4px; }
+    .tool-summary { font-family: ui-monospace, monospace; font-size: 12px; margin-top: 6px; padding: 4px 8px; background: var(--panel-bg, #f8fafc); border-radius: 4px; }
     .tool-summary.has-error { background: #fef2f2; color: #991b1b; }
     .tool-summary .headline { white-space: pre-wrap; }
     .tool-summary .warning-line { color: #b45309; font-weight: 600; margin-top: 2px; }
     .tool-raw { margin-top: 6px; }
-    .tool-raw > summary { cursor: pointer; color: var(--text-dim, #6b7280); font-size: 11px; user-select: none; }
+    .tool-raw > summary { cursor: pointer; color: var(--text-dim, #6b7280); font-size: 12px; user-select: none; }
     .tool-raw-content { white-space: pre-wrap; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel-bg, #f8fafc); border: 1px solid var(--border, #e5e7eb); border-radius: 4px; padding: 8px 10px; margin-top: 6px; max-height: 60vh; overflow-y: auto; }
-    .user-prompt-sections { margin-top: 8px; font-size: 11px; border-collapse: collapse; width: 100%; }
+    .user-prompt-sections { margin-top: 8px; font-size: 12px; border-collapse: collapse; width: 100%; }
     .user-prompt-sections th, .user-prompt-sections td { border: 1px solid var(--border, #e5e7eb); padding: 4px 8px; text-align: left; }
     .user-prompt-sections th { background: var(--panel-bg, #f8fafc); font-weight: 600; }
     .user-prompt-sections td.byte-cell { text-align: right; font-family: ui-monospace, monospace; }
@@ -49,7 +49,7 @@
     .system-content, .user-content { white-space: pre-wrap; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel-bg, #f8fafc); border: 1px solid var(--border, #e5e7eb); border-radius: 4px; padding: 8px 10px; margin-top: 8px; max-height: 60vh; overflow-y: auto; }
     .meta-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 12px 0; }
     .meta-cell { padding: 8px 12px; background: var(--panel-bg, #f8fafc); border: 1px solid var(--border, #e5e7eb); border-radius: 6px; }
-    .meta-label { font-size: 10px; color: var(--text-dim, #6b7280); text-transform: uppercase; letter-spacing: 0.05em; }
+    .meta-label { font-size: 12px; color: var(--text-dim, #6b7280); text-transform: uppercase; letter-spacing: 0.05em; }
     .meta-value { font-size: 16px; font-weight: 600; font-family: ui-monospace, monospace; }
     .session-error { padding: 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #991b1b; margin-bottom: 12px; }
     /* Inline anchor target for #tool-<call_id> jumps from an assistant
@@ -155,7 +155,7 @@
                 </table>
               {% endif %}
               <details style="margin-top:8px;">
-                <summary style="cursor:pointer;color:var(--text-dim);font-size:11px;">show full content</summary>
+                <summary style="cursor:pointer;color:var(--text-dim);font-size:12px;">show full content</summary>
                 <pre class="user-content">{{ item.content }}</pre>
               </details>
             </details>
@@ -227,9 +227,9 @@
                 <span class="turn-role-pill pill-tool">tool</span>
                 <span class="turn-id">{% if item.tool_name %}{{ item.tool_name }}{% else %}result{% endif %}</span>
                 {% if item.summary.ok is sameas true %}
-                  <span class="stat-pill built" style="font-size:10px;">ok</span>
+                  <span class="stat-pill built" style="font-size:12px;">ok</span>
                 {% elif item.summary.ok is sameas false %}
-                  <span class="stat-pill failed" style="font-size:10px;">fail</span>
+                  <span class="stat-pill failed" style="font-size:12px;">fail</span>
                 {% endif %}
                 <span class="turn-byte-badge">{{ '{:,}'.format(item.bytes) }} bytes</span>
               </div>

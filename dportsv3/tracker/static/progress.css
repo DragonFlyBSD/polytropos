@@ -4,42 +4,387 @@
   padding: 0;
 }
 
-:root {
-  --amber:        #c47000;
-  --amber-dim:    #a05800;
-  --amber-border: rgba(180, 100, 0, 0.22);
-  --bg:           #f7f5f0;
-  --bg-card:      #ffffff;
-  --bg-sunk:      #f2efe8;
-  --border:       #e4dfd4;
-  --border-strong:#d8d2c4;
-  --text:         #1c1c1c;
-  --text-dim:     #888070;
+/* Polytropos tracker — design tokens, base typography and primitives.
+ *
+ * THREE STATES, NOT TWO. A viewer either chose a theme or did not, and the
+ * default ("system") stamps nothing on the root element. So the bare :root
+ * below carries the COMPLETE light palette; the media query redefines only
+ * tokens, guarded so an explicit light choice still beats a dark OS; and the
+ * attribute block redefines them again so the toggle wins in both
+ * directions. No colour may be defined ONLY inside a media or [data-theme]
+ * block -- a page rendered in the un-stamped state would then paint one
+ * theme's text on the other theme's ground.
+ */
 
-  --c-built:      #2a7a2a;
-  --c-built-bg:   #ecf7ec;
-  --c-failed:     #c03030;
-  --c-failed-bg:  #fdeaea;
-  --c-skipped:    #b36800;
-  --c-skipped-bg: #fff5e6;
-  --c-ignored:    #7a6000;
-  --c-ignored-bg: #fffbe6;
-  --c-meta:       #6040b0;
-  --c-meta-bg:    #f2eeff;
-  --c-neutral-bg: #eeebe4;
+:root {
+  color-scheme: light;
+  /* --cyan, --amber and --faint are a shade darker than the mock's, and the
+     dark --faint a shade lighter, because measured against the grounds they
+     actually sit on they came in at 4.48, 4.49, 3.84 and 4.48 -- just under
+     the 4.5 AA needs for normal text. Same hues, enough contrast. */
+  color-scheme: light;
+  /* Light — the default. Cool-biased neutrals so the greys read as chosen
+  against the cyan accent rather than as untinted default grey. */
+  --bg: #e9edf2;
+  --nav: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f2f5f9;
+  --surface-3: #e3eaf2;
+  --head: #f7f9fb;
+  --head-deep: #eef2f6;
+  --code-bg: #f6f8fa;
+  --code-fg: #253039;
+  --track: #ced7e0;
+  --line: #d5dde5;
+  --line-hot: #b4c1cd;
+  --text: #15202b;
+  --muted: #52616e;
+  --faint: #5b6874;
+  --prose: #384752;
+  --cyan: #06688c;
+  --cyan-soft: #ddf0fb;
+  --cyan-line: #7cbfe0;
+  --red: #c42a37;
+  --red-soft: #fdeaec;
+  --red-line: #eeaab0;
+  --amber: #8a570c;
+  --amber-soft: #fcf1dc;
+  --amber-line: #e3c186;
+  --green: #1a7a4e;
+  --green-soft: #e0f4ea;
+  --green-line: #93d2b3;
+  --violet: #5843b5;
+  --violet-soft: #ece9fb;
+  --violet-line: #bdb2e8;
+  --on-accent: #ffffff;
+  --grid-bg: #eef2f7;
+  --grid-dot: #d2dbe4;
+  --diff-head: #eef4f9;
+  --diff-hunk: #f3effc;
+  --diff-ln: #7d8b98;
+  --diff-add-bg: rgba(26,122,78,.10);
+  --diff-add-fg: #135c3a;
+  --diff-del-bg: rgba(196,42,55,.09);
+  --diff-del-fg: #93202a;
+  --diff-ctx-fg: #465561;
+  --reason-bg: #f4f1fd;
+  --reason-fg: #443a72;
+  --err-fg: #93202a;
+  --shadow: 0 1px 2px rgba(21,32,43,.06), 0 1px 0 rgba(21,32,43,.03);
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* --- compatibility aliases -------------------------------------------
+   * The names 354 existing rules already use, expressed in the new tokens
+   * rather than in hex. Rewriting every rule was not worth the churn: this
+   * makes the whole stylesheet follow the theme today, and each view bead
+   * can retire its own aliases as it restyles its page.
+   */
+  --bg-card:        var(--surface);
+  --bg-sunk:        var(--surface-2);
+  --panel-bg:       var(--surface);
+  --border:         var(--line);
+  --border-strong:  var(--line-hot);
+  --text-dim:       var(--muted);
+  --text-faint:     var(--faint);
+  --c-link:         var(--cyan);
+  --c-built:        var(--green);
+  --c-built-bg:     var(--green-soft);
+  --c-failed:       var(--red);
+  --c-failed-bg:    var(--red-soft);
+  --c-skipped:      var(--amber);
+  --c-skipped-bg:   var(--amber-soft);
+  --c-ignored:      var(--faint);
+  --c-ignored-bg:   var(--surface-3);
+  --c-meta:         var(--violet);
+  --c-meta-bg:      var(--violet-soft);
+  --c-neutral-bg:   var(--surface-3);
+  /* Used only from template inline styles, each with a hardcoded fallback
+     from the old palette -- so they silently ignored the theme. Defining
+     them here is what makes those 18 uses follow it. */
+  --c-fail:         var(--red);
+  --c-fail-bg:      var(--red-soft);
+  --c-ok:           var(--green);
+  --c-success-bg:   var(--green-soft);
+  --c-info-bg:      var(--cyan-soft);
+  --amber-dim:      var(--amber);
+  --amber-border:   var(--amber-line);
 }
 
+/* Dark, for a dark OS — unless the viewer explicitly chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #090d12;
+    --nav: #070a0e;
+    --surface: #10161d;
+    --surface-2: #151d26;
+    --surface-3: #1b2631;
+    --head: #0b1117;
+    --head-deep: #0b1016;
+    --code-bg: #080d11;
+    --code-fg: #cfdae0;
+    --track: #26323d;
+    --line: #2c3946;
+    --line-hot: #4a5b6b;
+    --text: #e8edf2;
+    --muted: #a3afba;
+    --faint: #82909d;
+    --prose: #c5ced5;
+    --cyan: #39bfff;
+    --cyan-soft: #14394c;
+    --cyan-line: #28657e;
+    --red: #ff626d;
+    --red-soft: #3b1d24;
+    --red-line: #78343c;
+    --amber: #f1aa42;
+    --amber-soft: #392b18;
+    --amber-line: #755320;
+    --green: #54d99f;
+    --green-soft: #15372c;
+    --green-line: #2b674d;
+    --violet: #a78bfa;
+    --violet-soft: #241d3d;
+    --violet-line: #4b3f7a;
+    --on-accent: #06131a;
+    --grid-bg: #0c1218;
+    --grid-dot: #27333e;
+    --diff-head: #0d151c;
+    --diff-hunk: #0c1219;
+    --diff-ln: #4a5866;
+    --diff-add-bg: rgba(84,217,159,.09);
+    --diff-add-fg: #9ce9c4;
+    --diff-del-bg: rgba(255,98,109,.09);
+    --diff-del-fg: #ffa8ad;
+    --diff-ctx-fg: #93a1ad;
+    --reason-bg: #12102a;
+    --reason-fg: #b9aee8;
+    --err-fg: #ffb0b5;
+    --shadow: none;
+  }
+}
+
+/* Dark, explicitly chosen — wins over a light OS. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #090d12;
+  --nav: #070a0e;
+  --surface: #10161d;
+  --surface-2: #151d26;
+  --surface-3: #1b2631;
+  --head: #0b1117;
+  --head-deep: #0b1016;
+  --code-bg: #080d11;
+  --code-fg: #cfdae0;
+  --track: #26323d;
+  --line: #2c3946;
+  --line-hot: #4a5b6b;
+  --text: #e8edf2;
+  --muted: #a3afba;
+  --faint: #82909d;
+  --prose: #c5ced5;
+  --cyan: #39bfff;
+  --cyan-soft: #14394c;
+  --cyan-line: #28657e;
+  --red: #ff626d;
+  --red-soft: #3b1d24;
+  --red-line: #78343c;
+  --amber: #f1aa42;
+  --amber-soft: #392b18;
+  --amber-line: #755320;
+  --green: #54d99f;
+  --green-soft: #15372c;
+  --green-line: #2b674d;
+  --violet: #a78bfa;
+  --violet-soft: #241d3d;
+  --violet-line: #4b3f7a;
+  --on-accent: #06131a;
+  --grid-bg: #0c1218;
+  --grid-dot: #27333e;
+  --diff-head: #0d151c;
+  --diff-hunk: #0c1219;
+  --diff-ln: #4a5866;
+  --diff-add-bg: rgba(84,217,159,.09);
+  --diff-add-fg: #9ce9c4;
+  --diff-del-bg: rgba(255,98,109,.09);
+  --diff-del-fg: #ffa8ad;
+  --diff-ctx-fg: #93a1ad;
+  --reason-bg: #12102a;
+  --reason-fg: #b9aee8;
+  --err-fg: #ffb0b5;
+  --shadow: none;
+}
+
+/* --- base ------------------------------------------------------------------
+ * Typography floor from the proposal: 15px body, 14px operational tables,
+ * 13px metadata, nothing essential below 12px. The old sheet set the whole
+ * document in 12px monospace, which is why everything read as terminal
+ * output. Monospace is for the things that ARE fixed-width data -- origins,
+ * IDs, metrics, timestamps, evidence -- not for prose.
+ *
+ * These sit ahead of every existing rule on purpose: a view that has not
+ * been restyled yet keeps whatever it already declared.
+ */
 body {
-  font-family: Menlo, Consolas, "Courier New", monospace;
-  font-size: 12px;
-  background: var(--bg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);          /* explicit: never inherit the host ground */
   color: var(--text);
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
 }
 
-a { text-decoration: none; color: var(--amber); }
-a:hover { color: var(--amber-dim); }
+/* The data surfaces keep monospace, because column alignment is what they
+   are for. Prose in the same page does not. */
+code, pre, kbd, samp, .mono,
+table.data-table td, table.data-table th,
+input, select, textarea {
+  font-family: var(--mono);
+}
+
+h1 { font-size: 24px; line-height: 1.25; margin: 0 0 4px; }
+h2 { font-size: 19px; line-height: 1.3;  margin: 0 0 4px; }
+h3 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
+h1, h2, h3 { text-wrap: balance; font-weight: 650; }
+a { color: var(--cyan); }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* --- primitives ------------------------------------------------------------
+ * The vocabulary every view composes from. Named for what they mean, not for
+ * where they first appeared.
+ */
+
+/* Status pill. State is carried by text AND colour, never colour alone. */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 2px;
+  font: 600 12px/1.6 var(--mono);
+  border: 1px solid transparent; white-space: nowrap;
+}
+.pill.green  { color: var(--green);  background: var(--green-soft);  border-color: var(--green-line); }
+.pill.red    { color: var(--red);    background: var(--red-soft);    border-color: var(--red-line); }
+.pill.amber  { color: var(--amber);  background: var(--amber-soft);  border-color: var(--amber-line); }
+.pill.cyan   { color: var(--cyan);   background: var(--cyan-soft);   border-color: var(--cyan-line); }
+.pill.violet { color: var(--violet); background: var(--violet-soft); border-color: var(--violet-line); }
+.pill.neutral{ color: var(--muted);  background: var(--surface-2);   border-color: var(--line); }
+
+/* Panel + its heading strip. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.panel + .panel { margin-top: 10px; }
+.content-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: var(--head);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px; font-weight: 650; color: var(--text);
+}
+.content-head strong { margin-left: auto; font: 500 12px/1 var(--mono); color: var(--muted); }
+
+/* Operational table. */
+table.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.data-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 7px 12px; text-align: left;
+  background: var(--head-deep); color: var(--muted);
+  font-size: 12px; font-weight: 650; letter-spacing: .04em;
+  border-bottom: 1px solid var(--line);
+}
+table.data-table td { padding: 7px 12px; border-bottom: 1px solid var(--line); }
+table.data-table tbody tr:hover { background: var(--surface-2); }
+table.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Wide content scrolls inside its own frame; the page body never does. */
+.table-scroll { overflow-x: auto; }
+
+/* Native controls inherit the page's ground rather than the OS's, or a
+   select's options render dark-on-dark. */
+select, option { background: var(--surface); color: var(--text); }
+
+/* Buttons. */
+.action {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 30px; padding: 0 12px;
+  border: 1px solid var(--line-hot); border-radius: 3px;
+  background: var(--surface); color: var(--text);
+  font: 600 13px/1 var(--sans); cursor: pointer;
+}
+.action:hover:not(:disabled) { background: var(--surface-2); }
+.action:disabled { opacity: .5; cursor: not-allowed; }
+.action.primary { background: var(--cyan); border-color: var(--cyan); color: var(--on-accent); }
+.action.danger  { color: var(--red); border-color: var(--red-line); }
+@media (pointer: coarse) { .action { min-height: 40px; padding: 0 16px; } }
+
+/* Empty state. Says which kind of nothing this is. */
+.empty {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 28px 20px; text-align: center; color: var(--muted); font-size: 14px;
+}
+.empty strong { color: var(--text); font-size: 15px; }
+
+/* Live indicator. */
+.live-dot { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--mono); color: var(--muted); }
+.live-dot::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--faint);
+}
+.live-dot.on::before { background: var(--green); animation: live-blip 1.8s ease-in-out infinite; }
+@keyframes live-blip { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+@media (prefers-reduced-motion: reduce) {
+  .live-dot.on::before { animation: none; }
+}
+
+/* --- shell -----------------------------------------------------------------
+ * One header for every page: product mark, the three primary views, and the
+ * theme control.
+ */
+.app-header {
+  display: flex; align-items: stretch; gap: 0;
+  background: var(--nav); border-bottom: 1px solid var(--line);
+}
+.app-brand {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 8px 16px; border-right: 1px solid var(--line);
+  color: var(--text); text-decoration: none;
+}
+.app-brand b { font: 700 14px/1.2 var(--sans); letter-spacing: .04em; }
+.app-brand span { font: 500 12px/1.2 var(--mono); color: var(--faint); letter-spacing: .06em; }
+.primary-nav { display: flex; }
+.primary-nav a {
+  display: flex; align-items: center; padding: 0 20px;
+  border-right: 1px solid var(--line); border-bottom: 2px solid transparent;
+  color: var(--muted); text-decoration: none; font: 600 14px/1 var(--sans);
+}
+.primary-nav a:hover { color: var(--text); background: var(--surface-2); }
+.primary-nav a.active { color: var(--cyan); border-bottom-color: var(--cyan); background: var(--surface); }
+.header-spacer { flex: 1; }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 14px; border: 0; border-left: 1px solid var(--line);
+  background: transparent; color: var(--muted);
+  font: 600 12px/1 var(--sans); cursor: pointer;
+}
+.theme-toggle:hover { color: var(--text); background: var(--surface-2); }
+@media (max-width: 700px) {
+  .app-brand span { display: none; }
+  .primary-nav a { padding: 0 13px; }
+}
+
+
+
+/* The old base: 12px monospace for the entire document, which is why every
+   page read as terminal output. Superseded by the base block above -- the
+   data surfaces keep monospace, prose does not. */
+
+/* Links take the accent. Amber is a STATE colour here -- waiting, manual,
+   needs-a-decision -- so spending it on every link made the page look like
+   it was warning about itself. */
+a { text-decoration: none; color: var(--cyan); }
+a:hover { color: var(--cyan); text-decoration: underline; }
 
 /* ── Header ── */
 
@@ -83,7 +428,7 @@ a:hover { color: var(--amber-dim); }
   border: 0;
   border-collapse: collapse;
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 #build_info th,
@@ -124,7 +469,7 @@ a:hover { color: var(--amber-dim); }
 #stress table thead th {
   background: transparent;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   font-weight: 500;
@@ -182,7 +527,7 @@ a:hover { color: var(--amber-dim); }
 }
 
 .stat-label {
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -220,10 +565,10 @@ a:hover { color: var(--amber-dim); }
 /* ── Builders table ── */
 
 #builders_zone_2 {
-  background: #111;
+  background: var(--code-bg);
   border-radius: 4px;
   overflow: hidden;
-  border: 1px solid #252525;
+  border: 1px solid var(--line-hot);
   margin-bottom: 20px;
 }
 
@@ -243,9 +588,9 @@ a:hover { color: var(--amber-dim); }
 }
 
 .builders_table thead td {
-  background: #1a1a2e;
-  color: #8888aa;
-  font-size: 10px;
+  background: var(--code-bg);
+  color: var(--cyan);
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -253,14 +598,14 @@ a:hover { color: var(--amber-dim); }
 }
 
 .builders_table tbody td {
-  border-bottom: 1px solid #1c1c1c;
+  border-bottom: 1px solid var(--line-hot);
 }
 
 .builders_table td:nth-child(1) { width: 60px;  text-align: center; cursor: pointer; }
-.builders_table td:nth-child(2) { width: 90px;  color: #888; }
-.builders_table td:nth-child(3) { width: 160px; color: #ffd060; }
-.builders_table td:nth-child(4) { color: #66ddff; }
-.builders_table td:nth-child(5) { width: 80px;  text-align: right; padding-right: 14px; color: #777; }
+.builders_table td:nth-child(2) { width: 90px;  color: var(--muted); }
+.builders_table td:nth-child(3) { width: 160px; color: var(--amber); }
+.builders_table td:nth-child(4) { color: var(--cyan); }
+.builders_table td:nth-child(5) { width: 80px;  text-align: right; padding-right: 14px; color: var(--muted); }
 
 /* Builder status dot */
 .b-dot {
@@ -272,42 +617,42 @@ a:hover { color: var(--amber-dim); }
   vertical-align: middle;
   flex-shrink: 0;
 }
-.b-dot-idle   { background: #444; }
-.b-dot-active { background: #2a9a2a; box-shadow: 0 0 4px #2a9a2a; }
+.b-dot-idle   { background: var(--code-bg); }
+.b-dot-active { background: var(--green); box-shadow: 0 0 4px var(--green); }
 
 /* ANSI palette */
-.b01,.b33{color:#FFF}
-.b02,.b34{color:#9F9}
-.b03,.b35{color:#FF9}
-.b04,.b36{color:#F9F}
-.b05,.b37{color:#F99}
-.b06,.b38{color:#06F}
-.b07,.b39{color:#0FF}
-.b08,.b40{color:#808080}
-.b09,.b41{color:#CCC}
-.b10,.b42{color:#0C6}
-.b11,.b43{color:#C96}
-.b12,.b44{color:#C0C}
-.b13,.b45{color:#C00}
-.b14,.b46{color:#06F}
-.b15,.b47{color:#099}
-.b16,.b48{color:#adad85}
-.b17,.b49{color:#FFF;text-decoration:underline}
-.b18,.b50{color:#9F9;text-decoration:underline}
-.b19,.b51{color:#FF9;text-decoration:underline}
-.b20,.b52{color:#F9F;text-decoration:underline}
-.b21,.b53{color:#F99;text-decoration:underline}
-.b22,.b54{color:#06F;text-decoration:underline}
-.b23,.b55{color:#0FF;text-decoration:underline}
-.b24,.b56{color:#808080;text-decoration:underline}
-.b25,.b57{color:#CCC;text-decoration:underline}
-.b26,.b58{color:#0C6;text-decoration:underline}
-.b27,.b59{color:#C96;text-decoration:underline}
-.b28,.b60{color:#C0C;text-decoration:underline}
-.b29,.b61{color:#C00;text-decoration:underline}
-.b30,.b62{color:#06F;text-decoration:underline}
-.b31,.b63{color:#099;text-decoration:underline}
-.b32,.b64{color:#adad85;text-decoration:underline}
+.b01,.b33{color:var(--on-accent)}
+.b02,.b34{color:var(--green)}
+.b03,.b35{color:var(--amber)}
+.b04,.b36{color:var(--violet)}
+.b05,.b37{color:var(--red)}
+.b06,.b38{color:var(--cyan)}
+.b07,.b39{color:var(--cyan)}
+.b08,.b40{color:var(--muted)}
+.b09,.b41{color:var(--faint)}
+.b10,.b42{color:var(--green)}
+.b11,.b43{color:var(--amber)}
+.b12,.b44{color:var(--violet)}
+.b13,.b45{color:var(--red)}
+.b14,.b46{color:var(--cyan)}
+.b15,.b47{color:var(--cyan)}
+.b16,.b48{color:var(--amber)}
+.b17,.b49{color:var(--on-accent);text-decoration:underline}
+.b18,.b50{color:var(--green);text-decoration:underline}
+.b19,.b51{color:var(--amber);text-decoration:underline}
+.b20,.b52{color:var(--violet);text-decoration:underline}
+.b21,.b53{color:var(--red);text-decoration:underline}
+.b22,.b54{color:var(--cyan);text-decoration:underline}
+.b23,.b55{color:var(--cyan);text-decoration:underline}
+.b24,.b56{color:var(--muted);text-decoration:underline}
+.b25,.b57{color:var(--faint);text-decoration:underline}
+.b26,.b58{color:var(--green);text-decoration:underline}
+.b27,.b59{color:var(--amber);text-decoration:underline}
+.b28,.b60{color:var(--violet);text-decoration:underline}
+.b29,.b61{color:var(--red);text-decoration:underline}
+.b30,.b62{color:var(--cyan);text-decoration:underline}
+.b31,.b63{color:var(--cyan);text-decoration:underline}
+.b32,.b64{color:var(--amber);text-decoration:underline}
 
 /* ── Loading state ── */
 
@@ -315,7 +660,7 @@ a:hover { color: var(--amber-dim); }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   padding: 4px 0 8px;
   min-height: 24px;
@@ -351,7 +696,7 @@ a:hover { color: var(--amber-dim); }
   padding: 3px 10px;
   border: 1px solid var(--amber-border);
   border-radius: 20px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   cursor: pointer;
   user-select: none;
@@ -366,7 +711,7 @@ a:hover { color: var(--amber-dim); }
 .preset-tag.active {
   background: var(--amber);
   border-color: var(--amber);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* ── Report toolbar ── */
@@ -403,7 +748,7 @@ a:hover { color: var(--amber-dim); }
 }
 
 #page-info {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   min-width: 100px;
   text-align: center;
@@ -467,7 +812,7 @@ a:hover { color: var(--amber-dim); }
 #report_table th {
   background: var(--bg-card);
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   padding: 8px 10px;
@@ -522,7 +867,7 @@ a:hover { color: var(--amber-dim); }
   display: inline-block;
   padding: 2px 8px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -539,7 +884,7 @@ a:hover { color: var(--amber-dim); }
 .timehack { color: var(--c-failed); }
 
 .dataTables_empty {
-  background: #fffbf0 !important;
+  background: var(--surface) !important;
   color: var(--text-dim);
   border: 0 !important;
 }
@@ -562,7 +907,7 @@ a:hover { color: var(--amber-dim); }
 }
 
 #nav {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -614,7 +959,7 @@ a:hover { color: var(--amber-dim); }
   align-items: center;
   gap: 12px;
 }
-#tracker-nav a { color: var(--amber); }
+/* #tracker-nav was replaced by .app-header + .crumbs in UI-1. */
 #tracker-nav .nav-sep { color: var(--amber-border); }
 #tracker-nav .nav-spacer { flex: 1; }
 
@@ -675,7 +1020,7 @@ a:hover { color: var(--amber-dim); }
 }
 .target-card .target-meta {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 8px;
 }
 .target-card .target-stats {
@@ -686,7 +1031,7 @@ a:hover { color: var(--amber-dim); }
 .target-card .stat-pill {
   padding: 2px 6px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .stat-pill.built   { background: var(--c-built-bg);   color: var(--c-built); }
@@ -739,7 +1084,7 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
           </span>
    Drop the `active` class for an idle/paused state. */
 .live-indicator {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   margin-left: 8px;
   font-weight: normal;
@@ -751,10 +1096,10 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   border-radius: 50%;
   vertical-align: middle;
   margin-right: 4px;
-  background: #ccc;
+  background: var(--surface-3);
 }
 .live-indicator.active .dot {
-  background: #29b346;
+  background: var(--green);
   animation: pulse 1.4s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -774,7 +1119,7 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
 .collapse-long > summary {
   cursor: pointer;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   list-style: none;
   user-select: none;
 }
@@ -846,7 +1191,7 @@ button.btn {
 
 .btn:hover:not(:disabled),
 button.btn:hover:not(:disabled) {
-  background: #fdf6e8;
+  background: var(--amber-soft);
   border-color: var(--amber);
   color: var(--amber-dim);
 }
@@ -879,7 +1224,7 @@ button.btn:disabled {
   color: var(--c-built);
 }
 .btn-success:hover:not(:disabled) {
-  background: #d9eed9;
+  background: var(--surface-2);
   border-color: var(--c-built);
   color: var(--c-built);
 }
@@ -893,7 +1238,7 @@ button.btn:disabled {
   color: var(--c-failed);
 }
 .btn-danger:hover:not(:disabled) {
-  background: #f8d6d6;
+  background: var(--red-soft);
   border-color: var(--c-failed);
   color: var(--c-failed);
 }
@@ -914,7 +1259,7 @@ button.btn:disabled {
 /* Compact size. Used by header inline toggles where 11px keeps the
    button from competing with the heading it sits next to. */
 .btn-sm {
-  font-size: 11px;
+  font-size: 12px;
   padding: 3px 9px;
 }
 
@@ -946,12 +1291,12 @@ button.btn:disabled {
 }
 .artifact-table th,
 .artifact-table td {
-  border: 1px solid var(--border, #d8dee9);
+  border: 1px solid var(--border, var(--line));
   padding: 4px 10px;
   vertical-align: top;
 }
 .artifact-table th {
-  background: var(--panel-bg, #f8fafc);
+  background: var(--panel-bg, var(--surface));
   text-align: left;
 }
 .artifact-table tbody tr:nth-child(2n) {
@@ -960,8 +1305,8 @@ button.btn:disabled {
 
 .diff-view {
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  background: var(--panel-bg, #f8fafc);
-  border: 1px solid var(--border, #d8dee9);
+  background: var(--panel-bg, var(--surface));
+  border: 1px solid var(--border, var(--line));
   border-radius: 6px;
   padding: 0;
   overflow-x: auto;
@@ -971,41 +1316,41 @@ button.btn:disabled {
 }
 .diff-stat {
   padding: 8px 14px;
-  border-bottom: 1px solid var(--border, #d8dee9);
-  color: var(--text-dim, #6b7280);
+  border-bottom: 1px solid var(--border, var(--line));
+  color: var(--text-dim, var(--muted));
   font-size: 12px;
-  background: var(--panel-bg, #f8fafc);
+  background: var(--panel-bg, var(--surface));
 }
 .diff-stat-add {
-  color: #15803d;
+  color: var(--green);
   font-weight: 600;
 }
 .diff-stat-del {
-  color: #b91c1c;
+  color: var(--red);
   font-weight: 600;
 }
 .diff-file {
-  border-bottom: 1px solid var(--border, #d8dee9);
+  border-bottom: 1px solid var(--border, var(--line));
 }
 .diff-file:last-child {
   border-bottom: none;
 }
 .diff-file-header {
   padding: 4px 14px;
-  color: var(--text-dim, #6b7280);
+  color: var(--text-dim, var(--muted));
   white-space: pre;
 }
 .diff-path-old,
 .diff-path-new {
-  background: var(--panel-bg, #f8fafc);
+  background: var(--panel-bg, var(--surface));
 }
 .diff-hunk {
-  background: #fff;
+  background: var(--surface);
 }
 .diff-hunk-header {
   padding: 2px 14px;
-  color: #6366f1;
-  background: #eef2ff;
+  color: var(--cyan);
+  background: var(--cyan-soft);
   white-space: pre;
 }
 .diff-line {
@@ -1015,30 +1360,30 @@ button.btn:disabled {
 }
 .diff-line .ln-old,
 .diff-line .ln-new {
-  color: #9ca3af;
+  color: var(--faint);
   text-align: right;
   padding: 0 8px;
   user-select: none;
-  font-size: 11px;
+  font-size: 12px;
 }
 .diff-line .content {
   white-space: pre;
   padding-right: 14px;
 }
 .diff-add {
-  background: #ecfdf5;
+  background: var(--green-soft);
 }
 .diff-add .content {
-  color: #065f46;
+  color: var(--green);
 }
 .diff-del {
-  background: #fef2f2;
+  background: var(--surface);
 }
 .diff-del .content {
-  color: #991b1b;
+  color: var(--red);
 }
 .diff-context .content {
-  color: #1f2937;
+  color: var(--text);
 }
 /* Meta lines: single-column layout so they sit flush at the left margin
    instead of being inset 100px by empty ln-old / ln-new gutter cells. */
@@ -1051,19 +1396,19 @@ button.btn:disabled {
   display: none;
 }
 .diff-meta .content {
-  color: #6b7280;
+  color: var(--muted);
   font-style: italic;
 }
 
 /* Syntax highlighting for JSON + log artifacts in the preview <pre>.
    Semantic colours (not the amber accent): keys/meta, strings/ok,
    numbers, and booleans/errors. */
-.artifact-content .j-key  { color: var(--c-meta, #6040b0); }
-.artifact-content .j-str  { color: var(--c-built, #2a7a2a); }
-.artifact-content .j-num  { color: var(--amber-dim, #a05800); }
-.artifact-content .j-bool { color: var(--c-failed, #c03030); }
-.artifact-content .lg-err { color: var(--c-failed, #c03030); }
-.artifact-content .lg-dim { color: var(--text-dim, #888070); }
+.artifact-content .j-key  { color: var(--c-meta, var(--violet)); }
+.artifact-content .j-str  { color: var(--c-built, var(--green)); }
+.artifact-content .j-num  { color: var(--amber-dim, var(--amber)); }
+.artifact-content .j-bool { color: var(--c-failed, var(--red)); }
+.artifact-content .lg-err { color: var(--c-failed, var(--red)); }
+.artifact-content .lg-dim { color: var(--text-dim, var(--muted)); }
 
 /* ── Artifact reader (redesign) ──────────────────────────────────────
    Fixed-geometry list-detail split. The frame's size is a function of
@@ -1074,7 +1419,7 @@ button.btn:disabled {
   display: grid;
   grid-template-columns: 288px 1fr;
   height: 588px;
-  border: 1px solid var(--border-strong, #d8d2c4);
+  border: 1px solid var(--border-strong, var(--line));
   border-radius: 10px;
   overflow: hidden;
   background: var(--bg-card);
@@ -1084,14 +1429,14 @@ button.btn:disabled {
 
 /* left: one grouped list, its own scroll, subtly inset from the card */
 .reader .a-list {
-  border-right: 1px solid var(--border, #e4dfd4);
-  background: var(--bg-sunk, #f2efe8);
+  border-right: 1px solid var(--border, var(--line));
+  background: var(--bg-sunk, var(--surface-2));
   overflow-y: auto;
   min-height: 0;
   padding: 6px 0 10px;
 }
 .reader .a-group-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .09em;
   text-transform: uppercase;
@@ -1113,25 +1458,25 @@ button.btn:disabled {
 .reader .a-row:hover { background: rgba(196, 112, 0, .06); }
 .reader .a-row.selected {
   background: var(--bg-card);
-  border-left-color: var(--amber, #c47000);
+  border-left-color: var(--amber, var(--amber-line));
 }
 .reader .a-row .a-name {
   grid-column: 1; grid-row: 1;
   font-size: 13px; font-weight: 550;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.reader .a-row.selected .a-name { color: var(--amber-dim, #a05800); }
+.reader .a-row.selected .a-name { color: var(--amber-dim, var(--amber)); }
 .reader .a-row .a-type {
   grid-column: 2; grid-row: 1;
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  font-size: 12px; font-weight: 700; letter-spacing: .04em;
   color: var(--text-dim);
-  background: var(--c-neutral-bg, #eeebe4);
+  background: var(--c-neutral-bg, var(--surface-2));
   border-radius: 3px; padding: 1px 4px;
 }
 .reader .a-row .a-meta {
   grid-column: 1 / -1; grid-row: 2;
-  font-size: 10.5px; color: var(--text-dim);
+  font-size: 12px; color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   display: flex; gap: 8px;
 }
@@ -1146,7 +1491,7 @@ button.btn:disabled {
 .reader .a-detailhead {
   display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap;
   padding: 11px 16px;
-  border-bottom: 1px solid var(--border, #e4dfd4);
+  border-bottom: 1px solid var(--border, var(--line));
   background: var(--bg-card);
 }
 .reader .a-detailhead .dh-name {
@@ -1155,15 +1500,15 @@ button.btn:disabled {
   overflow-wrap: anywhere;
 }
 .reader .a-detailhead .dh-meta {
-  font-size: 11px; color: var(--text-dim);
+  font-size: 12px; color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
 }
-.reader .a-detailhead .dh-meta .midot { color: var(--border-strong, #d8d2c4); }
+.reader .a-detailhead .dh-meta .midot { color: var(--border-strong, var(--faint)); }
 .reader .a-detailhead .dh-actions { margin-left: auto; display: flex; gap: 6px; }
 .reader .dh-btn {
-  font-size: 11px; font-weight: 550; text-decoration: none;
-  color: var(--amber-dim, #a05800);
+  font-size: 12px; font-weight: 550; text-decoration: none;
+  color: var(--amber-dim, var(--amber));
   border: 1px solid var(--amber-border, rgba(180, 100, 0, .22));
   border-radius: 5px; padding: 3px 9px; background: transparent;
   white-space: nowrap;
@@ -1184,7 +1529,7 @@ button.btn:disabled {
    long diff lines need it in a 1fr column (poly-dpf). */
 .reader .diff-view { max-height: none; }
 .reader .artifact-error {
-  color: var(--c-failed, #c03030);
+  color: var(--c-failed, var(--red));
   font-size: 12px; margin-bottom: 10px;
 }
 
@@ -1199,8 +1544,8 @@ button.btn:disabled {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px; font-weight: 700; letter-spacing: .06em;
   color: var(--text-dim);
-  border: 1.5px solid var(--border-strong, #d8d2c4);
-  border-radius: 8px; padding: 14px 18px; background: var(--bg, #f7f5f0);
+  border: 1.5px solid var(--border-strong, var(--line));
+  border-radius: 8px; padding: 14px 18px; background: var(--bg, var(--surface));
 }
 .reader .a-fallback .fb-msg { font-size: 13px; max-width: 42ch; line-height: 1.5; }
 .reader .a-fallback .fb-msg strong { color: var(--text); font-weight: 600; }
@@ -1210,7 +1555,7 @@ button.btn:disabled {
   .reader { grid-template-columns: 1fr; height: auto; }
   .reader .a-list {
     max-height: 220px; border-right: none;
-    border-bottom: 1px solid var(--border, #e4dfd4);
+    border-bottom: 1px solid var(--border, var(--line));
   }
   .reader .a-body { max-height: 60vh; }
 }
@@ -1223,19 +1568,19 @@ button.btn:disabled {
   gap: 18px;
   padding: 8px 16px;
   font-size: 13px;
-  border-bottom: 1px solid var(--border, #d8dee9);
-  background: var(--panel-bg, #f8fafc);
+  border-bottom: 1px solid var(--border, var(--line));
+  background: var(--panel-bg, var(--surface));
 }
 #agentic-subnav a {
   text-decoration: none;
-  color: var(--text-dim, #6b7280);
+  color: var(--text-dim, var(--muted));
   padding: 2px 2px 4px;
 }
-#agentic-subnav a:hover { color: var(--text, #1f2937); }
+#agentic-subnav a:hover { color: var(--text, var(--text)); }
 #agentic-subnav a.active {
-  color: var(--text, #1f2937);
+  color: var(--text, var(--text));
   font-weight: 600;
-  border-bottom: 2px solid var(--amber, #d68b00);
+  border-bottom: 2px solid var(--amber, var(--amber-line));
 }
 
 /* Collapsible secondary sections on the detail pages (Phase 6 polish).
@@ -1248,9 +1593,9 @@ details.section-collapse > summary {
   margin-bottom: 6px;
   user-select: none;
 }
-details.section-collapse > summary:hover { color: var(--c-link, #06f); }
+details.section-collapse > summary:hover { color: var(--c-link, var(--cyan)); }
 details.section-collapse > summary .muted {
-  font-size: 12px; font-weight: normal; color: var(--text-dim, #6b7280);
+  font-size: 12px; font-weight: normal; color: var(--text-dim, var(--muted));
 }
 
 /* The bundle detail page reads as a composed column rather than a
@@ -1271,14 +1616,14 @@ details.section-collapse > summary .muted {
   font-size: 12.5px;
 }
 .bundle-header .k {
-  color: var(--text-dim, #6b7280); font-size: 10px; text-transform: uppercase;
+  color: var(--text-dim, var(--muted)); font-size: 12px; text-transform: uppercase;
   letter-spacing: .05em; margin-right: 3px;
 }
 /* Facts pills (result / dops) inside the bar: small rounded pills. */
 .bundle-header .stat-pill:not(.status-pill) {
   display: inline-flex; align-items: center;
   padding: 2px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 600; white-space: nowrap;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
 }
 
 /* Status pill (fix_status projection) — a full pill led by a state dot,
@@ -1286,7 +1631,7 @@ details.section-collapse > summary .muted {
 .status-pill {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 10px; border-radius: 999px;
-  font-size: 11px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
 }
 .status-pill .pill-dot {
   width: 6px; height: 6px; border-radius: 50%;
@@ -1299,7 +1644,7 @@ details.section-collapse > summary .muted {
    expandable row). All scoped under .worklist so the generic names don't
    leak into other pages. */
 
-.worklist .lede a { color: var(--amber-dim); }
+.worklist .lede a { color: var(--cyan); }
 
 /* Focus header: one number + action-named jump chips */
 .worklist .wl-focus {
@@ -1313,32 +1658,32 @@ details.section-collapse > summary .muted {
   font-variant-numeric: tabular-nums;
 }
 .worklist .wl-focus-cap { font-size: 12px; color: var(--text-dim); line-height: 1.15; margin-left: -6px; }
-.worklist .wl-clear { font-size: 16px; font-weight: 600; color: var(--c-built, #2a7a2a); }
+.worklist .wl-clear { font-size: 16px; font-weight: 600; color: var(--c-built, var(--green)); }
 .worklist .wl-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-left: auto; }
 .worklist .wl-chip {
   display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
   font-size: 12px; padding: 5px 11px; border-radius: 999px;
-  border: 1px solid var(--border-strong, #d8d2c4); color: var(--text-dim); background: var(--bg-card);
+  border: 1px solid var(--border-strong, var(--line)); color: var(--text-dim); background: var(--bg-card);
 }
 .worklist .wl-chip:hover { border-color: var(--amber-border); }
-.worklist .wl-chip.active { border-color: var(--amber, #c47000); color: var(--text); font-weight: 600; background: #fffaf2; }
+.worklist .wl-chip.active { border-color: var(--amber, var(--amber-line)); color: var(--text); font-weight: 600; background: var(--surface); }
 .worklist .wl-chip .n { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
-.worklist .wl-chip.zero { color: var(--text-faint, #a8a091); }
-.worklist .wl-chip.zero .n { color: var(--text-faint, #a8a091); font-weight: 600; }
+.worklist .wl-chip.zero { color: var(--text-faint, var(--muted)); }
+.worklist .wl-chip.zero .n { color: var(--text-faint, var(--muted)); font-weight: 600; }
 /* Non-empty chips take their band's semantic colour (green ready / amber
    verify / red decide / neutral owned) so the queue's shape reads at a
    glance — matching each section's stripe + pills. */
-.worklist .wl-chip.active.built   { border-color: var(--c-built, #2a7a2a);   color: var(--c-built, #2a7a2a);   background: #f0f8f0; }
-.worklist .wl-chip.active.skipped { border-color: var(--c-skipped, #b36800); color: var(--c-skipped, #b36800); background: #fff8ee; }
-.worklist .wl-chip.active.failed  { border-color: var(--c-failed, #c03030);  color: var(--c-failed, #c03030);  background: #fdf2f2; }
-.worklist .wl-chip.active.total   { border-color: var(--border-strong, #d8d2c4); color: var(--text); background: #faf8f4; }
+.worklist .wl-chip.active.built   { border-color: var(--c-built, var(--green-line));   color: var(--c-built, var(--green));   background: var(--surface); }
+.worklist .wl-chip.active.skipped { border-color: var(--c-skipped, var(--amber-line)); color: var(--c-skipped, var(--amber)); background: var(--amber-soft); }
+.worklist .wl-chip.active.failed  { border-color: var(--c-failed, var(--red-line));  color: var(--c-failed, var(--red));  background: var(--surface); }
+.worklist .wl-chip.active.total   { border-color: var(--border-strong, var(--line)); color: var(--text); background: var(--surface); }
 .worklist .wl-chip.active .n { color: inherit; }
 
 /* Ops strip */
 .worklist .wl-ops {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px;
   padding: 8px 18px; margin-bottom: 26px; font-size: 12px; color: var(--text-dim);
-  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-sunk, #f2efe8);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-sunk, var(--surface-2));
 }
 .worklist .wl-ops b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .worklist .wl-ops a { color: var(--amber-dim); text-decoration: none; }
@@ -1349,8 +1694,8 @@ details.section-collapse > summary .muted {
 .worklist .wl-ops-item { white-space: nowrap; }
 .worklist .wl-ops-spacer { margin-left: auto; }
 .worklist .wl-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; position: relative; top: -1px; }
-.worklist .wl-dot.ok { background: var(--c-built, #2a7a2a); }
-.worklist .wl-dot.bad { background: var(--c-failed, #c03030); }
+.worklist .wl-dot.ok { background: var(--c-built, var(--green)); }
+.worklist .wl-dot.bad { background: var(--c-failed, var(--red)); }
 
 /* Bands */
 .worklist .wl-band { margin-bottom: 20px; }
@@ -1362,7 +1707,7 @@ details.section-collapse > summary .muted {
   background: var(--bg-card); box-shadow: 0 1px 2px rgba(60,50,30,.03);
 }
 .worklist .wl-empty {
-  padding: 9px 16px; margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint, #a8a091);
+  padding: 9px 16px; margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint, var(--muted));
   border: 1px solid var(--border); border-radius: 8px;
 }
 .worklist .wl-empty .lbl { font-weight: 600; color: var(--text-dim); }
@@ -1375,13 +1720,13 @@ details.section-collapse > summary .muted {
 }
 .worklist .wl-list > .wl-row:first-child,
 .worklist .wl-list > .wl-group:first-child .wl-row { border-top: none; }
-.worklist .wl-row:hover { background: #fffdf9; }
+.worklist .wl-row:hover { background: var(--surface); }
 .worklist .wl-stripe { grid-column: 1; align-self: stretch; }
-.worklist .wl-row.decide .wl-stripe { background: var(--c-failed, #c03030); }
-.worklist .wl-row.ready  .wl-stripe { background: var(--c-built, #2a7a2a); }
-.worklist .wl-row.verify .wl-stripe { background: var(--c-skipped, #b36800); }
+.worklist .wl-row.decide .wl-stripe { background: var(--c-failed, var(--red)); }
+.worklist .wl-row.ready  .wl-stripe { background: var(--c-built, var(--green)); }
+.worklist .wl-row.verify .wl-stripe { background: var(--c-skipped, var(--amber)); }
 .worklist .wl-row.owned  .wl-stripe { background: var(--text-dim); }
-.worklist .wl-row.resolved .wl-stripe { background: var(--border-strong, #d8d2c4); }
+.worklist .wl-row.resolved .wl-stripe { background: var(--border-strong, var(--surface-3)); }
 .worklist .wl-group > .wl-row { cursor: pointer; }
 
 .worklist .wl-chev {
@@ -1396,30 +1741,30 @@ details.section-collapse > summary .muted {
 .worklist .wl-port { font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; }
 a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-x {
-  font-size: 11px; font-weight: 700; color: var(--c-failed, #c03030);
-  background: var(--c-failed-bg, #fdeaea); border-radius: 999px; padding: 1px 8px;
+  font-size: 12px; font-weight: 700; color: var(--c-failed, var(--red));
+  background: var(--c-failed-bg, var(--red-soft)); border-radius: 999px; padding: 1px 8px;
   font-variant-numeric: tabular-nums;
 }
 .worklist .wl-recur {
-  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--c-failed, #c03030); border: 1px solid var(--c-failed, #c03030);
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--c-failed, var(--red)); border: 1px solid var(--c-failed, var(--red-line));
   border-radius: 4px; padding: 0 4px; opacity: .8;
 }
-.worklist .wl-subid { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--text-faint, #a8a091); }
+.worklist .wl-subid { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--text-faint, var(--muted)); }
 
 .worklist .wl-rollup { grid-column: 3; grid-row: 2; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
 .worklist .wl-mid { grid-column: 4; display: flex; align-items: center; gap: 14px; justify-self: end; }
 .worklist .wl-age { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .worklist .wl-pill {
-  display: inline-flex; align-items: center; font-size: 11px; font-weight: 600;
+  display: inline-flex; align-items: center; font-size: 12px; font-weight: 600;
   padding: 2px 9px; border-radius: 999px; white-space: nowrap;
 }
-.worklist .wl-pill.sm { padding: 1px 8px; font-size: 10.5px; }
-.worklist .wl-pill.built   { background: var(--c-built-bg, #ecf7ec);  color: var(--c-built, #2a7a2a); }
-.worklist .wl-pill.failed  { background: var(--c-failed-bg, #fdeaea); color: var(--c-failed, #c03030); }
-.worklist .wl-pill.skipped { background: var(--c-skipped-bg, #fff5e6); color: var(--c-skipped, #b36800); }
-.worklist .wl-pill.total   { background: var(--c-neutral-bg, #eeebe4); color: var(--text); }
+.worklist .wl-pill.sm { padding: 1px 8px; font-size: 12px; }
+.worklist .wl-pill.built   { background: var(--c-built-bg, var(--surface-2));  color: var(--c-built, var(--green)); }
+.worklist .wl-pill.failed  { background: var(--c-failed-bg, var(--red-soft)); color: var(--c-failed, var(--red)); }
+.worklist .wl-pill.skipped { background: var(--c-skipped-bg, var(--amber-soft)); color: var(--c-skipped, var(--amber)); }
+.worklist .wl-pill.total   { background: var(--c-neutral-bg, var(--surface-2)); color: var(--text); }
 
 /* Row primary action */
 .worklist .wl-actions { grid-column: 5; display: flex; align-items: center; gap: 6px; justify-self: end; }
@@ -1427,25 +1772,25 @@ a.wl-port:hover { color: var(--amber-dim); }
   font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
   border-radius: 7px; padding: 5px 13px; white-space: nowrap; border: 1px solid transparent;
 }
-.worklist .wl-btn-accept { background: var(--c-built, #2a7a2a); color: #fff; }
-.worklist .wl-btn-accept:hover { background: #236523; }
-.worklist .wl-btn-verify { background: var(--c-skipped, #b36800); color: #fff; }
+.worklist .wl-btn-accept { background: var(--c-built, var(--green)); color: var(--on-accent); }
+.worklist .wl-btn-accept:hover { background: var(--green); }
+.worklist .wl-btn-verify { background: var(--c-skipped, var(--amber)); color: var(--on-accent); }
 .worklist .wl-btn-decide { background: var(--bg-card); color: var(--amber-dim); border-color: var(--amber-border); }
-.worklist .wl-btn-decide:hover { background: #fffaf2; }
-.worklist .wl-btn-take { background: var(--bg-card); color: var(--text-dim); border-color: var(--border-strong, #d8d2c4); }
+.worklist .wl-btn-decide:hover { background: var(--surface); }
+.worklist .wl-btn-take { background: var(--bg-card); color: var(--text-dim); border-color: var(--border-strong, var(--line)); }
 
 /* Expanded per-attempt children */
-.worklist .wl-children { display: none; background: var(--bg-sunk, #f2efe8); border-top: 1px solid var(--border); }
+.worklist .wl-children { display: none; background: var(--bg-sunk, var(--surface-2)); border-top: 1px solid var(--border); }
 .worklist .wl-group.open .wl-children { display: block; }
 .worklist .wl-child {
   display: grid; grid-template-columns: 20px 1fr auto auto; align-items: center; gap: 0 12px;
   padding: 8px 16px 8px 0; border-top: 1px solid var(--border); text-decoration: none; color: inherit;
 }
 .worklist .wl-child:first-child { border-top: none; }
-.worklist .wl-child:hover { background: #f6f2ea; }
+.worklist .wl-child:hover { background: var(--surface-2); }
 .worklist .wl-cid { grid-column: 2; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .worklist .wl-cmid { grid-column: 3; display: flex; align-items: center; gap: 12px; justify-self: end; }
-.worklist .wl-copen { grid-column: 4; font-size: 11px; color: var(--amber-dim); font-weight: 600; justify-self: end; }
+.worklist .wl-copen { grid-column: 4; font-size: 12px; color: var(--amber-dim); font-weight: 600; justify-self: end; }
 
 /* Archive */
 .worklist details.wl-archive { margin-top: 22px; }
@@ -1454,7 +1799,7 @@ a.wl-port:hover { color: var(--amber-dim); }
   list-style: none; display: flex; align-items: center; gap: 7px;
 }
 .worklist details.wl-archive > summary::-webkit-details-marker { display: none; }
-.worklist details.wl-archive > summary::before { content: "▸"; color: var(--text-faint, #a8a091); font-size: 11px; }
+.worklist details.wl-archive > summary::before { content: "▸"; color: var(--text-faint, var(--muted)); font-size: 12px; }
 .worklist details.wl-archive[open] > summary::before { content: "▾"; }
 
 /* Environment health section — bring it into the worklist card language
@@ -1462,7 +1807,7 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist #env-health { font-size: 15px; font-weight: 680; margin-top: 30px; margin-bottom: 10px; }
 .worklist .env-active-banner {
   padding: 11px 16px; margin-bottom: 12px;
-  background: var(--bg-sunk, #f2efe8); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-sunk, var(--surface-2)); border: 1px solid var(--border); border-radius: 10px;
   font-size: 12.5px;
 }
 .worklist .env-active-banner strong { color: var(--text); }
@@ -1472,17 +1817,17 @@ a.wl-port:hover { color: var(--amber-dim); }
 }
 .worklist .wl-tablecard table.tracker-table { border: none; }
 .worklist .wl-tablecard table.tracker-table th {
-  background: var(--bg-sunk, #f2efe8); color: var(--text-dim);
+  background: var(--bg-sunk, var(--surface-2)); color: var(--text-dim);
   font-weight: 600; border-bottom: 1px solid var(--border);
-  font-size: 11px; letter-spacing: .02em;
+  font-size: 12px; letter-spacing: .02em;
 }
 .worklist .wl-tablecard table.tracker-table td { border-bottom: 1px solid var(--border); vertical-align: middle; }
 .worklist .wl-tablecard table.tracker-table tbody tr:last-child td { border-bottom: none; }
-.worklist .wl-tablecard table.tracker-table tbody tr:hover { background: #fffdf9; }
+.worklist .wl-tablecard table.tracker-table tbody tr:hover { background: var(--surface); }
 /* The active env is already marked by the green "active" pill in its
    first cell — no need to also tint the whole row. */
 /* The status/check words become real pills (base .stat-pill carries no shape). */
 .worklist .wl-tablecard .stat-pill {
   display: inline-flex; align-items: center; margin: 1px 3px 1px 0;
-  padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }

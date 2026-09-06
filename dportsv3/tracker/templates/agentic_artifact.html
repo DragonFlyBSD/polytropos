@@ -31,7 +31,7 @@
     </div>
 
     {% if artifact.error %}
-      <div class="tracker-card" style="border-color:var(--c-fail, #c00);">{{ artifact.error }}</div>
+      <div class="tracker-card" style="border-color:var(--c-fail, var(--red-line));">{{ artifact.error }}</div>
     {% endif %}
 
     {% if artifact.inline %}

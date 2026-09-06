@@ -127,7 +127,7 @@
           Reopen
         </button>
         {% endif %}
-        <span id="op-status" style="color:var(--text-dim);font-size:11px;"></span>
+        <span id="op-status" style="color:var(--text-dim);font-size:12px;"></span>
       </div>
       {# Step 28c (revised): inline form for the Retry context. The
          original implementation used a JS prompt() which only
@@ -140,7 +140,7 @@
       <div id="op-retry-form"
            data-bundle="{{ bundle.bundle_id }}"
            style="display:none;margin-top:10px;">
-        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;">
+        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;">
           Operator context (required; max 8000 chars). The agent will
           see this verbatim in the next triage's ## User Context
           section.
@@ -162,7 +162,7 @@
             Cancel
           </button>
           <span id="retry-form-charcount"
-                style="color:var(--text-dim);font-size:11px;">
+                style="color:var(--text-dim);font-size:12px;">
             0 / 8000
           </span>
         </div>

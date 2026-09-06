@@ -77,7 +77,7 @@
     {% endif %}
 
     {% if blocking_job %}
-    <div class="manual-flash" id="blocker-banner" style="background:#fff7e6;border:1px solid #d68b00;">
+    <div class="manual-flash" id="blocker-banner" style="background:var(--amber-soft);border:1px solid var(--amber-line);">
       <strong>Heads up — a job is already in flight for this origin.</strong><br>
       <a href="{{ request.url_for('agentic_job_detail', job_id=blocking_job.job_id) }}">
         {{ blocking_job.job_id }}

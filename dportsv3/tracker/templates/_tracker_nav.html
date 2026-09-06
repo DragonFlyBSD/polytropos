@@ -1,20 +1,37 @@
-{# Top nav bar shared by tracker pages. Expects `request` in context. #}
-<div id="tracker-nav">
+{# The shared shell header: product mark, the three primary views, and the
+   theme control. Included by every full page, so changing it here changes
+   every page -- which is the point of having one shell.
+
+   Builds | Pipeline | Repairs are the three views the migration is built
+   around. Pipeline has no overview of its own yet (UI-4 gives it /pipeline);
+   until then it lands on Jobs, which is one of its own secondary
+   destinations, so the entry always goes somewhere real. #}
+{% set _path = request.url.path %}
+<header class="app-header">
+  <a class="app-brand" href="{{ request.url_for('dashboard_index') }}">
+    <b>POLYTROPOS</b><span>DELTAPORTS OPERATIONS</span>
+  </a>
+  <nav class="primary-nav" aria-label="Primary">
+    <a href="{{ request.url_for('dashboard_builds') }}"
+       {% if _path.startswith('/builds') or _path.startswith('/target') or _path == '/' %}class="active" aria-current="page"{% endif %}>Builds</a>
+    <a href="{{ request.url_for('agentic_jobs') }}"
+       {% if _path.startswith('/agentic/jobs') or _path.startswith('/agentic/runner') or _path.startswith('/agentic/manual') %}class="active" aria-current="page"{% endif %}>Pipeline</a>
+    <a href="{{ request.url_for('agentic_index') }}"
+       {% if _path == '/agentic' or _path.startswith('/agentic/issues') or _path.startswith('/agentic/bundles') %}class="active" aria-current="page"{% endif %}>Repairs</a>
+  </nav>
+  <span class="header-spacer"></span>
+  <button class="theme-toggle" id="theme-toggle" type="button"
+          aria-label="Switch between light and dark">
+    <span id="theme-ic" aria-hidden="true">◑</span><span id="theme-lbl">Light</span>
+  </button>
+</header>
+{% if nav_crumbs %}
+<nav class="crumbs" aria-label="Breadcrumb">
   <a href="{{ request.url_for('dashboard_index') }}">Tracker</a>
-  {% if nav_crumbs %}
-    {% for crumb in nav_crumbs %}
-    <span class="nav-sep">/</span>
-    {% if crumb.url %}
-    <a href="{{ crumb.url }}">{{ crumb.label }}</a>
-    {% else %}
-    <span>{{ crumb.label }}</span>
-    {% endif %}
-    {% endfor %}
-  {% endif %}
-  <span class="nav-spacer"></span>
-  <a href="{{ request.url_for('dashboard_builds') }}">Builds</a>
-  <span class="nav-sep">·</span>
-  <a href="{{ request.url_for('dashboard_diff') }}">Diff</a>
-  <span class="nav-sep">·</span>
-  <a href="{{ request.url_for('agentic_index') }}">Agentic</a>
-</div>
+  {% for crumb in nav_crumbs %}
+  <span class="crumb-sep" aria-hidden="true">/</span>
+  {% if crumb.url %}<a href="{{ crumb.url }}">{{ crumb.label }}</a>
+  {% else %}<span aria-current="page">{{ crumb.label }}</span>{% endif %}
+  {% endfor %}
+</nav>
+{% endif %}

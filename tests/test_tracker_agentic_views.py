@@ -1471,10 +1471,19 @@ def test_view_agentic_run_detail(client: TestClient) -> None:
     assert "b-q2-bar" in body
 
 
-def test_view_nav_includes_agentic(client: TestClient) -> None:
+def test_view_nav_offers_the_three_primary_views(client: TestClient) -> None:
+    """The shell's primary nav reads Builds | Pipeline | Repairs.
+
+    This asserted ">Agentic<" until UI-1 replaced the shell. The rename is
+    the deliberate change, not a regression: "Agentic" named the machinery,
+    and the view is named for the work an operator does in it."""
     resp = client.get("/")
+
     assert resp.status_code == 200
-    assert ">Agentic<" in resp.text
+    assert ">Builds<" in resp.text
+    assert ">Pipeline<" in resp.text
+    assert ">Repairs<" in resp.text
+    assert ">Agentic<" not in resp.text
 
 
 # --------------------------------------------------------------------
