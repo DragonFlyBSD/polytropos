@@ -73,6 +73,14 @@ from dportsv3.tracker.agentic_queries.review import (
     open_delivery_bundle_ids,
     update_review_request_status,
 )
+from dportsv3.tracker.agentic_queries.deliveries import (
+    DELIVERY_FAILED_STATUS,
+    DELIVERY_OPEN_STATUSES,
+    DELIVERY_STATUSES,
+    count_deliveries,
+    delivery_counts,
+    list_deliveries,
+)
 from dportsv3.tracker.agentic_queries.pipeline import (
     RUNNER_BAND,
     issue_inventory,
@@ -150,4 +158,10 @@ __all__ = [
     "issue_inventory",
     "regressed_issue_count",
     "worklist_band_counts",
+    "DELIVERY_FAILED_STATUS",
+    "DELIVERY_OPEN_STATUSES",
+    "DELIVERY_STATUSES",
+    "count_deliveries",
+    "delivery_counts",
+    "list_deliveries",
 ]
