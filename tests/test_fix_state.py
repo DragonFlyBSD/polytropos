@@ -50,9 +50,13 @@ def _expected_allowed(action: str, r: str | None, v: str | None) -> bool:
     if action == "reject":
         return r not in _TERMINAL
     if action == "take-over":
-        return r in (_FAILURE | {None})
+        # The untriaged lane, not the failure one: NULL and triage_failed
+        # both mean no fix exists and nobody is working it, and take-over's
+        # job -- stake (target, origin) so the runner stops competing --
+        # applies identically (poly-kp60).
+        return r in (_FAILURE | {"triage_failed", None})
     if action == "discard":
-        return r in (_FAILURE | {"operator_owned", None})
+        return r in (_FAILURE | {"triage_failed", "operator_owned", None})
     if action == "retry":
         return r not in _TERMINAL
     if action == "release":
@@ -77,7 +81,11 @@ def test_action_allowed_unknown_action_refused():
     assert fs.action_allowed("nonexistent", "agent_fixed", "verified") is False
 
 
-# --- bundle_actions: reproduce the pre-refactor inline matrix --------------
+# --- bundle_actions: an independent restatement of the surface matrix ------
+#
+# Written from the rules rather than from the implementation, so the two have
+# to be changed together deliberately. It began as the pre-refactor inline
+# matrix; poly-kp60 moved two cells and this moved with it.
 
 
 def _expected_surface(bundle: dict) -> dict:
@@ -85,9 +93,15 @@ def _expected_surface(bundle: dict) -> dict:
     v = bundle.get("verification_status")
     has_meta = bool(bundle.get("target")) and bool(bundle.get("origin"))
     actionable = r == "agent_fixed"
-    can_take_over = r in _FAILURE and has_meta
-    can_discard = r in (_FAILURE | {"operator_owned"})
-    can_retry = r in (_FAILURE | {"operator_owned", "agent_fixed"})
+    # poly-kp60: triage_failed, and a NULL resolution with no live job,
+    # joined the untriaged lane. The worklist already routed both to "needs
+    # a decision" while this surface offered no way to make one.
+    untriaged = r in (_FAILURE | {"triage_failed"}) or (
+        r is None and not bundle.get("state")
+    )
+    can_take_over = untriaged and has_meta
+    can_discard = untriaged or r == "operator_owned"
+    can_retry = untriaged or r in ("operator_owned", "agent_fixed")
     can_reopen = r in _TERMINAL
     verify_eligible = actionable or r == "operator_owned"
     can_release = r == "operator_owned"

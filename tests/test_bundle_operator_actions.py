@@ -398,7 +398,14 @@ def test_ui_buttons_use_data_attributes_not_onclick(client):
     assert "addEventListener('click'" in js
 
 
-def test_ui_bundle_without_resolution_hides_buttons(client, seeded_db, tmp_path):
+def test_ui_bundle_without_resolution_offers_the_untriaged_lane(
+    client, seeded_db, tmp_path,
+):
+    """A bundle with no resolution AND no live job is nobody's: the
+    worklist bands it as "needs a decision", so the page offers the
+    untriaged lane rather than nothing (poly-kp60). A bundle a job IS
+    working still shows no panel -- see the in_progress case.
+    """
     # Insert a bundle that hasn't been triaged yet (resolution=NULL).
     conn = sqlite3.connect(str(seeded_db))
     conn.execute(
@@ -409,4 +416,9 @@ def test_ui_bundle_without_resolution_hides_buttons(client, seeded_db, tmp_path)
     conn.commit()
     conn.close()
     body = client.get("/agentic/bundles/b-fresh").text
-    assert "Operator actions" not in body
+    assert "Operator actions" in body
+    assert 'id="op-take-over"' in body
+    assert 'id="op-discard"' in body
+    # No fix exists, so nothing to verify, accept or reject.
+    assert 'id="op-verify"' not in body
+    assert 'id="op-accept"' not in body

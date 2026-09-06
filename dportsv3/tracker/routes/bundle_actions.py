@@ -691,10 +691,11 @@ def register(app, ctx):
         ``origin_skip_flags`` so subsequent dsynth hooks for the same
         pair produce a tombstone bundle instead of fresh triage.
 
-        Allowed only from failure resolutions
-        (``agent_budget_exhausted`` / ``agent_gave_up`` /
-        ``escalated_manual``). 409 from already-terminal accept/reject
-        or already-operator_owned. 404 if bundle unknown.
+        Allowed from any untriaged resolution
+        (``fix_state.UNTRIAGED_RESOLUTIONS``: the three failure ones,
+        ``triage_failed``, and NULL) -- all of them mean no fix exists and
+        nobody is working it. 409 from already-terminal accept/reject or
+        already-operator_owned. 404 if bundle unknown.
 
         Body (all optional):
           - ``operator``: freeform identifier (defaults to "operator");

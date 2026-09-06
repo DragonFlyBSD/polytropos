@@ -401,9 +401,14 @@ def test_agent_fixed_shows_both_reject_and_retry(client):
 
 
 @pytest.mark.parametrize("bundle_id", [
-    "b-accepted", "b-rejected", "b-discarded", "b-fresh",
+    "b-accepted", "b-rejected", "b-discarded",
 ])
-def test_retry_button_absent_on_terminal_and_fresh(client, bundle_id):
+def test_retry_button_absent_on_terminal_resolutions(client, bundle_id):
+    """Terminal means terminal: only reopen acts on these.
+
+    b-fresh left this list in poly-kp60 -- a NULL resolution with no live
+    job is untriaged, and re-running the triage is the first thing to try.
+    """
     body = client.get(f"/agentic/bundles/{bundle_id}").text
     assert 'id="op-retry"' not in body
 

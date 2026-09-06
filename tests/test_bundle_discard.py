@@ -324,9 +324,12 @@ def test_discard_button_renders_on_failure_or_operator_owned(client, bundle_id):
 
 
 @pytest.mark.parametrize("bundle_id", [
-    "b-agent-fixed", "b-accepted", "b-rejected", "b-discarded", "b-fresh",
+    "b-agent-fixed", "b-accepted", "b-rejected", "b-discarded",
 ])
 def test_discard_button_absent_on_other_resolutions(client, bundle_id):
+    """b-fresh left this list in poly-kp60: a NULL resolution with no live
+    job is untriaged, which the worklist has always banded as needing a
+    decision. Discarding it is one of the three ways to make one."""
     body = client.get(f"/agentic/bundles/{bundle_id}").text
     assert 'id="op-discard"' not in body
 

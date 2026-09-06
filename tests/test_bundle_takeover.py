@@ -337,11 +337,18 @@ def test_take_over_button_absent_on_already_operator_owned(client):
     assert 'id="op-take-over"' not in body
 
 
-def test_take_over_button_absent_on_fresh_bundle(client):
-    """NULL resolution means the agent hasn't even started yet —
-    UI hides the button (the endpoint itself permits it for CLI use)."""
+def test_take_over_button_offered_on_a_bundle_nobody_is_working(client):
+    """This used to assert the opposite: NULL resolution meant "the agent
+    hasn't even started", so the UI hid the button while the endpoint
+    permitted it.
+
+    But NULL splits two ways, and only the job state tells them apart.
+    While a job works it, fix_status says in_progress and the panel stays
+    hidden. With no live job it says `unknown`, and the worklist has always
+    routed that to "needs a decision" -- so hiding the button asked for a
+    decision the page gave no way to make (poly-kp60)."""
     body = client.get("/agentic/bundles/b-fresh").text
-    assert 'id="op-take-over"' not in body
+    assert 'id="op-take-over"' in body
 
 
 # ---------------------------------------------------------------------

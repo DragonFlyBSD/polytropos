@@ -79,6 +79,20 @@ FAILURE_RESOLUTIONS: frozenset[str] = frozenset(
     }
 )
 
+# "No fix exists and nobody is working it" — the take-over / discard lane.
+#
+# Wider than FAILURE_RESOLUTIONS on purpose. That set answers "how did the
+# agent's ATTEMPT end", which is what the failure statistics count; this one
+# answers "what may an operator do", and the two are not the same question.
+# The gates already allowed None here — an untriaged bundle nothing has
+# looked at — and triage_failed IS untriaged: the only difference is that
+# the machinery tried and broke. Excluding it left the worklist routing
+# those bundles to "needs a decision" while the detail page offered no way
+# to make one (poly-kp60).
+UNTRIAGED_RESOLUTIONS: frozenset[str | None] = frozenset(
+    FAILURE_RESOLUTIONS | {RESOLUTION_TRIAGE_FAILED, None}
+)
+
 VERIFIED = "verified"
 VERIFICATION_FAILED = "verification_failed"
 
@@ -94,9 +108,9 @@ ACTION_ALLOWED: dict[str, Callable[[str | None, str | None], bool]] = {
     "verify": lambda r, v: r not in (RESOLUTION_ACCEPTED, RESOLUTION_REJECTED),
     "accept": lambda r, v: r not in TERMINAL_RESOLUTIONS and v == VERIFIED,
     "reject": lambda r, v: r not in TERMINAL_RESOLUTIONS,
-    "take-over": lambda r, v: r in (FAILURE_RESOLUTIONS | {None}),
+    "take-over": lambda r, v: r in UNTRIAGED_RESOLUTIONS,
     "discard": lambda r, v: r in (
-        FAILURE_RESOLUTIONS | {RESOLUTION_OPERATOR_OWNED, None}
+        UNTRIAGED_RESOLUTIONS | {RESOLUTION_OPERATOR_OWNED}
     ),
     "retry": lambda r, v: r not in TERMINAL_RESOLUTIONS,
     "release": lambda r, v: r == RESOLUTION_OPERATOR_OWNED,
@@ -169,12 +183,27 @@ def bundle_actions(
     )
 
     actionable = r == RESOLUTION_AGENT_FIXED
-    can_take_over = r in FAILURE_RESOLUTIONS and has_meta
-    can_discard = r in (FAILURE_RESOLUTIONS | {RESOLUTION_OPERATOR_OWNED})
-    can_retry = r in (
-        FAILURE_RESOLUTIONS | {RESOLUTION_OPERATOR_OWNED, RESOLUTION_AGENT_FIXED}
+    # A triage_failed bundle is untriaged, so it belongs to the same lane:
+    # re-run the triage, take it over by hand, or drop it.
+    #
+    # A NULL resolution splits on whether a job is live, and the resolution
+    # alone cannot tell -- so ask the projection the worklist asks. While a
+    # job works it the operator has nothing to do; once it does not
+    # (`unknown`: reopened, or a job that died without writing a
+    # resolution) the bundle is nobody's, which is why the worklist routes
+    # it to "needs a decision" too.
+    untriaged = r in (UNTRIAGED_RESOLUTIONS - {None}) or (
+        r is None and fix_status(bundle).key == "unknown"
+    )
+    can_take_over = untriaged and has_meta
+    can_discard = untriaged or r == RESOLUTION_OPERATOR_OWNED
+    can_retry = untriaged or r in (
+        RESOLUTION_OPERATOR_OWNED, RESOLUTION_AGENT_FIXED
     )
     can_reopen = r in TERMINAL_RESOLUTIONS
+    # NOT triage_failed. verify replays analysis/changes.diff, and triage is
+    # what produces one -- run_verify_fix raises on the 404 and again on an
+    # empty diff, so offering it would queue a job that cannot succeed.
     verify_eligible = actionable or r == RESOLUTION_OPERATOR_OWNED
     can_release = r == RESOLUTION_OPERATOR_OWNED
     can_accept = verify_eligible and v == VERIFIED
