@@ -172,7 +172,11 @@ def test_the_page_omits_what_it_will_not_accept(db, tmp_path, monkeypatch):
         anon = cl.get("/agentic/bundles/b-1").text
         anon_nav = cl.get("/pipeline").text
 
-    assert "Operator actions" in op and "Operator actions" not in anon
+    # The panel is absent for a reader -- but the page now SAYS so rather
+    # than leaving a hole (M4), so the marker is the buttons, not the word.
+    assert "Operator actions</strong>" in op
+    assert "Operator actions hidden" in anon
+    assert "Operator actions</strong>" not in anon
     # Runner and Manual are places only an operator can act. They sit in the
     # Pipeline sub-nav since UI-4 -- they describe the machinery, not a
     # fingerprinted problem -- and the audience rule moved with them.

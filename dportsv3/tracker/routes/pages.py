@@ -570,8 +570,56 @@ def register(app, ctx):
     # Phase 4 step 6: agentic HTML views.
     # ------------------------------------------------------------------
 
+    def _select_occurrence(conn, issues, issue_key, occ_id):
+        """Which occurrence the right pane shows.
+
+        In order: the one named in the URL; the newest occurrence of the
+        issue named in the URL; the newest occurrence of the first issue
+        the queue would show. The last is what makes the split useful on
+        arrival -- an empty right pane beside a full queue is a worse
+        first screen than either half alone.
+
+        Returns a bundle id, or None when there is genuinely nothing to
+        show.
+        """
+        # An occurrence nobody can find falls back rather than 404ing the
+        # whole page: the queue is the view and the right pane is a
+        # selection within it, so a stale link should land you on the
+        # queue and not on an error.
+        if occ_id and get_bundle(conn, occ_id) is not None:
+            return occ_id
+        by_key = {i["issue_key"]: i for i in issues}
+        candidates = []
+        if issue_key and issue_key in by_key:
+            candidates = [by_key[issue_key]]
+        else:
+            # The queue's own order: the worklist sorts systemic-first,
+            # so the first row is the one it is pointing at.
+            for band in issue_state.ISSUE_WORKLIST_SECTIONS:
+                if band[0] in ("done", "muted"):
+                    continue
+                for i in issues:
+                    if issue_state.issue_bucket(
+                        i, i.get("occurrences") or []
+                    ) == band[0]:
+                        candidates.append(i)
+                        break
+                if candidates:
+                    break
+        for candidate in candidates:
+            actionable = issue_state.actionable_occurrence(
+                candidate.get("occurrences") or []
+            )
+            if actionable:
+                return actionable.get("bundle_id")
+        return None
+
     @app.get("/agentic", response_class=HTMLResponse)
-    def agentic_index(request: RequestType) -> Any:
+    def agentic_index(
+        request: RequestType,
+        issue: str | None = None,
+        occ: str | None = None,
+    ) -> Any:
         # Lazy delivery reconcile FIRST: a PR merged upstream resolves its
         # issue (WS4), so it runs before the issues are read and the render
         # sees current states. One call, throttled process-wide by
@@ -604,11 +652,22 @@ def register(app, ctx):
                 if key not in ("done", "muted")
             ]
             focus_count = sum(b["count"] for b in bands)
+            # The split: a queue on the left, the selected occurrence's
+            # workspace on the right, both on screen (M4). Selection is a
+            # URL so it is linkable and survives a reload; without JS every
+            # queue row is a link that reloads with the right pane filled.
+            selected = _select_occurrence(conn, issues, issue, occ)
+            cockpit = (
+                _cockpit_context(request, conn, selected)
+                if selected else None
+            )
             return templates.TemplateResponse(
                 request,
                 "agentic_index.html",
                 {
-                    "title": "Agentic",
+                    "title": "Repairs",
+                    "selected_occurrence": selected,
+                    "cockpit": cockpit,
                     "status": agentic_status(conn),
                     "env_health": env_health_statuses(conn),
                     "active_env": get_active_env(conn),
@@ -767,7 +826,27 @@ def register(app, ctx):
         bundle_id: str,
         artifact: str | None = None,
     ) -> Any:
+        """One occurrence, standing alone.
+
+        Kept alongside the Repairs split: Builds links here, the pipeline
+        drawer links here, and so does anything else that knows a bundle
+        and not an issue.
+        """
         with _conn() as conn:
+            return templates.TemplateResponse(
+                request, "agentic_bundle.html",
+                _cockpit_context(request, conn, bundle_id, artifact),
+            )
+
+    def _cockpit_context(request, conn, bundle_id, artifact=None):
+        """Everything the occurrence workspace renders.
+
+        Extracted so the cockpit can be composed twice: standing alone
+        above, and in the right pane of the Repairs split (M4). Two
+        assemblies would drift, and the one that drifted would be the one
+        nobody was looking at.
+        """
+        if True:  # noqa: SIM108 — keeps the body's indentation stable
             bundle = get_bundle(conn, bundle_id)
             # Lazy delivery reconcile: if this bundle's PR merged upstream,
             # flip it terminal now so the page shows "merged" + drops
@@ -905,9 +984,7 @@ def register(app, ctx):
         chat_enabled = (
             _chat_llm_config() is not None and chat_session_relpath is not None
         )
-        return templates.TemplateResponse(
-            request,
-            "agentic_bundle.html",
+        return (
             {
                 "title": bundle_id,
                 "bundle": bundle,
@@ -928,7 +1005,7 @@ def register(app, ctx):
                 "bundle_activity": bundle_activity,
                 "chat_enabled": chat_enabled,
                 "chat_session_relpath": chat_session_relpath,
-            },
+            }
         )
 
     @app.get(

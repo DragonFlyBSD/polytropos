@@ -16,6 +16,14 @@
       'owned':  ('Open',          'wl-btn-take'),
   } %}
 
+{# The split (M4): a queue on the left, the selected occurrence's
+   workspace on the right, both on screen. Picking an issue used to mean
+   leaving the queue behind; the two halves are one view now.
+
+   Selection is a URL -- ?occ=<bundle> -- so it is linkable, survives a
+   reload, and every queue row is a plain link that works with no JS. #}
+<div class="repairs-split{% if not cockpit %} solo{% endif %}">
+  <aside class="repair-rail" aria-label="Repair work queue">
   <div class="page-heading">
     <div>
       <h1>Repairs</h1>
@@ -92,7 +100,7 @@
         {% if g.count > 1 %}
         {# An issue seen several times — expandable to its occurrences. #}
         <div class="wl-group" id="grp-{{ band.key }}-{{ loop.index }}">
-          <div class="wl-row {{ band.key }}" onclick="wlToggle(this.parentElement)">
+          <div class="wl-row {{ band.key }}{% if g.latest and g.latest.bundle_id == selected_occurrence %} current{% endif %}" onclick="wlToggle(this.parentElement)">
             <span class="wl-stripe"></span>
             <button type="button" class="wl-chev" aria-label="Expand occurrences">›</button>
             <div class="wl-ident">
@@ -115,7 +123,7 @@
             </div>
             <div class="wl-actions">
               {% if g.latest %}
-              <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}" onclick="event.stopPropagation()">{{ action[0] }}</a>
+              <a class="wl-btn {{ action[1] }}" href="?occ={{ g.latest.bundle_id }}" onclick="event.stopPropagation()">{{ action[0] }}</a>
               {% else %}
               <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}" onclick="event.stopPropagation()">Open issue</a>
               {% endif %}
@@ -124,7 +132,7 @@
           <div class="wl-children">
             {% for b in g.occurrences %}
             {% set s = fix_status(b) %}
-            <a class="wl-child" href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">
+            <a class="wl-child{% if b.bundle_id == selected_occurrence %} current{% endif %}" href="?occ={{ b.bundle_id }}">
               <span class="wl-cid">{{ b.bundle_id }}</span>
               <span class="wl-cmid">
                 <span class="wl-pill {{ s.cls }} sm">{{ s.label }}</span>
@@ -157,11 +165,11 @@
         {# A single-occurrence issue — a plain row. #}
         {% set b = g.latest %}
         {% set s = fix_status(b) %}
-        <div class="wl-row {{ band.key }}">
+        <div class="wl-row {{ band.key }}{% if b.bundle_id == selected_occurrence %} current{% endif %}">
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">{{ g.origin }}</a>
+            <a class="wl-port" href="?occ={{ b.bundle_id }}">{{ g.origin }}</a>
             {% if g.regressed %}<span class="wl-recur" title="Fixed before — came back">regressed</span>{% endif %}
             <span class="wl-subid">{{ b.bundle_id }}</span>
           </div>
@@ -175,7 +183,7 @@
             <span class="wl-age" title="{{ b.ts_utc }}">{{ b.ts_utc | relative_age }}</span>
           </div>
           <div class="wl-actions">
-            <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">{{ action[0] }}</a>
+            <a class="wl-btn {{ action[1] }}" href="?occ={{ b.bundle_id }}">{{ action[0] }}</a>
           </div>
         </div>
         {% endif %}
@@ -296,6 +304,32 @@
       <a href="{{ request.url_for('agentic_activity') }}">Activity log</a>
     </p>
   </div>
+  </aside>
+
+  {% if cockpit %}
+  <section class="repair-detail" aria-label="Selected occurrence">
+    {% with cockpit_heading = 'h2',
+            title = cockpit.title, bundle = cockpit.bundle,
+            issue = cockpit.issue, bundle_jobs = cockpit.bundle_jobs,
+            tool_trace = cockpit.tool_trace,
+            selected_artifact = cockpit.selected_artifact,
+            selected_artifact_relpath = cockpit.selected_artifact_relpath,
+            artifact_groups = cockpit.artifact_groups,
+            prior_attempts = cockpit.prior_attempts,
+            port_token_usage = cockpit.port_token_usage,
+            dops_state = cockpit.dops_state,
+            operator_actions = cockpit.operator_actions,
+            delivery_request = cockpit.delivery_request,
+            occurrence_stats = cockpit.occurrence_stats,
+            verify = cockpit.verify, verify_history = cockpit.verify_history,
+            bundle_activity = cockpit.bundle_activity,
+            chat_enabled = cockpit.chat_enabled,
+            chat_session_relpath = cockpit.chat_session_relpath %}
+      {% include "_cockpit.html" %}
+    {% endwith %}
+  </section>
+  {% endif %}
+</div>
 {% endblock %}
 {% block scripts %}
   <script>

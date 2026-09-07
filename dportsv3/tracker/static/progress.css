@@ -1940,6 +1940,58 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
   .rail-push { display: none; }
 }
 
+/* The occurrence heading. In the sheet rather than the cockpit page's own
+   <style>, because the split includes the partial and not the page. */
+.occ-h1 {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  font-size: 24px;
+}
+.repair-detail .occ-h1 { font-size: 21px; }
+
+/* --- The Repairs split (M4) -----------------------------------------------
+ * A queue rail and the selected occurrence's workspace, both on screen.
+ * Picking an issue used to mean leaving the queue behind.
+ */
+.repairs-split {
+  display: grid; grid-template-columns: 372px minmax(0, 1fr);
+  min-height: 100%; background: var(--bg);
+}
+.repairs-split.solo { grid-template-columns: minmax(0, 1fr); }
+.repair-rail {
+  min-width: 0; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--line-hot);
+}
+.repair-rail .page-heading { padding: 14px 16px; }
+.repair-rail .page-heading h1 { font-size: 21px; }
+.repair-rail .heading-actions { display: none; }
+.repair-rail .page-body { padding: 0 12px 16px; }
+.repair-detail { min-width: 0; overflow-y: auto; }
+/* Inside the rail the row is a narrow column, so the wide grid the
+   worklist uses on a full page has to collapse the same way it does on a
+   phone. Same rules, different trigger. */
+.repair-rail .worklist .wl-row {
+  grid-template-columns: 3px 20px minmax(0, 1fr);
+  row-gap: 6px;
+}
+.repair-rail .worklist .wl-rollup,
+.repair-rail .worklist .wl-mid,
+.repair-rail .worklist .wl-actions { grid-column: 3; justify-self: start; }
+.repair-rail .worklist .wl-focus-num { font-size: 30px; }
+.repair-rail .worklist .wl-chips { margin-left: 0; }
+/* The selected occurrence, marked in the queue that is still beside it. */
+.repair-rail .wl-row.current { background: var(--surface-3); }
+.repair-rail .wl-row.current .wl-stripe { background: var(--cyan); }
+
+@media (max-width: 1100px) {
+  /* Below this the rail and the detail stop fitting side by side. One
+     column, queue first: it is the thing you navigate from. */
+  .repairs-split { grid-template-columns: minmax(0, 1fr); }
+  .repair-rail {
+    border-right: 0; border-bottom: 1px solid var(--line-hot);
+    max-height: 60vh;
+  }
+}
+
 /* --- Repairs, narrow ------------------------------------------------------
  * After the .worklist rules, not before: these override at equal
  * specificity, so source order is what decides.
