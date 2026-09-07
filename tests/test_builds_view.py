@@ -393,3 +393,89 @@ def test_the_page_stops_reloading_itself_while_someone_is_filtering(
     assert "polling 30s" in plain
     assert "dpLive" not in filtered
     assert "paused while filtered" in filtered
+
+
+# --- the evidence column (M5) ---------------------------------------------
+
+
+def test_a_failed_origin_links_to_the_evidence_it_produced(tmp_path) -> None:
+    """The Evidence column is the path from a red row on the farm's
+    dashboard to what the agent has to work with, and nothing covered it.
+
+    The join is by (build_run_id -> runs.build_run_id, origin), so a
+    fixture whose bundles carry a different origin than its build_results
+    renders an em dash for every row and looks like a broken page. That is
+    what the demo fixture was doing (M5).
+    """
+    import sqlite3
+
+    from dportsv3.db.schema import init_db
+    from dportsv3.tracker.db import get_build_results_page
+
+    path = tmp_path / "evidence.db"
+    db = sqlite3.connect(str(path))
+    db.row_factory = sqlite3.Row
+    init_db(db)
+    db.execute(
+        "INSERT INTO build_runs(id, target, build_type, started_at) "
+        "VALUES (1, '@main', 'release', 't0')")
+    db.execute(
+        "INSERT INTO runs(run_id, target, build_run_id) "
+        "VALUES ('r-1', '@main', 1)")
+    db.executemany(
+        "INSERT INTO build_results(build_run_id, origin, version, result, "
+        "recorded_at, status) VALUES (1, ?, '1.0', ?, 't1', 'recorded')",
+        [("devel/alpha", "failure"), ("devel/beta", "success")])
+    db.execute(
+        "INSERT INTO bundles(bundle_id, run_id, origin, ts_utc, result, "
+        "target) VALUES ('bnd-1', 'r-1', 'devel/alpha', 't1', 'failure', "
+        "'@main')")
+    db.commit()
+    db.close()
+
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    rows = {r["origin"]: r for r in get_build_results_page(conn, 1)["results"]}
+    conn.close()
+
+    assert rows["devel/alpha"]["bundle_id"] == "bnd-1"
+    # A success uploads nothing, so it gets no link rather than a dead one.
+    assert rows["devel/beta"].get("bundle_id") is None
+
+
+def test_the_dashboards_origin_table_is_not_numbered() -> None:
+    """The mock leads its result table with an ordinal, 001 / 002, which
+    is dsynth's build order -- how an operator reads the log.
+
+    This table is ORDER BY origin ASC, deliberately, so that search and
+    paging are stable. An ordinal here would count position in an
+    alphabetical list and look exactly like the mock's number while
+    meaning something else. The run view IS in arrival order and has the
+    column (UI-3, M5).
+    """
+    from pathlib import Path
+
+    template = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+                / "templates" / "builds_dashboard.html").read_text()
+    header = template[template.index('class="data-table results-table"'):]
+    header = header[:header.index("</thead>")]
+
+    assert ">No.<" not in header
+    assert ">State<" in header and ">Origin<" in header
+
+
+def test_live_progress_is_offered_where_there_is_a_run_to_show(
+    app_db,
+) -> None:
+    """The mock has this twice: a button in the selected run's toolbar and
+    an entry in the section nav. The button is here and is the one that
+    has a run in hand; a nav entry would have to invent a default (M5)."""
+    client, _, run_id = app_db
+
+    body = client.get(f"/?run={run_id}").text
+
+    assert ">Live progress</a>" in body
+    nav = body[body.index('aria-label="Builds sections"'):]
+    nav = nav[:nav.index("</nav>")]
+    assert "Live progress" not in nav
+    assert ">Targets<" in nav
