@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .db.identifiers import require_identifier
 from .db.schema import init_db as _init_state_db
 
 DEFAULT_LOGS_ROOT = "/build/synth/logs"
@@ -119,9 +120,17 @@ class ArtifactStore:
         self.full_logs_root.mkdir(parents=True, exist_ok=True)
 
     def upsert_run_bundle(self, payload: dict[str, Any]) -> None:
+        # The door. Both ids become URL path segments, and url_for refuses
+        # a path separator while COMPOSING a page -- so one bad row does
+        # not break its own row, it breaks every page that links to it
+        # (poly-13ku). Checked here rather than at each url_for: there are
+        # a dozen of those and the next one written would not know.
+        bundle_id = require_identifier(
+            "bundle_id", payload.get("bundle_id"))
         run_id = payload.get("run_id")
+        if run_id is not None:
+            run_id = require_identifier("run_id", run_id)
         profile = payload.get("profile")
-        bundle_id = payload.get("bundle_id")
         origin = payload.get("origin")
         flavor = payload.get("flavor")
         ts_utc = _normalize_ts(payload.get("ts_utc"))
@@ -369,6 +378,7 @@ class ArtifactStore:
         return {"ok": True, "state": new_state.value}
 
     def put_blob(self, bundle_id: str, relpath: str, data: bytes, kind: str | None) -> dict[str, Any]:
+        bundle_id = require_identifier("bundle_id", bundle_id)
         sha = sha256_bytes(data)
         obj_path = blob_path(self.blob_root, sha)
         if not obj_path.exists():

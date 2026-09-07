@@ -77,6 +77,45 @@ def _log_delivery_preflight() -> None:
         _LOG.warning("delivery preflight could not run: %s", exc)
 
 
+def _log_unsafe_identifiers(db_path: str) -> None:
+    """Name any stored id that cannot be rendered as a link.
+
+    These break the page that links to them, not the row -- url_for
+    refuses a path separator while composing -- so one legacy row takes
+    down the Builds dashboard, the occurrences list, and any issue, job or
+    run page that mentions it. Nothing shipped can write one now
+    (poly-13ku), but a DB written before that guard can hold them, and
+    they are invisible until something tries to link.
+
+    Reported rather than repaired: rewriting an id means rewriting every
+    foreign reference to it, and a rewrite that goes wrong is worse than
+    the 500 it prevents.
+    """
+    try:
+        from dportsv3.db.identifiers import (  # noqa: PLC0415
+            stored_unsafe_identifiers,
+        )
+        from dportsv3.tracker.db import open_db  # noqa: PLC0415
+
+        conn = open_db(db_path)
+        try:
+            bad = stored_unsafe_identifiers(conn)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — startup must not die here
+        _LOG.debug("identifier check could not run: %s", exc)
+        return
+    for table, column, value in bad:
+        _LOG.error(
+            "%s.%s=%r cannot be a URL path segment, so every page that "
+            "links to it will fail to render. Nothing writes these any "
+            "more; this row predates the guard. Repair with: "
+            "UPDATE %s SET %s = <safe id> WHERE %s = %r -- and the same "
+            "for every table that references it.",
+            table, column, value, table, column, column, value,
+        )
+
+
 def create_app(db_path: str | Path) -> Any:
     """Create one tracker FastAPI app instance."""
     if (
@@ -150,6 +189,7 @@ def create_app(db_path: str | Path) -> Any:
         conn = init_db(app.state.db_path)
         conn.close()
         _log_delivery_preflight()
+        _log_unsafe_identifiers(app.state.db_path)
 
     @app.on_event("shutdown")
     def _shutdown() -> None:

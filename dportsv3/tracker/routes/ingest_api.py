@@ -89,9 +89,13 @@ def register(app: Any, ctx: RouteContext) -> None:
 
     @app.post("/v1/bundles/upsert")
     def bundles_upsert(body: dict[str, Any]) -> Any:
-        if not body.get("bundle_id"):
-            return _error(400, "bundle_id required")
-        _store().upsert_run_bundle(body)
+        # The store raises for an id that cannot be a URL path segment
+        # (poly-13ku). Turn it into the 400 it is rather than a 500: the
+        # caller sent bad input, and the message says which character.
+        try:
+            _store().upsert_run_bundle(body)
+        except ValueError as exc:
+            return _error(400, str(exc))
         return {"ok": True}
 
     @app.post("/v1/artifacts/put")

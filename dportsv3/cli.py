@@ -576,6 +576,14 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     status.add_argument("--server", type=str, help="Tracker base URL")
     status.add_argument("--json", action="store_true", help="Pretty JSON output")
 
+    repair = tracker_sub.add_parser(
+        "repair-identifiers",
+        help="Rewrite stored ids that cannot be URL path segments")
+    repair.add_argument(
+        "--apply", action="store_true",
+        help="Make the changes. Without it, print what would change and "
+             "write nothing.")
+
     failures = tracker_sub.add_parser("failures", help="Query current failures")
     failures.add_argument("--target", type=str, required=True, help="Build target")
     failures.add_argument("--server", type=str, help="Tracker base URL")

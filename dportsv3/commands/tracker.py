@@ -62,6 +62,8 @@ def cmd_tracker(args: Namespace) -> int:
         return _cmd_status(args)
     if action == "failures":
         return _cmd_failures(args)
+    if action == "repair-identifiers":
+        return _cmd_repair_identifiers(args)
     if action == "diff":
         return _cmd_diff(args)
     if action == "show-build":
@@ -651,3 +653,48 @@ def _format_build_compare(payload: dict[str, Any]) -> list[str]:
     lines.append(f"Removed:                    {summary['removed']:>4}")
     lines.append(f"Version changes:            {summary['version_changes']:>4}")
     return lines
+
+
+def _cmd_repair_identifiers(args: Namespace) -> int:
+    """Rewrite stored ids that cannot be URL path segments.
+
+    A bundle, run or job id is a URL path segment, and ``url_for`` refuses
+    a path separator while COMPOSING a page -- so one such row does not
+    break its own row, it breaks every page that links to it (poly-13ku).
+    Nothing writes them any more; a database written before that guard can
+    still hold them.
+
+    Prints what it would do and changes nothing unless --apply is given.
+    Renaming an id touches up to nine tables, and that is a decision
+    somebody should take having read it.
+    """
+    import sqlite3
+
+    from dportsv3 import settings
+    from dportsv3.db.identifiers import repair_unsafe_identifiers
+
+    db_path = str(settings.get("paths.state_db"))
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        plan = repair_unsafe_identifiers(conn, dry_run=not args.apply)
+    finally:
+        conn.close()
+
+    if not plan:
+        print(f"{db_path}: no unsafe identifiers")
+        return 0
+    verb = "renamed" if args.apply else "would rename"
+    for entry in plan:
+        if entry["collision"]:
+            print(f"SKIPPED {entry['table']}.{entry['column']}: "
+                  f"{entry['old']!r} -> {entry['new']!r} is already taken. "
+                  f"Two rows sanitize to one id; rename one by hand rather "
+                  f"than merging them.")
+            continue
+        touched = ", ".join(
+            f"{k}={v}" for k, v in sorted(entry["updated"].items()))
+        print(f"{verb} {entry['old']!r} -> {entry['new']!r}  ({touched})")
+    if not args.apply:
+        print("\nNothing written. Re-run with --apply to make these changes.")
+    return 0
