@@ -1,5 +1,5 @@
     {% if activity %}
-    <h2>Activity
+    <h2 id="activity">Activity
       <span id="activity-count" style="font-size:12px;color:var(--text-dim);font-weight:normal;">
         {% if job_is_active %}({{ activity|length }} of last {{ limit }}){% else %}(what each attempt did){% endif %}
       </span>
@@ -25,6 +25,40 @@
       .tool-error                { color: var(--c-fail, #c00); }
       .decision-meta             { margin-top: 4px; font-size: 12px;
                                    color: var(--text-dim); }
+      /* Message column absorbs the leftover width; max-width:0 is the
+         auto-layout trick that lets one-line ellipsis clamps engage.
+         Stage/Dur must opt out of the global overflow-wrap:anywhere or
+         the squeeze breaks them mid-word ("llm_t urn"). */
+      .activity-table td.msg     { max-width: 0; width: 100%; }
+      .activity-table td:nth-child(2),
+      .activity-table td:nth-child(3) { white-space: nowrap; }
+      .msg-clamp > summary       { list-style: none; cursor: pointer;
+                                   display: block; overflow: hidden;
+                                   text-overflow: ellipsis;
+                                   white-space: nowrap; }
+      .msg-clamp > summary::-webkit-details-marker { display: none; }
+      .msg-clamp[open] > summary { white-space: pre-wrap; }
+      /* Indent tool rows under the llm_turn that spawned them. */
+      tr.activity-tool td:nth-child(2) { padding-left: 22px; }
+      /* Cap tall activity tables and stick the header while scrolling
+         inside them — sticky only works vertically once the wrapper
+         itself is the vertical scroll container. */
+      .activity-scroll           { max-height: 75vh; overflow: auto; }
+      .activity-scroll table.tracker-table thead th {
+        position: sticky; top: 0; z-index: 2;
+        box-shadow: 0 1px 0 var(--amber-border); }
+      .filter-pill { text-decoration: none; padding: 1px 6px; border-radius: 3px;
+                     color: var(--text-dim); }
+      .filter-pill.active { background: var(--c-info-bg, #e0e8f8);
+                            color: var(--text, #000); font-weight: 600; }
+      tr.fold-toggle td { text-align: center; padding: 4px; }
+      button.linklike { background: none; border: none; padding: 0;
+                        font: inherit; cursor: pointer;
+                        color: var(--c-link, var(--cyan)); }
+      /* Review-view stage filter: structural rows (attempt markers,
+         decisions, the fold toggle) always stay visible. */
+      #attempt-groups[data-filter="llm"] tbody tr:not(.activity-llm):not(.activity-attempt-start):not(.activity-attempt-end):not(.activity-decision):not(.fold-toggle) { display: none; }
+      #attempt-groups[data-filter="tool"] tbody tr:not(.activity-tool):not(.activity-attempt-start):not(.activity-attempt-end):not(.activity-decision):not(.fold-toggle) { display: none; }
     </style>
 
     {% if job_is_active %}
@@ -59,25 +93,19 @@
       </span>
     </div>
     <style>
-      .filter-pill { text-decoration: none; padding: 1px 6px; border-radius: 3px;
-                     color: var(--text-dim); }
-      .filter-pill.active { background: var(--c-info-bg, #e0e8f8);
-                            color: var(--text, #000); font-weight: 600; }
       .activity-table th.sortable { cursor: pointer; user-select: none; }
       .activity-table th.sortable:hover { color: var(--c-link, #06f); }
       .activity-table th.sort-asc::after { content: " ▲"; font-size: 12px; }
       .activity-table th.sort-desc::after { content: " ▼"; font-size: 12px; }
     </style>
-    <div class="table-scroll-x">
+    <div class="table-scroll-x activity-scroll">
     <table class="tracker-table activity-table" id="activity-table">
       <thead>
         <tr>
           <th scope="col">When</th>
           <th scope="col">Stage</th>
           <th scope="col">Dur (ms)</th>
-          <th scope="col" class="tok sortable" data-sort="prompt">Prompt</th>
-          <th scope="col" class="tok sortable" data-sort="completion">Compl</th>
-          <th scope="col" class="tok sortable" data-sort="total">Total</th>
+          <th scope="col" class="tok sortable" data-sort="total" title="Provider total for the turn (incl. re-billed cache); hover a value for the prompt/completion split. Bar is scaled to a 200k-token context.">Tokens</th>
           <th scope="col" class="tok sortable" data-sort="cumulative" title="Cumulative billable (uncached) tokens — the real running cost">Cum (billable)</th>
           <th scope="col">Message / tools</th>
         </tr>
@@ -105,6 +133,16 @@
       details.attempt-group .muted { color: var(--text-dim); font-size: 12px; font-weight: normal; }
       details.attempt-group table.activity-table { margin: 0; border: none; }
     </style>
+    <div class="filter-bar" id="review-filter" style="font-size:12px;margin-bottom:8px;">
+      Filter:
+      <a href="#" class="filter-pill active" data-filter="all">all</a>
+      ·
+      <a href="#" class="filter-pill" data-filter="llm">llm turns</a>
+      ·
+      <a href="#" class="filter-pill" data-filter="tool">tool calls</a>
+      <span style="color:var(--text-dim);">(attempt markers and decisions stay visible)</span>
+    </div>
+    <div id="attempt-groups" data-filter="all">
     {% for g in activity_attempts %}
     <details class="attempt-group"{% if g.open %} open{% endif %}>
       <summary>
@@ -112,25 +150,49 @@
         {% if g.outcome %}<span class="stat-pill {{ g.outcome_cls }}">{{ g.outcome }}</span>{% endif %}
         <span class="muted">{{ g.rows|length }} events{% if g.tokens %} · {{ '{:,}'.format(g.tokens) }} billable tokens{% endif %}{% if g.n_tools %} · {{ g.n_tools }} tool call{{ 's' if g.n_tools != 1 else '' }}{% endif %}</span>
       </summary>
-      <div class="table-scroll-x">
+      <div class="table-scroll-x activity-scroll">
       <table class="tracker-table activity-table">
         <thead>
           <tr>
             <th scope="col">When</th><th scope="col">Stage</th><th scope="col">Dur (ms)</th>
-            <th scope="col" class="tok">Prompt</th><th scope="col" class="tok">Compl</th>
-            <th scope="col" class="tok">Total</th><th scope="col" class="tok">Cum (billable)</th>
+            <th scope="col" class="tok" title="Provider total for the turn (incl. re-billed cache); hover a value for the prompt/completion split. Bar is scaled to a 200k-token context.">Tokens</th>
+            <th scope="col" class="tok" title="Cumulative billable (uncached) tokens — the real running cost">Cum (billable)</th>
             <th scope="col">Message / tools</th>
           </tr>
         </thead>
+        {# A default-open attempt used to dump every row (442 on the
+           poly-up2f exemplar). Fold all but the last 30 — the outcome
+           lives at the end — behind a "show earlier" toggle. Rows are
+           oldest-first here. #}
+        {% if g.rows|length > 40 %}
+        {% set nfold = g.rows|length - 30 %}
+        <tbody>
+          <tr class="fold-toggle"><td colspan="6">
+            <button type="button" class="linklike">Show {{ nfold }} earlier events…</button>
+          </td></tr>
+        </tbody>
+        <tbody class="folded-rows" hidden>
+          {% for a in g.rows[:nfold] %}
+          {% include "_activity_row.html" %}
+          {% endfor %}
+        </tbody>
+        <tbody>
+          {% for a in g.rows[nfold:] %}
+          {% include "_activity_row.html" %}
+          {% endfor %}
+        </tbody>
+        {% else %}
         <tbody>
           {% for a in g.rows %}
           {% include "_activity_row.html" %}
           {% endfor %}
         </tbody>
+        {% endif %}
       </table>
       </div>
     </details>
     {% endfor %}
+    </div>
     {% endif %}
 
     {% else %}

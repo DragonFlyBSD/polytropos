@@ -1,6 +1,6 @@
     {% if token_usage and token_usage.has_data %}
     {# Step 9a: token-cost summary card. Aggregated from llm_turn rows in activity_log. #}
-    <details class="section-collapse">
+    <details class="section-collapse" id="tokens">
     <summary>Token usage
       <span class="muted">({{ '{:,}'.format(token_usage.total_tokens) }} total, {{ token_usage.llm_turns }} turns)</span>
     </summary>

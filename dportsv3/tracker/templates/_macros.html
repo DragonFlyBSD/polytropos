@@ -2,6 +2,16 @@
    that was copy-pasted (and had drifted) across the agentic templates.
    Import per template: {% from "_macros.html" import status_pill %} #}
 
+{#- Timestamps in tables: "MM-DD HH:MM:SS" with the full ISO value on
+    hover. The stored form ("2026-09-08T22:54:49.887584+00:00") is 33
+    chars of mostly noise at reading time and was eating ~25% of the
+    activity table's width (poly-up2f). -#}
+{%- macro short_ts(ts) -%}
+{%- if ts and ts|length >= 19 -%}
+<span title="{{ ts }}">{{ ts[5:10] }} {{ ts[11:19] }}</span>
+{%- else -%}{{ ts or '—' }}{%- endif -%}
+{%- endmacro -%}
+
 {%- macro pill(cls, label, title='') -%}
 <span class="stat-pill {{ cls }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</span>
 {%- endmacro -%}

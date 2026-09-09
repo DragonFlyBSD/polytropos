@@ -150,6 +150,41 @@
   }
 })();
 
+// --- Fold toggles (review view) ---
+// Attempt groups over 40 rows render their earlier rows in a hidden
+// <tbody class="folded-rows"> with a "Show N earlier events" row above
+// it; clicking unhides the tbody and removes the toggle.
+(function () {
+  document.querySelectorAll("tr.fold-toggle button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var toggleBody = btn.closest("tbody");
+      var folded = toggleBody && toggleBody.nextElementSibling;
+      if (folded && folded.classList.contains("folded-rows")) {
+        folded.hidden = false;
+        toggleBody.remove();
+      }
+    });
+  });
+})();
+
+// --- Stage filter pills (review view) ---
+// Client-side counterpart of the live view's server-side stage_filter:
+// sets data-filter on the attempt-group wrapper; CSS does the hiding.
+(function () {
+  var wrap = document.getElementById("attempt-groups");
+  if (!wrap) return;
+  var pills = document.querySelectorAll("#review-filter .filter-pill");
+  pills.forEach(function (p) {
+    p.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      wrap.dataset.filter = p.dataset.filter;
+      pills.forEach(function (q) {
+        q.classList.toggle("active", q === p);
+      });
+    });
+  });
+})();
+
 // --- Abandon job (mark dead) ---
 (function () {
   var btn = document.getElementById("abandon-btn");

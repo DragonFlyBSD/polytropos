@@ -3,11 +3,12 @@
      shows the tool fan-out concisely ("→ get_file, grep").
    - Other rows: token columns are "·" placeholders; message column
      shows the original prose.
-   The JS in agentic_job.html renders new rows with the same shape
-   so prepended live-refresh rows match the static initial render.
-   Both paths set the same `activity-<stage>` CSS class so the
-   per-stage colors / fonts (defined in agentic_job.html's <style>
-   block) apply identically. #}
+   Live-refresh rows are rendered server-side from this same template
+   (the /activity-fragment endpoint renders it with only `a` in
+   context — anything else this template needs must be imported or
+   set here). Both paths set the same `activity-<stage>` CSS class so
+   the per-stage colors / fonts apply identically. #}
+{% from "_macros.html" import short_ts %}
 {% set is_llm_turn = a.stage == 'llm_turn' %}
 {% set is_decision = a.stage == 'decision' %}
 {% set is_attempt_start = a.stage == 'attempt_start' %}
@@ -16,8 +17,6 @@
 {# Sort keys for client-side column sorting (Step 9b). llm_turn rows
    carry their token values; everything else gets -1 so they sort to
    the bottom on descending. #}
-{% set sort_p = (a.extra.prompt_tokens or 0) if is_llm_turn and a.extra is mapping else -1 %}
-{% set sort_c = (a.extra.completion_tokens or 0) if is_llm_turn and a.extra is mapping else -1 %}
 {% set sort_t = (a.extra.total_tokens or 0) if is_llm_turn and a.extra is mapping else -1 %}
 {# Cum column tracks cumulative *billable* (real running cost), not the
    re-billed cumulative total. Rows that lack it fall back to the total
@@ -33,24 +32,29 @@
 {% elif is_attempt_end %}{% set row_class = 'activity-attempt-end' %}
 {% elif is_decision %}{% set row_class = 'activity-decision' %}
 {% elif is_tool %}{% set row_class = 'activity-tool' %}
+{% elif is_llm_turn %}{% set row_class = 'activity-llm' %}
 {% else %}{% set row_class = '' %}{% endif %}
 <tr data-id="{{ a.id or 0 }}"
     class="{{ row_class }}"
-    data-sort-prompt="{{ sort_p }}"
-    data-sort-completion="{{ sort_c }}"
     data-sort-total="{{ sort_t }}"
     data-sort-cumulative="{{ sort_cum }}">
-  <td style="white-space:nowrap;">{{ a.ts }}</td>
+  <td style="white-space:nowrap;">{{ short_ts(a.ts) }}</td>
   <td>{{ a.stage or '—' }}</td>
   <td>{{ a.duration_ms if a.duration_ms is not none else '—' }}</td>
   {% if is_llm_turn and a.extra is mapping %}
-    <td class="tok">{{ '{:,}'.format(a.extra.prompt_tokens or 0) }}</td>
-    <td class="tok">{{ '{:,}'.format(a.extra.completion_tokens or 0) }}</td>
-    <td class="tok">{{ '{:,}'.format(a.extra.total_tokens or 0) }}</td>
+    {% set turn_total = a.extra.total_tokens or 0 %}
+    {# Bar scaled against a fixed 200k reference (a typical context
+       window) rather than the page's own max, so it reads the same in
+       live-prepended fragments — which render one row at a time and
+       can't know the page maximum. #}
+    {% set barpct = 100 if turn_total >= 200000 else (turn_total / 2000)|round(1) %}
+    <td class="tok tok-bar"
+        style="background:linear-gradient(90deg, var(--c-info-bg, #e8eef8) {{ barpct }}%, transparent {{ barpct }}%);"
+        title="prompt {{ '{:,}'.format(a.extra.prompt_tokens or 0) }}{% if a.extra.cached_tokens %} (cached {{ '{:,}'.format(a.extra.cached_tokens) }}){% endif %} · completion {{ '{:,}'.format(a.extra.completion_tokens or 0) }}">{{ '{:,}'.format(turn_total) }}</td>
     {% set cum_is_billable = (a.extra.cumulative_billable_tokens is defined
         and a.extra.cumulative_billable_tokens is not none) %}
     <td class="tok"{% if not cum_is_billable %} title="no cache data on this row: this is the re-billed total, not billable"{% endif %}>{{ '{:,}'.format(cum_billable or 0) }}{% if not cum_is_billable %}*{% endif %}</td>
-    <td class="tool-list">
+    <td class="tool-list msg">
       {% if a.extra.tools_requested %}
         → {{ a.extra.tools_requested|join(', ') }}
       {% elif a.extra.text_only %}
@@ -60,11 +64,13 @@
   {% else %}
     <td class="tok tok-empty">·</td>
     <td class="tok tok-empty">·</td>
-    <td class="tok tok-empty">·</td>
-    <td class="tok tok-empty">·</td>
-    <td>
+    <td class="msg">
       {% set _msg = a.message or '—' %}
-      {% if _msg|length > 240 %}
+      {% if is_tool and _msg|length > 120 %}
+        {# Tool rows dominated the table with multi-line grep patterns:
+           clamp to one ellipsised line, click to unfold in place. #}
+        <details class="msg-clamp"><summary>{{ _msg }}</summary></details>
+      {% elif _msg|length > 240 %}
         <details class="collapse-long">
           <summary>{{ _msg[:200] }}… <em>(click to expand, {{ _msg|length }} chars)</em></summary>
           <div style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;margin-top:4px;">{{ _msg }}</div>

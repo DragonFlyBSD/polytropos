@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_macros.html" import short_ts %}
 {% block title %}{{ job.job_id }} — DeltaPorts Tracker{% endblock %}
 {% block head_extra %}
   <style>
@@ -27,6 +28,22 @@
                                   font-size: 12px; color: var(--text-dim); }
     .new-row { animation: fade-in 1.2s ease-out; }
     @keyframes fade-in { from { background: #fffae0; } to { background: transparent; } }
+    .jump-links { font-size: 12px; margin: -6px 0 14px; color: var(--text-dim); }
+    #handoff, #transitions, #activity, #tokens, #prior-attempts { scroll-margin-top: 10px; }
+    /* The handoff artifact embeds a full diff + failing-build tail; the
+       operator-facing prose around them is ~15 lines. Cap the code
+       blocks so the page stops being a 25k-px wall (poly-up2f). The
+       plain-text fallback is ONE pre holding prose and all — cap it
+       taller so the prose stays reachable without a giant page. */
+    .handoff-card .artifact-markdown pre { max-height: 320px; overflow: auto; }
+    .handoff-card > pre { max-height: 60vh; overflow: auto; }
+    /* Lifecycle transitions: keep the narrow columns from wrapping
+       mid-word (the global cell rule is overflow-wrap:anywhere), and
+       render detail dicts as key=value runs instead of a repr dump. */
+    .transitions-table td.tt-nowrap { white-space: nowrap; }
+    .kv-detail { font-family: ui-monospace, monospace; font-size: 12px; }
+    .kv-detail .kv { display: inline-block; margin-right: 12px; }
+    .kv-detail .k { color: var(--text-dim); }
   </style>
 {% endblock %}
 {% block nav %}
@@ -59,12 +76,21 @@
       </span>
     </h1>
 
+    <nav class="jump-links">
+      Jump to:
+      {% if handoff %}<a href="#handoff">Handoff</a> · {% endif %}
+      {% if transitions %}<a href="#transitions">Transitions</a> · {% endif %}
+      {% if activity %}<a href="#activity">Activity</a>{% endif %}
+      {% if token_usage and token_usage.has_data %} · <a href="#tokens">Token usage</a>{% endif %}
+      {% if prior_attempts %} · <a href="#prior-attempts">Prior attempts</a>{% endif %}
+    </nav>
+
     {% include "_job_summary.html" %}
 
     {# Handoff + the phase story (transitions, activity) come first; the
        token-cost analytics collapse below. #}
     {% if handoff %}
-    <h2>Manual handoff
+    <h2 id="handoff">Manual handoff
       <span style="font-size:12px;color:var(--text-dim);font-weight:normal;">
         from
         <a href="{{ request.url_for('agentic_bundle_detail', bundle_id=handoff.bundle_id) }}">
@@ -72,7 +98,7 @@
         </a>
       </span>
     </h2>
-    <div class="tracker-card">
+    <div class="tracker-card handoff-card">
       {% if handoff.run_id and job.origin %}
       <p style="font-size:12px;margin-top:0;">
         <a href="{{ request.url_for('agentic_manual_detail', run_id=handoff.run_id, origin=job.origin) }}">
@@ -89,23 +115,35 @@
     {% endif %}
 
     {% if transitions %}
-    <h2>Lifecycle transitions
+    <h2 id="transitions">Lifecycle transitions
       <span style="font-size:12px;color:var(--text-dim);font-weight:normal;">
         ({{ transitions|length }} of last {{ limit }})
       </span>
     </h2>
     <div class="table-scroll-x">
-    <table class="tracker-table">
+    <table class="tracker-table transitions-table">
       <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Actor</th><th scope="col">Detail</th></tr></thead>
       <tbody>
         {% for e in transitions %}
         <tr>
-          <td style="white-space:nowrap;">{{ e.ts }}</td>
-          <td>{{ e.event_name }}</td>
-          <td>{{ e.from_state or '—' }}</td>
-          <td>{{ e.to_state }}</td>
-          <td>{{ e.actor or '—' }}</td>
-          <td>{% if e.detail %}<pre style="margin:0;font-size:12px;white-space:pre-wrap;">{{ e.detail }}</pre>{% else %}—{% endif %}</td>
+          <td class="tt-nowrap">{{ short_ts(e.ts) }}</td>
+          <td class="tt-nowrap">{{ e.event_name }}</td>
+          <td class="tt-nowrap">{{ e.from_state or '—' }}</td>
+          <td class="tt-nowrap">{{ e.to_state }}</td>
+          <td class="tt-nowrap">{{ e.actor or '—' }}</td>
+          <td>
+            {% if e.detail is mapping %}
+            {# Skip keys the summary card above already shows — the
+               enqueue detail repeats origin/target/path/etc. and that
+               repr dump was starving the other columns into wrapping
+               mid-word. #}
+            <div class="kv-detail">
+              {%- for k, v in e.detail.items() if k not in ('path', 'origin', 'target', 'created_ts_utc', 'type', 'flavor') -%}
+              <span class="kv"><span class="k">{{ k }}</span>={{ v }}</span>
+              {%- endfor -%}
+            </div>
+            {% elif e.detail %}<pre style="margin:0;font-size:12px;white-space:pre-wrap;">{{ e.detail }}</pre>{% else %}—{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

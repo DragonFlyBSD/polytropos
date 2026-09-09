@@ -5,7 +5,7 @@
    one-glance sense of "is this the 3rd attempt with budget
    exhausted, or is this a fresh failure?". #}
 {% if prior_attempts %}
-<details class="section-collapse">
+<details class="section-collapse" id="prior-attempts">
   <summary>Prior attempts for this origin
     <span class="muted">({{ prior_attempts | length }} of last 10)</span>
   </summary>

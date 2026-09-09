@@ -175,25 +175,30 @@ def test_job_detail_active_pill_reflects_filter(client):
 
 def test_job_detail_sortable_headers_present(client):
     """Sortable columns have data-sort=KEY so the JS knows what to
-    sort. The JS itself runs in a browser; we pin the contract."""
+    sort. The JS itself runs in a browser; we pin the contract.
+    Prompt/Compl collapsed into the Tokens column (poly-up2f); the
+    split moved to the cell's title attribute."""
     body = client.get("/agentic/jobs/job-mixed").text
-    for key in ("prompt", "completion", "total", "cumulative"):
+    for key in ("total", "cumulative"):
         assert f'data-sort="{key}"' in body
     # The corresponding row-level data-sort-* attributes exist too.
-    for key in ("prompt", "completion", "total", "cumulative"):
+    for key in ("total", "cumulative"):
         assert f"data-sort-{key}=" in body
+    # The prompt/completion split survives as the hover title.
+    assert "prompt 80,000" in body
+    assert "completion 600" in body
 
 
 def test_job_detail_row_sort_keys_use_neg_one_for_non_llm(client):
     """Non-llm_turn rows carry data-sort-*=-1 so they sort to the
-    bottom on descending. Without this sentinel, sorting by prompt
+    bottom on descending. Without this sentinel, sorting by tokens
     would show "0" tool rows interleaved with the real values."""
     body = client.get("/agentic/jobs/job-mixed").text
     # Tool rows: -1 sentinels.
-    assert 'data-sort-prompt="-1"' in body
-    # llm_turn rows: actual prompt counts.
-    assert 'data-sort-prompt="80000"' in body
-    assert 'data-sort-prompt="5000"' in body
+    assert 'data-sort-total="-1"' in body
+    # llm_turn rows: actual turn totals.
+    assert 'data-sort-total="80600"' in body
+    assert 'data-sort-total="5200"' in body
 
 
 def test_job_detail_live_polling_passes_stage_filter(client):
