@@ -178,3 +178,77 @@ def test_context_ctx_independent_default_lists():
     assert b.sibling_bundle_ids == []
     a.job["k"] = "v"
     assert b.job == {}
+
+
+# --- ExistingPatchesSection (poly-3x8o) ---------------------------------------
+
+
+def _patch_ctx(files, dfly, origin="www/chromium", bodies=None):
+    """ContextCtx wired with stub artifact/read callables."""
+    from dportsv3.agent.context import ContextCtx as _C
+    arts = [f"port/files/{n}" for n in files] + [f"port/dragonfly/{n}" for n in dfly]
+    bodies = bodies or {}
+    return _C(
+        bundle_id="b1",
+        job={"origin": origin, "target": "@2026Q3"},
+        bundle_artifact_list=lambda _b: arts,
+        read_bundle_text=lambda _d, _b, rel: bodies.get(rel, "--- a\n+++ b\n"),
+    )
+
+
+def test_existing_patches_lists_names_not_bodies():
+    """The section must not inline diff bodies by default."""
+    from dportsv3.agent.context import ExistingPatchesSection
+    ctx = _patch_ctx(["patch-a.c"], [], bodies={"port/files/patch-a.c": "SECRETBODY"})
+    out = ExistingPatchesSection().render(ctx)
+    assert "patch-a.c" in out
+    assert "SECRETBODY" not in out
+    assert "```diff" not in out
+
+
+def test_existing_patches_marks_dragonfly_overrides():
+    from dportsv3.agent.context import ExistingPatchesSection
+    ctx = _patch_ctx(["patch-a.c", "patch-b.c"], ["patch-a.c", "patch-z.c"])
+    out = ExistingPatchesSection().render(ctx)
+    # the shared name is listed once, under dragonfly, marked
+    assert "- patch-a.c  (overrides files/)" in out
+    assert out.count("patch-a.c") == 1
+    # dragonfly-only patches are visible at all (they never were before)
+    assert "patch-z.c" in out
+    # the non-overridden freebsd patch still appears
+    assert "- patch-b.c" in out
+
+
+def test_existing_patches_names_the_compose_location():
+    from dportsv3.agent.context import ExistingPatchesSection
+    out = ExistingPatchesSection().render(_patch_ctx(["patch-a.c"], []))
+    assert "get_file" in out
+    # a literal path the agent can hand to get_file, not a shell variable
+    assert "/work/artifacts/compose/@2026Q3/www/chromium/files/" in out
+    assert "/work/artifacts/compose/@2026Q3/www/chromium/dragonfly/" in out
+    assert "$" not in out
+
+
+def test_existing_patches_scales_to_chromium():
+    """1,604 files + 144 dragonfly must stay small (poly-3x8o: was 480k tokens)."""
+    from dportsv3.agent.context import ExistingPatchesSection
+    files = [f"patch-src_file{i:04d}.cc" for i in range(1604)]
+    dfly = files[:96] + [f"patch-dfly{i:03d}.cc" for i in range(48)]
+    body = "x" * 800  # the measured median patch size
+    ctx = _patch_ctx(files, dfly, bodies={})
+    ctx.read_bundle_text = lambda _d, _b, _r: body
+    out = ExistingPatchesSection().render(ctx)
+    assert len(out) < 120_000, f"manifest grew to {len(out)} chars"
+    assert out.count("(overrides files/)") == 96
+
+
+def test_existing_patches_none_when_no_patches():
+    from dportsv3.agent.context import ExistingPatchesSection
+    assert ExistingPatchesSection().render(_patch_ctx([], [])) is None
+
+
+def test_existing_patches_inline_bodies_opt_in():
+    from dportsv3.agent.context import ExistingPatchesSection
+    ctx = _patch_ctx(["patch-a.c"], [], bodies={"port/files/patch-a.c": "SECRETBODY"})
+    out = ExistingPatchesSection(inline_bodies=True).render(ctx)
+    assert "SECRETBODY" in out and "```diff" in out

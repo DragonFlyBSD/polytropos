@@ -100,6 +100,18 @@ if [ -d "${portdir}/files" ]; then
 	done
 fi
 
+# The overlay's own patches. Without this no bundle carries a
+# port/dragonfly/ artifact -- tracker/render/text.py already expects the
+# prefix, and the patch payload could only ever show the FreeBSD side of a
+# patch we override (poly-3x8o).
+if [ -d "${portdir}/dragonfly" ]; then
+	for pf in "${portdir}/dragonfly"/patch-*; do
+		[ -r "$pf" ] || continue
+		rel="port/dragonfly/$(basename "$pf")"
+		artifact_store put-blob --bundle-id "${bundle_id}" --relpath "$rel" --file "$pf" >/dev/null
+	done
+fi
+
 # Persist the (already-distilled) bounded error bundle.
 if [ -r "${errors_txt}" ]; then
 	artifact_store put-blob --bundle-id "${bundle_id}" --relpath "logs/errors.txt" --file "${errors_txt}" >/dev/null

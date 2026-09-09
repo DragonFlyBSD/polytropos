@@ -463,32 +463,96 @@ class PortFilesSection:
 
 @dataclass
 class ExistingPatchesSection:
-    """``### Existing Patches`` listing — diff fences per patch file."""
+    """``### Existing Patches`` — a manifest of patch names, not bodies.
+
+    This section used to inline every ``port/files/patch-*`` in the
+    bundle behind a *per-file* cap. That cap cannot see the shape that
+    actually hurts: measured on www_chromium-20260909-135208Z, 1,604
+    patches with a median of 780 chars each, none anywhere near the
+    32 KB cap, together 480 K tokens — 93.5% of the whole payload. In
+    that same attempt the agent made 14 ``get_file`` calls and read
+    none of them.
+
+    No comparable harness pushes file bodies. Aider renders a ranked
+    *map* of definitions inside a ~1 K token budget; SWE-agent gives
+    windowed reads and says flooding the window with file content is
+    counterproductive because most of it is irrelevant; Claude Code
+    and Pi cap what a read *returns* and pair it with pagination. Our
+    pull side already matches that — ``get_file`` takes
+    ``limit_lines`` / ``start_line`` / ``end_line`` and the agent uses
+    them. So the manifest names what exists and where it lives, and
+    the agent fetches what it wants (poly-3x8o).
+
+    ``dragonfly/`` patches are listed too, and marked where they
+    override a ``files/`` patch of the same name: the overlay's own
+    work is the most relevant thing here, and showing FreeBSD's
+    version of a patch we override is worse than showing nothing.
+    """
     name: str = "existing_patches"
     priority: int = 70
-    # 0 = resolve from env at render time. Tests can override per-instance.
+    # Retained so an operator can re-enable inlining for a small port;
+    # 0 (the default) means "names only". Bodies are the exception now.
     max_chars: int = 0
+    inline_bodies: bool = False
 
     def render(self, ctx: ContextCtx) -> str | None:
-        if not ctx.bundle_id or ctx.bundle_artifact_list is None or ctx.read_bundle_text is None:
+        if not ctx.bundle_id or ctx.bundle_artifact_list is None:
             return None
-        relpaths = [p for p in ctx.bundle_artifact_list(ctx.bundle_id)
-                    if p.startswith("port/files/patch-")]
-        if not relpaths:
+        artifacts = list(ctx.bundle_artifact_list(ctx.bundle_id))
+        ports = sorted(p for p in artifacts if p.startswith("port/files/patch-"))
+        dfly = sorted(p for p in artifacts if p.startswith("port/dragonfly/patch-"))
+        if not ports and not dfly:
             return None
+
+        overridden = {Path(p).name for p in dfly} & {Path(p).name for p in ports}
         lines = ["### Existing Patches"]
-        for rel in sorted(relpaths):
-            content = ctx.read_bundle_text(ctx.bundle_dir, ctx.bundle_id, rel)
-            if not content:
-                continue
-            name = Path(rel).name
-            lines.extend([f"#### {name}", "```diff",
-                          _truncate_head_tail(content, self.max_chars),
-                          "```", ""])
-        if len(lines) == 1:
-            # Header but no patches successfully read — mirror legacy
-            # which still emitted the header in that case.
-            return "### Existing Patches\n"
+        origin = str(ctx.job.get("origin") or "")
+
+        if dfly:
+            lines.append(f"#### dragonfly/ — the overlay's own ({len(dfly)})")
+            for rel in dfly:
+                nm = Path(rel).name
+                mark = "  (overrides files/)" if nm in overridden else ""
+                lines.append(f"- {nm}{mark}")
+            lines.append("")
+
+        if ports:
+            kept = [p for p in ports if Path(p).name not in overridden]
+            lines.append(
+                f"#### files/ — from freebsd-ports ({len(ports)}"
+                + (f", {len(overridden)} overridden above" if overridden else "")
+                + ")"
+            )
+            for rel in kept:
+                lines.append(f"- {Path(rel).name}")
+            lines.append("")
+
+        # A literal path, not ${DPORTS_COMPOSE_ROOT}: get_file takes a
+        # path, not a shell word, and cannot expand a variable. The
+        # dev-env sets that root to /work/artifacts/compose/<target>
+        # (dports_dev_env/helpers.py:153).
+        target = str(ctx.job.get("target") or "")
+        lines.append(
+            "Names only — bodies are not inlined. Read any of these with "
+            "`get_file` (it takes `start_line`/`end_line`) or list them with "
+            "`list_dir`, under"
+        )
+        if origin and target:
+            root = f"/work/artifacts/compose/{target}/{origin}"
+            lines.append(f"`{root}/files/` and `{root}/dragonfly/`.")
+        else:
+            lines.append("the composed port's `files/` and `dragonfly/` directories.")
+        lines.append("")
+
+        if self.inline_bodies and ctx.read_bundle_text is not None:
+            for rel in dfly + ports:
+                content = ctx.read_bundle_text(ctx.bundle_dir, ctx.bundle_id, rel)
+                if not content:
+                    continue
+                lines.extend([f"#### {Path(rel).name}", "```diff",
+                              _truncate_head_tail(content, self.max_chars),
+                              "```", ""])
+
         return "\n".join(lines)
 
 
