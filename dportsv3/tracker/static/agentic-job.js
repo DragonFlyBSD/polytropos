@@ -150,36 +150,41 @@
   }
 })();
 
-// --- Fold toggles (review view) ---
+// --- Review view: fold toggles + stage filter pills ---
 // Attempt groups over 40 rows render their earlier rows in a hidden
 // <tbody class="folded-rows"> with a "Show N earlier events" row above
-// it; clicking unhides the tbody and removes the toggle.
+// it. The pills are the client-side counterpart of the live view's
+// server-side stage_filter: they set data-filter on the wrapper and
+// CSS does the hiding. Filtering first REVEALS every fold: the toggle's
+// count is computed unfiltered, and revealing rows the filter then
+// hides would make the click look like a no-op.
 (function () {
-  document.querySelectorAll("tr.fold-toggle button").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var toggleBody = btn.closest("tbody");
-      var folded = toggleBody && toggleBody.nextElementSibling;
-      if (folded && folded.classList.contains("folded-rows")) {
-        folded.hidden = false;
-        toggleBody.remove();
-      }
-    });
-  });
-})();
+  function revealFold(btn) {
+    var toggleBody = btn.closest("tbody");
+    var folded = toggleBody && toggleBody.nextElementSibling;
+    if (folded && folded.classList.contains("folded-rows")) {
+      folded.hidden = false;
+      toggleBody.remove();
+    }
+  }
 
-// --- Stage filter pills (review view) ---
-// Client-side counterpart of the live view's server-side stage_filter:
-// sets data-filter on the attempt-group wrapper; CSS does the hiding.
-(function () {
+  document.querySelectorAll("tr.fold-toggle button").forEach(function (btn) {
+    btn.addEventListener("click", function () { revealFold(btn); });
+  });
+
   var wrap = document.getElementById("attempt-groups");
   if (!wrap) return;
   var pills = document.querySelectorAll("#review-filter .filter-pill");
   pills.forEach(function (p) {
     p.addEventListener("click", function (ev) {
       ev.preventDefault();
+      if (p.dataset.filter !== "all") {
+        wrap.querySelectorAll("tr.fold-toggle button").forEach(revealFold);
+      }
       wrap.dataset.filter = p.dataset.filter;
       pills.forEach(function (q) {
         q.classList.toggle("active", q === p);
+        q.setAttribute("aria-pressed", q === p ? "true" : "false");
       });
     });
   });

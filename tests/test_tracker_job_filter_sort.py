@@ -72,6 +72,32 @@ def seeded(tmp_path):
                VALUES (?, 'job-mixed', ?, ?, ?, ?)""",
             (_now(), stage, msg, dur, json.dumps(extra) if extra else None),
         )
+
+    # A terminal job whose one attempt exceeds the 40-row fold threshold,
+    # for the review-view (attempt-grouped) rendering contract.
+    conn.execute(
+        """INSERT INTO jobs
+           (job_id, state, type, origin, flavor, bundle_dir,
+            created_ts_utc, path, last_seen_at, target)
+           VALUES ('job-done', 'done', 'patch', 'devel/bar', '', '',
+                   ?, '', ?, '@2026Q2')""",
+        (now, now),
+    )
+    big = [("attempt_start", "attempt 1/3", {"attempt": 1}, None)]
+    for t in range(1, 22):
+        big.append(("llm_turn", f"T{t}",
+                    {"turn": t, "prompt_tokens": 100, "completion_tokens": 10,
+                     "total_tokens": 110, "cumulative_total_tokens": 110 * t},
+                    None))
+        big.append(("tool:grep", "pattern=x ok", None, 5))
+    big.append(("attempt_end", "done", {"attempt": 1, "rebuild_ok": True}, None))
+    for stage, msg, extra, dur in big:
+        conn.execute(
+            """INSERT INTO activity_log
+               (ts, job_id, stage, message, duration_ms, extra_json)
+               VALUES (?, 'job-done', ?, ?, ?, ?)""",
+            (_now(), stage, msg, dur, json.dumps(extra) if extra else None),
+        )
     conn.commit()
     conn.close()
     return db_path
@@ -199,6 +225,37 @@ def test_job_detail_row_sort_keys_use_neg_one_for_non_llm(client):
     # llm_turn rows: actual turn totals.
     assert 'data-sort-total="80600"' in body
     assert 'data-sort-total="5200"' in body
+
+
+def test_job_detail_review_view_folds_long_attempts(client):
+    """Terminal jobs render attempt groups; a group over 40 rows folds
+    all but its last 30 into a hidden tbody behind a 'show earlier'
+    toggle. 44 rows here -> 14 folded. Pin the markup the fold JS
+    consumes."""
+    body = client.get("/agentic/jobs/job-done").text
+    assert "attempt-group" in body
+    assert 'class="folded-rows" hidden' in body
+    assert "Show 14 earlier events" in body
+
+
+def test_job_detail_review_view_renders_filter_pills(client):
+    """The review view has client-side stage-filter pills (the live
+    view's pills are server-side query params instead)."""
+    body = client.get("/agentic/jobs/job-done").text
+    assert 'id="review-filter"' in body
+    assert 'id="attempt-groups" data-filter="all"' in body
+    # The live-view-only controls stay out of the review render.
+    assert "job-activity-limit" not in body
+
+
+def test_job_detail_live_view_has_no_fold(client):
+    """The live (active-job) view is a flat stream the poller prepends
+    to — folding would fight row insertion, so it must not render."""
+    # The style block mentions the class names in selectors on every
+    # render; assert on the actual markup instead.
+    body = client.get("/agentic/jobs/job-mixed").text
+    assert 'class="folded-rows"' not in body
+    assert 'class="fold-toggle"' not in body
 
 
 def test_job_detail_live_polling_passes_stage_filter(client):

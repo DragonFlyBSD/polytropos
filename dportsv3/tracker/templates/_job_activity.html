@@ -135,11 +135,11 @@
     </style>
     <div class="filter-bar" id="review-filter" style="font-size:12px;margin-bottom:8px;">
       Filter:
-      <a href="#" class="filter-pill active" data-filter="all">all</a>
+      <a href="#" role="button" aria-pressed="true" class="filter-pill active" data-filter="all">all</a>
       ·
-      <a href="#" class="filter-pill" data-filter="llm">llm turns</a>
+      <a href="#" role="button" aria-pressed="false" class="filter-pill" data-filter="llm">llm turns</a>
       ·
-      <a href="#" class="filter-pill" data-filter="tool">tool calls</a>
+      <a href="#" role="button" aria-pressed="false" class="filter-pill" data-filter="tool">tool calls</a>
       <span style="color:var(--text-dim);">(attempt markers and decisions stay visible)</span>
     </div>
     <div id="attempt-groups" data-filter="all">
