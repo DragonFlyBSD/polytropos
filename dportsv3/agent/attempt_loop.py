@@ -559,6 +559,24 @@ def run(
                 attempts=attempts,
                 proof=None,
             )
+        except Exception:
+            # poly-be6o: the dump below never runs when the loop raises,
+            # which is how a www/chromium attempt that had worked for
+            # thirteen hours left no transcript at all — the bundle held
+            # the triage session and nothing else. `messages` is the
+            # conversation as of the failed request, so it carries every
+            # tool call the attempt made; on a context-length or provider
+            # error it is also the only evidence of *why* the request was
+            # rejected. Dump, then re-raise untouched — the caller's
+            # handling of the original error must not change.
+            if session_dump is not None:
+                try:
+                    session_dump(attempt_idx, messages)
+                except Exception as exc:
+                    log.warning(
+                        "attempt_loop: session_dump failed on raising "
+                        "attempt %d: %s", attempt_idx, exc)
+            raise
         total_usage.add(attempt_usage)
         prev_text = response.text or ""
         final_text = prev_text

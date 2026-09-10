@@ -759,6 +759,102 @@ def _try_write_handoff(
         pass
 
 
+def _rescue_work_on_raise(
+    services: Any,
+    ctx: StepCtx,
+    *,
+    env: str,
+    origin: str,
+    bundle_id: str | None,
+    trace_events: list[dict],
+) -> None:
+    """poly-be6o: persist what the agent already did when the harness
+    raised before it could report.
+
+    The raise skips every write on the success path, and the caller
+    (``runner.process_job``) destroys the job worktree moments after
+    this step returns — so this is the only moment the work still
+    exists on disk. www/chromium lost 13 h 41 m and two finished
+    dragonfly patches to a provider 400 at hour thirteen because
+    nothing ran here.
+
+    Three artifacts, all cheap, off one capture:
+
+    ``analysis/tool_trace.jsonl`` — the dispatcher accumulated it live,
+    so it is in memory regardless of how the run ended. It is the
+    record of what the agent did, and its ``put_file`` arguments alone
+    let a human reconstruct the edits.
+
+    ``analysis/changes.diff`` — captured whole-tree vs the bundle base
+    with the ``--intent-to-add`` bracket, so never-committed files
+    surface as additions. That is exactly the shape of work an agent
+    that never commits leaves behind. Written only when non-empty, so
+    a raise before the agent touched anything files nothing and a
+    bundle whose earlier job produced a real diff keeps it.
+
+    ``analysis/rescued/<job_id>.diff`` — the same bytes, at a path no
+    later job overwrites. ``changes.diff`` belongs to whichever job
+    wrote last, and a requeued attempt that gives up cleanly writes an
+    empty one over it (it starts from base, so the rescued edits are
+    not in its tree). The canonical copy is what delivery and verify
+    read; this one is what is still there afterwards.
+
+    Order matters: this runs before ``_try_write_handoff``, which reads
+    ``analysis/changes.diff`` to summarize what the attempt changed. So
+    the handoff an operator picks the port up from now describes the
+    rescued work instead of being silent about it.
+
+    Every step is swallowed. This runs inside an ``except`` and must
+    never replace the failure the operator actually needs to see.
+    """
+    try:
+        if trace_events:
+            services.write_tool_trace(ctx.bundle_dir, bundle_id, trace_events)
+    except Exception:
+        pass
+
+    try:
+        written = services.write_changes_diff(
+            ctx.bundle_dir, bundle_id, env, origin,
+            only_if_nonempty=True,
+            extra_relpaths=(f"analysis/rescued/{ctx.job_id}.diff",),
+        )
+    except Exception as exc:
+        try:
+            services.activity_log(
+                ctx.queue_root, "patch_work_rescue_failed",
+                f"{origin}: could not capture the agent's work after the "
+                f"harness raised: {str(exc)[:200]}",
+                job_id=ctx.job_id,
+                extra={"origin": origin, "error": str(exc)[:500]},
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        if written:
+            services.activity_log(
+                ctx.queue_root, "patch_work_rescued",
+                f"{origin}: harness raised — captured {written} bytes to "
+                f"analysis/changes.diff and analysis/rescued/"
+                f"{ctx.job_id}.diff before the worktree is dropped",
+                job_id=ctx.job_id,
+                extra={"origin": origin, "diff_bytes": written,
+                       "trace_events": len(trace_events)},
+            )
+        else:
+            services.activity_log(
+                ctx.queue_root, "patch_work_rescue_empty",
+                f"{origin}: harness raised with nothing to capture "
+                f"(no diff against the bundle base)",
+                job_id=ctx.job_id,
+                extra={"origin": origin, "trace_events": len(trace_events)},
+            )
+    except Exception:
+        pass
+
+
 #: Where a transient provider failure is counted. The job file is what
 #: the runner claims from and what moves between pending/ and inflight/,
 #: so the tally travels with the work — no schema, no second source of
@@ -931,7 +1027,8 @@ class PatchAttemptStep:
       - write_error_note(job_path, msg) -> None
       - write_patch_audit(bundle_dir, bundle_id, result, model, origin) -> None
       - write_tool_trace(bundle_dir, bundle_id, trace_events) -> None
-      - write_changes_diff(bundle_dir, bundle_id, env, origin) -> None
+      - write_changes_diff(bundle_dir, bundle_id, env, origin,
+                          only_if_nonempty=False) -> int
       - looks_env_suspicious(result: dict) -> bool
       - invalidate_health_cache() -> None
       - summarize_tool_call(tool, args, result) -> str
@@ -1279,6 +1376,19 @@ class PatchAttemptStep:
                 queue_root, "api_error",
                 f"Harness patch failed for {origin}: {str(exc)[:200]}",
                 job_id=ctx.job_id,
+            )
+            # poly-be6o: everything that persists the agent's work sits
+            # below this except, on the success path. Salvage it here —
+            # runner.process_job destroys the worktree as soon as this
+            # step returns, and it holds hours of work whose only other
+            # copy is the model's context, which just died with the
+            # request. Note the ordering: this runs BEFORE _err, which
+            # may requeue the job; the requeue restarts from base, so
+            # what is filed here is all that survives.
+            _rescue_work_on_raise(
+                services, ctx,
+                env=env, origin=origin, bundle_id=bundle_id,
+                trace_events=dispatcher.trace_events,
             )
             outcome = _err(
                 str(exc), services, job_path, JobEvent.PATCH_GAVE_UP,

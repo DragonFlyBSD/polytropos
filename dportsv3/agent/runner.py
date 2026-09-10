@@ -4142,7 +4142,15 @@ def _write_patch_audit_harness(
         )
 
 
-def _write_changes_diff(bundle_dir: Path | None, bundle_id: str | None, env: str, origin: str) -> None:
+def _write_changes_diff(
+    bundle_dir: Path | None,
+    bundle_id: str | None,
+    env: str,
+    origin: str,
+    *,
+    only_if_nonempty: bool = False,
+    extra_relpaths: tuple[str, ...] = (),
+) -> int:
     """Capture the bundle branch's full diff vs the env's base branch
     and write to ``analysis/changes.diff``.
 
@@ -4163,6 +4171,22 @@ def _write_changes_diff(bundle_dir: Path | None, bundle_id: str | None, env: str
     Best-effort: failures emit a tombstone diff body so the
     operator sees the failure shape rather than getting silent
     delivery breakage downstream.
+
+    ``only_if_nonempty`` writes nothing when the capture came back
+    empty — for the poly-be6o rescue path, where the artifact may
+    already hold a real diff from an earlier job on this bundle and a
+    worktree the agent never got to edit must not replace it. In that
+    mode a capture *failure* raises instead of producing a tombstone,
+    so the caller can tell "nothing to save" from "could not look".
+
+    ``extra_relpaths`` files the same bytes at additional artifact
+    paths. ``changes.diff`` is overwritten by every later job on the
+    bundle, which is right for the canonical artifact and wrong for a
+    rescue: a requeued attempt that gives up cleanly writes its own
+    (empty, because it starts from base) diff over work no attempt can
+    reproduce. A job-keyed copy is never in that race.
+
+    Returns the number of bytes persisted; 0 when nothing was written.
     """
     try:
         from dportsv3.agent import worker  # type: ignore[import-not-found]
@@ -4175,16 +4199,46 @@ def _write_changes_diff(bundle_dir: Path | None, bundle_id: str | None, env: str
         # a job's tree may be a linked worktree whose gitdir: pointer only
         # resolves under the chroot's /work/... prefix.
         p = worker._git_diff_against_base(env, base, rel)
+        if p.returncode != 0:
+            # Without this an unreachable chroot or an unresolvable base
+            # yields empty stdout, which every reader downstream reads as
+            # "the agent changed nothing" — the one answer we cannot
+            # tell apart from a real loss.
+            raise RuntimeError(
+                f"git diff exited {p.returncode}: "
+                f"{(p.stderr or '').strip()[:200]}"
+            )
         diff_bytes = p.stdout.encode("utf-8")
     except Exception as exc:
+        if only_if_nonempty:
+            # The caller is salvaging work off a tree that is about to be
+            # deleted. "Captured nothing" and "could not look" are
+            # different answers there, and it reports them differently —
+            # so hand it the error rather than a 0 it cannot interpret.
+            raise
         diff_bytes = f"# failed to capture diff: {exc}\n".encode("utf-8")
 
+    if only_if_nonempty and not diff_bytes.strip():
+        return 0
+
     if bundle_id:
-        artifact_store_put(bundle_id, "analysis/changes.diff", diff_bytes, "text")
+        for rp in ("analysis/changes.diff", *extra_relpaths):
+            artifact_store_put(bundle_id, rp, diff_bytes, "text")
     elif bundle_dir:
-        out = bundle_dir / "analysis" / "changes.diff"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(diff_bytes)
+        for rp in ("analysis/changes.diff", *extra_relpaths):
+            out = bundle_dir / rp
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(diff_bytes)
+    elif only_if_nonempty:
+        # Reached with a real diff in hand and nowhere to put it. On the
+        # rescue path that is a loss, and returning 0 would report it as
+        # "the agent changed nothing".
+        raise RuntimeError(
+            "captured a diff but the job has neither bundle_id nor bundle_dir"
+        )
+    else:
+        return 0
+    return len(diff_bytes)
 
 
 def _load_operator_context_history(
@@ -4530,9 +4584,23 @@ def process_job(
         success, status = process_patch_job(
             queue_root, job_path, sibling_paths, job, bundle_dir, playbooks_dir,
         )
-        # Step 30 slice 4: patch is terminal for the bundle branch
-        # — delivery.diff was captured (slice 2) on success, and on
-        # failure the branch's state is moot. Drop either way.
+        # Step 30 slice 4: patch is terminal for the bundle branch —
+        # drop either way.
+        #
+        # The original premise was "on failure the branch's state is
+        # moot", and that was wrong: it conflated the agent trying and
+        # failing (state genuinely moot) with the harness raising
+        # mid-flight, where the worktree holds everything the agent
+        # did and this drop is what destroys it (poly-be6o).
+        #
+        # Dropping is still right — the worktree is keyed on bundle_id,
+        # so keeping a dirty one makes the requeued job hard-refuse at
+        # assert_port_clean, turning a recoverable provider blip into a
+        # permanent refusal. What changed is that the capture now
+        # happens *inside* process_patch_job, on both the success path
+        # and the raise path (steps._rescue_work_on_raise), before this
+        # line runs. Do not move that capture out of the step: the
+        # tree it reads does not survive this call.
         _drop_bundle_branch_for_job(
             queue_root=queue_root, job_id=job_path.name,
             env=resolve_env(job),
