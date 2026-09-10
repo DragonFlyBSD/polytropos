@@ -36,6 +36,7 @@ class DevEnvConfig:
     runtime_profile: RuntimeProfile
     dsynth_builders: int
     dsynth_jobs: int
+    dsynth_ccache: bool
 
 
 #: The dev-env's own settings, in the ``[dev_env]`` section of the same
@@ -81,7 +82,7 @@ SETTINGS: list[Setting] = [
             "Must be present; provisioning fails without them."),
     Setting("dev_env.tool_pkgs_optional", "list",
             ["dsynth", "python311", "python312", "python313",
-             "py311-pip", "py312-pip", "py313-pip", "genpatch"],
+             "py311-pip", "py312-pip", "py313-pip", "genpatch", "ccache"],
             "Installed when available; absence is not fatal."),
     Setting("dev_env.tool_cmds_required", "list",
             ["pkg", "indexinfo", "bash", "curl", "git", "patch", "jq",
@@ -97,6 +98,16 @@ SETTINGS: list[Setting] = [
             "Parallel dsynth builders. Must be positive."),
     Setting("dev_env.dsynth_jobs", "int", 2,
             "Make jobs per builder. Must be positive."),
+    Setting("dev_env.dsynth_ccache", "bool", False,
+            "Point dsynth's Directory_ccache at /work/dsynth/ccache instead\n"
+            "of leaving it disabled, so a rebuild reuses compiler output.\n"
+            "\n"
+            "dsynth force-rebuilds every round by design, so without this the\n"
+            "agent recompiles the whole port for a one-file edit: ~45 min on\n"
+            "www/firefox, ~13 h on www/chromium (54,854 targets). Off by\n"
+            "default because it only helps once ccache is installed in the\n"
+            "env, and because the first build after enabling is a cold cache\n"
+            "that saves nothing (poly-dei7)."),
 ]
 
 _schema: Schema | None = None
@@ -192,6 +203,7 @@ def load_config() -> DevEnvConfig:
         dsynth_builders=_positive("dev_env.dsynth_builders",
                                   value("dsynth_builders")),
         dsynth_jobs=_positive("dev_env.dsynth_jobs", value("dsynth_jobs")),
+        dsynth_ccache=bool(value("dsynth_ccache")),
     )
 
 

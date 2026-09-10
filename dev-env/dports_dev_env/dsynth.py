@@ -26,7 +26,7 @@ def write_dsynth_config(config: DevEnvConfig, state: EnvironmentState) -> None:
     config_dir = env_dsynth_etc_dir(state)
     dsynth_root = state.root_dir / "work/dsynth"
     profile_name = dsynth_profile_name(state)
-    for path in [
+    dirs = [
         config_dir,
         dsynth_root / "packages/All",
         dsynth_root / "options",
@@ -34,8 +34,16 @@ def write_dsynth_config(config: DevEnvConfig, state: EnvironmentState) -> None:
         dsynth_root / "logs",
         state.root_dir / f"work/artifacts/compose/{state.target}",
         state.root_dir / "usr/distfiles",
-    ]:
+    ]
+    if config.dsynth_ccache:
+        dirs.append(dsynth_root / "ccache")
+    for path in dirs:
         path.mkdir(parents=True, exist_ok=True)
+
+    # dsynth force-rebuilds every round, so without a compiler cache the
+    # agent recompiles the whole port for a one-file edit. The path is the
+    # in-chroot one, like every other Directory_ entry (poly-dei7).
+    ccache_dir = "/work/dsynth/ccache" if config.dsynth_ccache else "disabled"
 
     (config_dir / "dsynth.ini").write_text(
         f"""[Global Configuration]
@@ -50,7 +58,7 @@ Directory_options= /work/dsynth/options
 Directory_distfiles= /usr/distfiles
 Directory_buildbase= /work/dsynth/build
 Directory_logs= /work/dsynth/logs
-Directory_ccache= disabled
+Directory_ccache= {ccache_dir}
 Directory_system= /
 Package_suffix= .txz
 Number_of_builders= {config.dsynth_builders}
