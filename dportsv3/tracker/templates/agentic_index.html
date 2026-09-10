@@ -311,9 +311,12 @@
 
   {% if cockpit %}
   <section class="repair-detail" aria-label="Selected occurrence">
+    {# How this page addresses an occurrence: append a bundle id. The
+       cockpit's partials each build their own URLs from it, so selecting
+       an artifact or a sibling occurrence stays in the split instead of
+       navigating to the standalone page (poly-icif, poly-v50g). #}
     {% with cockpit_heading = 'h2',
-            cockpit_page_url = request.url_for('agentic_index')|string
-                               ~ '?occ=' ~ (cockpit.bundle.bundle_id | urlencode),
+            cockpit_occ_base = request.url_for('agentic_index')|string ~ '?occ=',
             title = cockpit.title, bundle = cockpit.bundle,
             issue = cockpit.issue, bundle_jobs = cockpit.bundle_jobs,
             tool_trace = cockpit.tool_trace,

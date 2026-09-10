@@ -16,6 +16,11 @@
     {% set ns.best = o.bundle_id %}
   {% endif %}
 {% endfor %}
+{# Standing alone, a row is the page you would be on. Embedded in the
+   Repairs split it is a selection within one -- so it addresses the host's
+   own ?occ= URL rather than dropping you out of the split, and it does not
+   claim to be the page the subnav's Worklist already is (poly-v50g). #}
+{% set _embedded = cockpit_occ_base is defined %}
 <details class="panel occ-selector"{% if occurrences | length > 1 %} open{% endif %}>
   <summary>
     Occurrences of this issue
@@ -26,8 +31,10 @@
     {% set st = occurrence_stats.get(o.bundle_id) %}
     {% set here = o.bundle_id == bundle.bundle_id %}
     <a class="occ-row{% if here %} current{% endif %}"
-       href="{{ request.url_for('agentic_bundle_detail', bundle_id=o.bundle_id) }}"
-       {% if here %}aria-current="page"{% endif %}>
+       href="{{ (cockpit_occ_base ~ (o.bundle_id | urlencode)) if _embedded
+                else request.url_for('agentic_bundle_detail',
+                                     bundle_id=o.bundle_id) }}"
+       {% if here %}aria-current="{{ 'true' if _embedded else 'page' }}"{% endif %}>
       <span class="occ-row-id">{{ o.bundle_id }}</span>
       <span class="occ-row-mid">
         {{ status_pill(o) }}

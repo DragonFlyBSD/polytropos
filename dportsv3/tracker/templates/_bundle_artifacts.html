@@ -6,13 +6,16 @@
    in place via JS, or on reload when JS is off. #}
     <h2>Artifacts</h2>
     {% if bundle.artifacts %}
-    {# Which page an artifact selection addresses. The standalone
-       occurrence page by default; the Repairs split overrides it with its
-       own ?occ= URL so picking an artifact there neither navigates out of
+    {# Which page an artifact selection addresses: this occurrence on
+       whichever page hosts the cockpit. The standalone occurrence page by
+       default; in the Repairs split, cockpit_occ_base makes it the split's
+       own ?occ= URL, so picking an artifact there neither navigates out of
        the split nor (with JS on) rewrites the address bar to a URL that
        reloads as a different page (poly-icif). #}
-    {% set _page_url = cockpit_page_url | default(
-         request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id)) %}
+    {% set _page_url = (cockpit_occ_base ~ (bundle.bundle_id | urlencode))
+         if cockpit_occ_base is defined
+         else request.url_for('agentic_bundle_detail',
+                              bundle_id=bundle.bundle_id) %}
     <div class="reader" id="artifact-reader"
          data-fragment-url="{{ request.url_for('agentic_bundle_artifact_fragment', bundle_id=bundle.bundle_id) }}"
          data-page-url="{{ _page_url }}">

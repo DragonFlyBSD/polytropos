@@ -194,6 +194,44 @@ def test_the_standalone_reader_still_addresses_its_own_page(client) -> None:
     assert "b-i-owned?artifact=analysis/triage.md" in body
 
 
+# --- switching occurrence stays in the split ------------------------------
+
+
+def _selector(body: str) -> str:
+    return _flat(body).split("Occurrences of this issue", 1)[1].split(
+        "</details>", 1)[0]
+
+
+def test_the_occurrence_selector_selects_within_the_split(client) -> None:
+    """Its rows named the standalone page, so changing which occurrence
+    you are looking at dropped the queue -- the one thing the split
+    exists to keep beside you."""
+    sel = _selector(_get(client, "/agentic?occ=b-i-owned"))
+
+    assert 'href="http://testserver/agentic?occ=b-i-owned"' in sel
+    assert "/agentic/bundles/" not in sel
+
+
+def test_the_occurrence_selector_still_leaves_the_standalone_page_alone(
+    client,
+) -> None:
+    sel = _selector(_get(client, "/agentic/bundles/b-i-owned"))
+
+    assert 'href="http://testserver/agentic/bundles/b-i-owned"' in sel
+
+
+def test_only_one_thing_claims_to_be_the_page(client) -> None:
+    """The selected row is the page standing alone, but only a selection
+    inside the split -- where the subnav's Worklist is the page. Two
+    aria-current="page" in one document is two answers to one question."""
+    split = _get(client, "/agentic?occ=b-i-owned")
+    alone = _get(client, "/agentic/bundles/b-i-owned")
+
+    assert 'aria-current="true"' in _selector(split)
+    assert 'aria-current="page"' not in _selector(split)
+    assert 'aria-current="page"' in _selector(alone)
+
+
 # --- selection is a URL ---------------------------------------------------
 
 
