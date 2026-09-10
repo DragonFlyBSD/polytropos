@@ -619,6 +619,7 @@ def register(app, ctx):
         request: RequestType,
         issue: str | None = None,
         occ: str | None = None,
+        artifact: str | None = None,
     ) -> Any:
         # Lazy delivery reconcile FIRST: a PR merged upstream resolves its
         # issue (WS4), so it runs before the issues are read and the render
@@ -657,8 +658,11 @@ def register(app, ctx):
             # URL so it is linkable and survives a reload; without JS every
             # queue row is a link that reloads with the right pane filled.
             selected = _select_occurrence(conn, issues, issue, occ)
+            # ?artifact= is read here as well as on the standalone page:
+            # the split's artifact reader addresses its own URL, so that
+            # URL has to select on reload (poly-icif).
             cockpit = (
-                _cockpit_context(request, conn, selected)
+                _cockpit_context(request, conn, selected, artifact)
                 if selected else None
             )
             return templates.TemplateResponse(

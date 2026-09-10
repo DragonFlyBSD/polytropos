@@ -1,0 +1,9 @@
+{# What makes _cockpit.html do anything: the tabs, the operator action
+   buttons, the delivery marks, the chat and the artifact reader. Included
+   by both hosts of the partial, because the Repairs split shipped the
+   markup without these and every control in the right pane was inert
+   (poly-icif). live.js first — agentic-bundle.js polls through
+   window.dpLive; both are deferred, so the order here is the order they
+   run. #}
+<script src="{{ request.url_for('static', path='live.js') }}?v={{ static_v }}" defer></script>
+<script src="{{ request.url_for('static', path='agentic-bundle.js') }}?v={{ static_v }}" defer></script>

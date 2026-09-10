@@ -6,9 +6,16 @@
    in place via JS, or on reload when JS is off. #}
     <h2>Artifacts</h2>
     {% if bundle.artifacts %}
+    {# Which page an artifact selection addresses. The standalone
+       occurrence page by default; the Repairs split overrides it with its
+       own ?occ= URL so picking an artifact there neither navigates out of
+       the split nor (with JS on) rewrites the address bar to a URL that
+       reloads as a different page (poly-icif). #}
+    {% set _page_url = cockpit_page_url | default(
+         request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id)) %}
     <div class="reader" id="artifact-reader"
          data-fragment-url="{{ request.url_for('agentic_bundle_artifact_fragment', bundle_id=bundle.bundle_id) }}"
-         data-page-url="{{ request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id) }}">
+         data-page-url="{{ _page_url }}">
       <div class="a-list" role="listbox" aria-label="Bundle artifacts">
         {% for group in artifact_groups %}
         <div class="a-group-label">{{ group.label }}</div>
@@ -25,7 +32,7 @@
         {% else %}
         <a class="a-row{% if it.relpath == selected_artifact_relpath %} selected{% endif %}"
            role="option" data-relpath="{{ it.relpath }}"
-           href="{{ request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id) }}?artifact={{ it.relpath | urlencode }}">
+           href="{{ _page_url }}{{ '&' if '?' in _page_url|string else '?' }}artifact={{ it.relpath | urlencode }}">
           <span class="a-name">{{ it.label }}</span>
           <span class="a-type">{{ it.badge }}</span>
           <span class="a-meta">

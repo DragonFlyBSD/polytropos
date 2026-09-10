@@ -507,6 +507,20 @@
 
   let loading = false;
 
+  // pageUrl is whichever page hosts the reader, and in the Repairs split
+  // that one already carries ?occ=<bundle> — so set the parameter rather
+  // than appending "?artifact=", which would drop the selection and make
+  // the address bar name a different page (poly-icif).
+  //
+  // The hash rides along because it is which tab is open, and the reader
+  // lives in Evidence: dropping it wrote a URL that reloads onto Fix with
+  // an artifact selected on a panel you cannot see.
+  function pageUrlFor(relpath) {
+    const u = new URL(pageUrl, window.location.href);
+    u.searchParams.set('artifact', relpath);
+    return u.pathname + u.search + window.location.hash;
+  }
+
   async function show(relpath, push) {
     if (loading) { return; }
     loading = true;
@@ -523,12 +537,11 @@
       if (row) { row.classList.add('selected'); }
       detail.querySelector('.a-body') && (detail.querySelector('.a-body').scrollTop = 0);
       if (push) {
-        history.pushState({ relpath },
-          '', pageUrl + '?artifact=' + encodeURIComponent(relpath));
+        history.pushState({ relpath }, '', pageUrlFor(relpath));
       }
     } catch (err) {
       // Fall back to a real navigation so the operator still gets there.
-      window.location = pageUrl + '?artifact=' + encodeURIComponent(relpath);
+      window.location = pageUrlFor(relpath);
     } finally {
       loading = false;
       reader.removeAttribute('aria-busy');

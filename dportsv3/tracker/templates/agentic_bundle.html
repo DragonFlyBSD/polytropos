@@ -1,36 +1,7 @@
 {% extends "_base.html" %}
 {% block title %}{{ bundle.bundle_id }} — DeltaPorts Tracker{% endblock %}
 {% block head_extra %}
-  <style>
-    /* Artifact-reader layout (.reader + descendants) and the shared
-       preview rules (.artifact-table + .diff-* family) live in
-       progress.css. These style the reader's body content only. */
-    .artifact-content { white-space:pre-wrap; overflow-x:auto; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:var(--text); margin:0; }
-    .artifact-markdown { font-size:13.5px; line-height:1.62; max-width:66ch; }
-    .artifact-markdown h2 { font-size:16px; font-weight:680; letter-spacing:-0.01em; margin:22px 0 8px; }
-    .artifact-markdown h3, .artifact-markdown h4 { font-size:13.5px; font-weight:680; margin:18px 0 6px; }
-    .artifact-markdown h2:first-child, .artifact-markdown h3:first-child { margin-top:0; }
-    .artifact-markdown p { margin:9px 0; }
-    .artifact-markdown ul, .artifact-markdown ol { margin:9px 0; padding-left:22px; }
-    .artifact-markdown li { margin:4px 0; }
-    .artifact-markdown strong { font-weight:660; }
-    .artifact-markdown code { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; background:var(--bg-sunk, #f2efe8); padding:1px 5px; border-radius:4px; }
-    .artifact-markdown pre code { background:transparent; padding:0; font-size:inherit; }
-    /* Fix-review chat panel */
-    .chat-log { display:flex; flex-direction:column; gap:10px; max-height:52vh; overflow-y:auto; padding:4px 2px; }
-    .chat-msg { max-width:82%; padding:9px 12px; border-radius:10px; font-size:13px; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; }
-    .chat-msg.user { align-self:flex-end; background:var(--c-info-bg, #f0f4ff); border:1px solid var(--border, #d8dee9); }
-    .chat-msg.assistant { align-self:flex-start; background:var(--panel-bg, #f8fafc); border:1px solid var(--border, #d8dee9); }
-    .chat-msg.error { align-self:flex-start; background:var(--c-fail-bg, #fff0f0); border:1px solid var(--c-fail, #c00); color:var(--c-fail, #c00); }
-    /* Rendered-markdown replies: cancel the bubble's pre-wrap and trim
-       the outer block margins so the bubble hugs its content. */
-    .chat-msg .artifact-markdown { white-space:normal; }
-    .chat-msg .artifact-markdown > :first-child { margin-top:0; }
-    .chat-msg .artifact-markdown > :last-child { margin-bottom:0; }
-    .chat-role { font-size: 12px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); margin-bottom:3px; }
-    .chat-input-row { display:flex; gap:8px; margin-top:10px; align-items:flex-end; }
-    .chat-input-row textarea { flex:1; min-height:44px; max-height:160px; resize:vertical; font:13px/1.45 inherit; padding:8px 10px; border:1px solid var(--border, #d8dee9); border-radius:6px; box-sizing:border-box; }
-  </style>
+  {% include "_cockpit_head.html" %}
 {% endblock %}
 {% block nav %}
   {% set crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}, {"label": "Issues", "url": request.url_for('agentic_issues')}] %}
@@ -46,6 +17,5 @@
   {% include "_cockpit.html" %}
 {% endblock %}
 {% block scripts %}
-  <script src="{{ request.url_for('static', path='live.js') }}?v={{ static_v }}" defer></script>
-  <script src="{{ request.url_for('static', path='agentic-bundle.js') }}?v={{ static_v }}" defer></script>
+  {% include "_cockpit_scripts.html" %}
 {% endblock %}

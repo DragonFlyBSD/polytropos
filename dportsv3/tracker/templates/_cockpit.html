@@ -6,6 +6,11 @@
    the right pane of the Repairs split, where the queue stays beside it
    (M4). One copy, so they cannot drift.
 
+   Its assets are one copy for the same reason, and a host that renders
+   this partial has to include both or the pane is markup with no
+   behaviour: _cockpit_head.html in head_extra, _cockpit_scripts.html in
+   scripts (poly-icif).
+
    Expects the whole cockpit context: bundle, issue, operator_actions,
    verify, artifact_groups, occurrence_stats and the rest -- assembled by
    _cockpit_context() in routes/pages.py. #}

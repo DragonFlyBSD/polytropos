@@ -28,7 +28,7 @@ TEMPLATES = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
              / "templates")
 
 
-def _seed(db: sqlite3.Connection) -> None:
+def _seed(db: sqlite3.Connection, artifact: Path) -> None:
     db.execute(
         "INSERT INTO runs(run_id, target) VALUES ('r-1', ?)", (TARGET,))
     rows = [
@@ -48,6 +48,12 @@ def _seed(db: sqlite3.Connection) -> None:
             "(?, 'r-1', ?, 't1', 'failure', ?, ?, ?, ?)",
             (f"b-{key}", f"devel/{key}", TARGET, key, resolution,
              verification))
+    artifact.write_text("## Classification\npatch-error\n", encoding="utf-8")
+    db.execute(
+        "INSERT INTO artifact_refs(bundle_id, relpath, backend, fs_path, "
+        "kind, size, created_at) VALUES ('b-i-owned', 'analysis/triage.md', "
+        "'fs', ?, 'text', ?, 't1')",
+        (str(artifact), artifact.stat().st_size))
     db.commit()
 
 
@@ -57,7 +63,7 @@ def client(tmp_path: Path) -> TestClient:
     db = sqlite3.connect(str(path))
     db.row_factory = sqlite3.Row
     init_db(db)
-    _seed(db)
+    _seed(db, tmp_path / "triage.md")
     db.close()
     with TestClient(create_app(path)) as test_client:
         yield test_client
@@ -111,6 +117,81 @@ def test_the_workspace_is_the_cockpit_and_not_a_second_copy(client) -> None:
 def test_the_cockpit_is_one_template(client) -> None:
     for name in ("agentic_index.html", "agentic_bundle.html"):
         assert '{% include "_cockpit.html" %}' in (TEMPLATES / name).read_text()
+
+
+# --- the workspace brings its behaviour with it ---------------------------
+#
+# The markup was one copy; its assets were not. The split rendered tabs,
+# operator buttons, delivery marks, chat and the artifact reader, and
+# loaded none of the JS or CSS that make them do anything -- those lived
+# in agentic_bundle.html, the other host of the same partial (poly-icif).
+
+
+def test_the_workspace_ships_the_scripts_that_drive_it(client) -> None:
+    split = _get(client, "/agentic?occ=b-i-owned")
+
+    assert "agentic-bundle.js" in split
+    # It polls through window.dpLive, so the helper has to come first.
+    assert "live.js" in split
+    assert split.index("live.js") < split.index("agentic-bundle.js")
+
+
+def test_the_workspace_ships_the_styles_that_dress_it(client) -> None:
+    """The chat bubbles and the artifact reader's body content are styled
+    from the cockpit's own <style>, not progress.css."""
+    split = _get(client, "/agentic?occ=b-i-owned")
+
+    assert ".chat-log {" in split
+    assert ".artifact-markdown {" in split
+
+
+def test_the_cockpits_assets_are_one_copy_too(client) -> None:
+    """Same reason the markup is: two lists of script tags would drift,
+    and the one that drifted would be the one nobody was looking at."""
+    for name in ("agentic_index.html", "agentic_bundle.html"):
+        source = (TEMPLATES / name).read_text()
+        assert '"_cockpit_head.html"' in source, name
+        assert '"_cockpit_scripts.html"' in source, name
+    for partial in ("_cockpit_head.html", "_cockpit_scripts.html"):
+        assert (TEMPLATES / partial).exists(), partial
+
+
+def test_a_queue_with_no_pane_ships_no_workspace_assets(empty) -> None:
+    """Nothing to drive, so nothing to load."""
+    body = _get(empty, "/agentic")
+
+    assert 'class="repair-detail"' not in body
+    assert "agentic-bundle.js" not in body
+
+
+# --- the artifact reader addresses the page it is on ----------------------
+
+
+def test_the_reader_selects_within_the_split(client) -> None:
+    """Its URLs used to name the standalone occurrence page, which was
+    harmless while the JS was missing and a lie once it wasn't: picking an
+    artifact would rewrite the address bar to a URL that reloads as a
+    different page."""
+    body = _flat(_get(client, "/agentic?occ=b-i-owned"))
+
+    assert 'data-page-url="http://testserver/agentic?occ=b-i-owned"' in body
+    # ...and the artifact joins that query rather than starting a new one.
+    assert "occ=b-i-owned&amp;artifact=analysis/triage.md" in body
+
+
+def test_the_split_selects_the_artifact_its_url_names(client) -> None:
+    body = _get(client, "/agentic?occ=b-i-owned&artifact=analysis/triage.md")
+
+    assert 'class="repair-rail"' in body
+    assert "patch-error" in body
+
+
+def test_the_standalone_reader_still_addresses_its_own_page(client) -> None:
+    body = _flat(_get(client, "/agentic/bundles/b-i-owned"))
+
+    assert ('data-page-url="http://testserver/agentic/bundles/b-i-owned"'
+            in body)
+    assert "b-i-owned?artifact=analysis/triage.md" in body
 
 
 # --- selection is a URL ---------------------------------------------------

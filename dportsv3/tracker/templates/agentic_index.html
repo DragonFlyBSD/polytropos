@@ -1,5 +1,8 @@
 {% extends "_base.html" %}
 {% block title %}Repairs — DeltaPorts Tracker{% endblock %}
+{% block head_extra %}
+  {% if cockpit %}{% include "_cockpit_head.html" %}{% endif %}
+{% endblock %}
 {% block nav %}
   {% with nav_crumbs = [{"label": "Repairs"}] %}{% include "_tracker_nav.html" %}{% endwith %}
   {% include "_agentic_subnav.html" %}
@@ -309,6 +312,8 @@
   {% if cockpit %}
   <section class="repair-detail" aria-label="Selected occurrence">
     {% with cockpit_heading = 'h2',
+            cockpit_page_url = request.url_for('agentic_index')|string
+                               ~ '?occ=' ~ (cockpit.bundle.bundle_id | urlencode),
             title = cockpit.title, bundle = cockpit.bundle,
             issue = cockpit.issue, bundle_jobs = cockpit.bundle_jobs,
             tool_trace = cockpit.tool_trace,
@@ -332,6 +337,11 @@
 </div>
 {% endblock %}
 {% block scripts %}
+  {# The right pane is _cockpit.html, so it needs the cockpit's scripts.
+     Without them the tabs, the operator actions, the delivery marks, the
+     chat and the artifact reader are all markup and no behaviour
+     (poly-icif). #}
+  {% if cockpit %}{% include "_cockpit_scripts.html" %}{% endif %}
   <script>
     function wlToggle(group) { group.classList.toggle('open'); }
     document.querySelectorAll('.env-set-btn').forEach(function (btn) {
