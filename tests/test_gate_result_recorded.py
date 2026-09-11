@@ -244,8 +244,12 @@ def test_dsynth_build_runs_the_test_subcommand(monkeypatch):
     worker.dsynth_build("test-env", "devel/foo")
 
     cmd = " ".join(str(a) for a in captured["argv"])
-    assert ' test "$1"' in cmd
-    assert ' build "$1"' not in cmd
+    # "$@" not "$1" since poly-lt5q: dsynth takes a port list so a
+    # master fix can build its slaves in the same run. The origins are
+    # passed as positional args after the sh -c sentinel.
+    assert ' test "$@"' in cmd
+    assert ' build "$@"' not in cmd
+    assert cmd.endswith("devel/foo")
     # And the second tool is gone from the registry entirely.
     assert "dsynth_test" not in tools.names()
     assert not hasattr(worker, "dsynth_test")

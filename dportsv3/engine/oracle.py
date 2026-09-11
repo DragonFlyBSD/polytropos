@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -68,8 +69,24 @@ def run_bmake_oracle(
     profile: str = "local",
     run_command: RunCommand | None = None,
     bmake_path: str | None = None,
+    expect: Mapping[str, str] | None = None,
 ) -> OracleResult:
-    """Run constrained bmake checks for one rewritten port tree."""
+    """Run constrained bmake checks for one rewritten port tree.
+
+    ``expect`` asserts that a variable the overlay set actually holds
+    that value once the framework has read the whole Makefile
+    (poly-lt5q). It answers a question the rest of the oracle does not:
+    whether the assignment *survived*. A slave port's Makefile ends
+    with ``.include "${MASTERDIR}/Makefile"`` and an overlay's ``mk
+    set`` lands above it, so a plain ``X=`` in the master overwrites
+    the overlay's value and the port builds as though the fix were
+    never written. Without this, that surfaces as a build failure with
+    no indication the overlay was ignored.
+
+    Callers pass only literal expectations — a value containing ``$``
+    is expanded by bmake and cannot be compared to its source text.
+    :func:`literal_expectations` does that filtering.
+    """
     normalized = normalize_oracle_profile(profile)
     if normalized == "off":
         return OracleResult(ok=True, profile=normalized, skipped=True)
@@ -113,5 +130,37 @@ def run_bmake_oracle(
         if completed.returncode != 0:
             result.failures.append(_format_failure(command, completed))
 
+    for variable, wanted in (expect or {}).items():
+        command = [executable, "-f", "Makefile", "-V", variable]
+        completed = runner(command, port_root)
+        result.checks_run += 1
+        if completed.returncode != 0:
+            result.failures.append(_format_failure(command, completed))
+            continue
+        observed = (completed.stdout or "").strip()
+        if observed != wanted.strip():
+            result.failures.append(
+                f"{variable}: overlay set {wanted.strip()!r} but the "
+                f"framework reports {observed!r} — the assignment did "
+                f"not survive (a later plain assignment, e.g. in a "
+                f"master port's Makefile, overwrote it)"
+            )
+
     result.ok = not result.failures
     return result
+
+
+def literal_expectations(assignments: Mapping[str, str]) -> dict[str, str]:
+    """Keep only the assignments an oracle can meaningfully compare.
+
+    A value containing ``$`` is a make expression — bmake reports what
+    it expands to, not the source text, so comparing the two produces a
+    false mismatch every time. Values that are plain literals are the
+    ones the mk-clobber hazard actually bites, so narrowing here loses
+    little and keeps the check honest.
+    """
+    return {
+        name: value
+        for name, value in assignments.items()
+        if value and "$" not in value
+    }

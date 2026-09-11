@@ -168,8 +168,38 @@ class VerifyResult:
         return "unknown"
 
 
+def sibling_origins_for(env_name: str, origin: str) -> list[str]:
+    """Origins that must build alongside ``origin`` for a verdict.
+
+    A fix authored on a master port reaches every slave that inherits
+    from it, so ``dtest <master>`` proves the master still builds and
+    nothing else. This returns the set that has to build with it: the
+    port's patch origin (the master, when ``origin`` is a slave) and
+    that master's other slaves.
+
+    Best-effort by design — this widens the gate, and a probe failure
+    must not turn a verifiable fix into an unverifiable one. On any
+    error it returns ``[]`` and verify behaves as it did before
+    poly-lt5q: a single-origin build.
+    """
+    try:
+        from dportsv3.agent import worker  # noqa: PLC0415
+
+        patch_origin = worker.patch_origin_for(env_name, origin)
+        siblings = worker.slave_siblings(env_name, patch_origin)
+    except Exception:
+        return []
+
+    out: list[str] = []
+    for candidate in (patch_origin, *siblings):
+        if candidate and candidate != origin and candidate not in out:
+            out.append(candidate)
+    return out
+
+
 def _default_apply_and_build(env_name: str, origin: str,
-                             *, diff_path: str) -> dict:
+                             *, diff_path: str,
+                             also: list[str] | None = None) -> dict:
     """Invoke the dev-env apply-and-build primitive via the same
     subprocess pattern every other agent operation uses.
 
@@ -191,6 +221,8 @@ def _default_apply_and_build(env_name: str, origin: str,
         "apply-and-build", env_name, origin, "--json",
         "--diff", diff_path,
     ]
+    for extra in also or ():
+        argv += ["--also", extra]
     proc = _run_dev_env(*argv)
     if proc.stderr:
         sys.stderr.write(proc.stderr)
@@ -275,7 +307,13 @@ def run_verify_fix(
         # In-process call into the dev-env primitive. Any error
         # bubbles up as the original exception — no JSON parsing,
         # no return-code translation.
-        ab = _apply_and_build(env, origin, diff_path=tmp_path)
+        # Only pass `also` when there is something to add: the
+        # apply-and-build seam is injectable, and a caller-supplied
+        # callable written before poly-lt5q must keep working when the
+        # port has no siblings — which is the overwhelming majority.
+        siblings = sibling_origins_for(env, origin)
+        extra = {"also": siblings} if siblings else {}
+        ab = _apply_and_build(env, origin, diff_path=tmp_path, **extra)
     except Exception as exc:
         raise VerifyFixError(
             f"apply-and-build failed for {bundle_id} (env={env}): "

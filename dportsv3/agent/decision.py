@@ -287,22 +287,20 @@ def decide(
             },
         )
 
-    # (1b) Slave-port short-circuit. The dops pipeline has no master/slave
-    # model: a slave's fix usually belongs in the master's PATCHDIR/overlay,
-    # which the per-origin classify/compose can neither author nor verify.
-    # Until that lands (backlog), refuse ASSIST and hand off to an operator.
-    if is_slave:
-        return Decision(
-            action="escalate_manual",
-            tier=_manual_tier(policy),
-            reason="slave_port_unsupported: inherits from master; no master-aware dops support",
-            extra={
-                "is_slave": True,
-                "classification": classification,
-                "confidence": confidence,
-            },
-        )
+    # (1b) Slave ports are no longer refused here (poly-lt5q). The
+    # framework already says where a slave's fix belongs: bsd.port.mk
+    # derives MASTER_PORT from MASTERDIR, and DFLY_PATCHDIR — being
+    # ${PATCHDIR:H}/dragonfly over a PATCHDIR that defaults to
+    # ${MASTERDIR}/files — resolves into the master's directory. So a
+    # slave is patched by authoring at its *patch origin*, which
+    # worker.probe_port_relation resolves, and no master-aware dops
+    # support has to exist for that to work.
+    #
+    # ``is_slave`` stays in the signature and is recorded on the
+    # decision, because it is worth seeing in the activity log which
+    # decisions were made about slaves while this path is new.
 
+    slave_extra = {"is_slave": True} if is_slave else {}
     resolved = tier_for(policy, classification, confidence)
 
     # (2) Triage routes to MANUAL by classification/confidence —
@@ -328,6 +326,7 @@ def decide(
                     f"promotes to ASSIST"
                 ),
                 extra={
+                    **slave_extra,
                     "classification": classification,
                     "confidence": confidence,
                     "original_tier": "MANUAL",
@@ -341,7 +340,8 @@ def decide(
                 f"classification={classification} confidence={confidence} "
                 f"resolved to MANUAL"
             ),
-            extra={"classification": classification, "confidence": confidence},
+            extra={**slave_extra, "classification": classification,
+                   "confidence": confidence},
         )
 
     # Common extra dict for the patch-cap branches.
@@ -371,7 +371,7 @@ def decide(
                 f"patch cap reached ({history.failed_patch_attempts} failures) "
                 f"but fresh operator context lands — retrying"
             ),
-            extra={**cap_extra, "original_tier": resolved.name,
+            extra={**slave_extra, **cap_extra, "original_tier": resolved.name,
                    "cap_reset_via": "user_context"},
         )
 
@@ -385,7 +385,7 @@ def decide(
                 f"{history.signature_repeat_count}× "
                 f"(sig={history.last_failure_signature}) — automation stuck"
             ),
-            extra={**cap_extra, "original_tier": resolved.name,
+            extra={**slave_extra, **cap_extra, "original_tier": resolved.name,
                    "escalation_cause": "sticky_signature"},
         )
 
@@ -398,7 +398,7 @@ def decide(
                 f"patch cap reached: {history.failed_patch_attempts} failed "
                 f"agent attempts >= {max_attempts} in last {window_hours}h"
             ),
-            extra={**cap_extra, "original_tier": resolved.name,
+            extra={**slave_extra, **cap_extra, "original_tier": resolved.name,
                    "escalation_cause": "patch_cap"},
         )
 
@@ -413,7 +413,7 @@ def decide(
                 f"absolute backstop: {history.recent_failures} failure bundles "
                 f">= {bundle_backstop} in last {window_hours}h"
             ),
-            extra={**cap_extra, "original_tier": resolved.name,
+            extra={**slave_extra, **cap_extra, "original_tier": resolved.name,
                    "escalation_cause": "bundle_backstop"},
         )
 
@@ -425,7 +425,8 @@ def decide(
             f"tier={resolved.name} for classification={classification}, "
             f"confidence={confidence}"
         ),
-        extra={"classification": classification, "confidence": confidence,
+        extra={**slave_extra, "classification": classification,
+               "confidence": confidence,
                "failed_patch_attempts": history.failed_patch_attempts,
                "recent_failures": history.recent_failures},
     )

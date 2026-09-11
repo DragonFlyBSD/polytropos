@@ -421,27 +421,48 @@ class TriageStep:
         # service callback runs with apply_lifecycle=False; we emit
         # TRIAGE_DEFER through StepOutcome so the orchestrator
         # wrapper walks lifecycle once.
-        # Resolve env once (needed for the slave probe here, the defer
-        # skip below, and env_health in decide()). Slave ports can't be
-        # auto-fixed by the per-origin dops pipeline, so refuse them to
-        # MANUAL *before* the convert-defer — otherwise a slave takes a
-        # pointless bootstrap/convert detour and is only refused on
-        # retriage. Fail-open: probe errors treat the port as non-slave.
+        # Resolve env once (needed for the relation probe here, the
+        # defer skip below, and env_health in decide()).
+        #
+        # poly-lt5q: a slave used to be refused to MANUAL right here,
+        # before the convert-defer. It is not any more — the framework
+        # says where a slave's fix belongs, so we resolve the relation
+        # and carry ``patch_origin`` (the origin whose dragonfly/ the
+        # build actually reads) through the rest of the step. Fail-open
+        # is unchanged in shape: an unresolvable probe yields
+        # ``patch_origin == origin``, which is exactly how every
+        # non-slave already behaves.
         from dportsv3.agent import runner as _runner  # noqa: PLC0415
         runner_env_name = _runner.resolve_env(job) or ""
         is_slave = False
+        patch_origin = origin
         if runner_env_name:
             try:
                 from dportsv3.agent import worker as _worker  # noqa: PLC0415
-                is_slave = _worker.is_slave_port(runner_env_name, origin)
+                relation = _worker.probe_port_relation(runner_env_name, origin)
+                is_slave = bool(relation.get("slave_port"))
+                patch_origin = relation.get("patch_origin") or origin
             except Exception:
                 is_slave = False
+                patch_origin = origin
+        ctx.state["patch_origin"] = patch_origin
+        if patch_origin != origin:
+            services.activity_log(
+                queue_root, "patch_origin_resolved",
+                f"{origin} is a slave; its dragonfly/ patches are read "
+                f"from {patch_origin}",
+                job_id=ctx.job_id,
+                extra={"origin": origin, "patch_origin": patch_origin},
+            )
 
-        if not is_slave and services.ensure_overlay_or_abort is not None:
+        if services.ensure_overlay_or_abort is not None:
             try:
+                # Bootstrap at the patch origin: a header overlay on
+                # the slave would leave the master — where the patch has
+                # to land — without one.
                 outcome = services.ensure_overlay_or_abort(
                     queue_root=queue_root, job=job, job_path=job_path,
-                    origin=origin,
+                    origin=patch_origin,
                 )
             except Exception as exc:
                 # Best-effort: a failure here falls through to the normal
@@ -498,7 +519,7 @@ class TriageStep:
         target_value = job.get("target", "") or ""
         history = services.load_port_history(target_value, origin, window_hours)
 
-        # env + is_slave were resolved above (before the convert-defer).
+        # env + relation were resolved above (before the convert-defer).
         env_health = None
         if runner_env_name:
             health_ttl = int(settings.get("runner.health_cache_seconds"))
@@ -1184,13 +1205,31 @@ class PatchAttemptStep:
         # bundle's changes.diff. Operator escape:
         # `dportsv3 dev-env reset-port ENV ORIGIN`.
         from dportsv3.agent import worker as _worker  # noqa: PLC0415
+        # poly-lt5q: check the patch origin too. For a slave that is the
+        # master, where the fix has to land — scoping the check to the
+        # job's own origin makes it report clean while the master
+        # carries leftover edits, and those then mix into the bundle's
+        # changes.diff exactly as this check exists to prevent.
+        patch_origin = _worker.patch_origin_for(env, origin)
+        also_origins = [patch_origin] if patch_origin != origin else []
+
+        def _clean_check() -> dict:
+            # `also` is omitted when empty: assert_port_clean is a
+            # monkeypatch seam, and the single-origin call is exactly
+            # what an empty set means, so stubs predating poly-lt5q
+            # keep working for the overwhelmingly common case.
+            if also_origins:
+                return _worker.assert_port_clean(
+                    env, origin, also=also_origins,
+                )
+            return _worker.assert_port_clean(env, origin)
         # design §5.1 makes the pre-job clean check a HARD rule —
         # "if not clean, BEGIN aborts". A failure of the check
         # itself (chroot not mounted, env gone, subprocess raised)
         # means we DON'T KNOW if the port is clean, so the safe
         # answer is refuse, not proceed.
         try:
-            clean = _worker.assert_port_clean(env, origin)
+            clean = _clean_check()
         except Exception as exc:
             msg = (
                 f"patch refused: assert_port_clean({origin}) "
@@ -1223,30 +1262,35 @@ class PatchAttemptStep:
         # cruft from a prior run, a materialize artifact — falls through
         # to the refusal below and is never silently committed into the
         # bundle. Commit only the overlay path, not the whole subtree.
-        overlay_rel = f"ports/{origin}/overlay.dops"
+        # Triage bootstraps at the *patch* origin, so that is the path
+        # to absorb — for a slave it is the master's overlay.dops.
+        overlay_rel = f"ports/{patch_origin}/overlay.dops"
         if (
             not clean.get("ok")
             and clean.get("untracked_only")
             and clean.get("dirty_paths") == [overlay_rel]
         ):
             committed = _worker.commit_port_changes(
-                env, origin,
-                f"bootstrap: overlay.dops baseline for {origin}",
+                env, patch_origin,
+                f"bootstrap: overlay.dops baseline for {patch_origin}",
                 paths=overlay_rel,
             )
             if committed.get("ok"):
                 services.activity_log(
                     queue_root, "patch_preflight_absorbed_bootstrap",
                     f"absorbed untracked overlay.dops baseline for "
-                    f"{origin} onto the bundle branch before patch",
+                    f"{patch_origin} onto the bundle branch before patch",
                     job_id=ctx.job_id,
-                    extra={"origin": origin},
+                    extra={"origin": origin, "patch_origin": patch_origin},
                 )
-                clean = _worker.assert_port_clean(env, origin)
+                clean = _clean_check()
         if not clean.get("ok"):
             dirty = clean.get("dirty_paths") or []
+            scope = "/ and ".join(
+                f"ports/{o}" for o in [origin, *also_origins]
+            )
             msg = (
-                f"patch refused: ports/{origin}/ has "
+                f"patch refused: {scope}/ has "
                 f"{len(dirty)} uncommitted change(s) from a "
                 f"prior run; resolve before starting a new "
                 f"patch transaction. Run "
@@ -1256,7 +1300,8 @@ class PatchAttemptStep:
             services.activity_log(
                 queue_root, "patch_preflight_dirty",
                 msg, job_id=ctx.job_id,
-                extra={"origin": origin, "dirty_paths": dirty[:20]},
+                extra={"origin": origin, "patch_origin": patch_origin,
+                       "dirty_paths": dirty[:20]},
             )
             services.write_error_note(job_path, msg)
             return _err(msg, services, job_path,
@@ -1486,7 +1531,11 @@ class PatchAttemptStep:
         # failure surfaces as an activity row but doesn't affect the
         # patch outcome.
         try:
-            reset = _worker.reset_port(env, origin)
+            reset_also = _worker.invariant_origins(env, origin)[1:]
+            reset = (
+                _worker.reset_port(env, origin, also=reset_also)
+                if reset_also else _worker.reset_port(env, origin)
+            )
         except Exception as exc:
             reset = {"ok": False, "error": str(exc)[:200]}
         if not reset.get("ok"):

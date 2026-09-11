@@ -100,3 +100,69 @@ def test_bootstrap_write_failure_aborts(wired, monkeypatch):
     out = _run(monkeypatch, _facts())
     assert isinstance(out, tuple) and out[0] == "abort"
     assert out[1] == "bootstrap_write_failed"
+
+
+# --- poly-lt5q: slave ports reach this hook for the first time ---------------
+#
+# Until poly-lt5q, triage refused every slave before calling this
+# (steps.py gated it on `not is_slave`), so the whole bootstrap path was
+# unexercised for them. It is now reached with the *patch* origin — the
+# master, when the slave's DFLY_PATCHDIR resolves there — because a
+# header overlay on the slave would leave the master, where the patch
+# actually has to land, without one.
+
+
+def _run_for(monkeypatch, facts, origin, job_origin):
+    monkeypatch.setattr(worker_mod, "probe_overlay_facts",
+                        lambda env, o: facts)
+    return _ensure_overlay_or_abort(
+        queue_root=Path("/tmp/q"),
+        job={"origin": job_origin, "target": "@2026Q3"},
+        job_path=Path("/tmp/q/pending/triage-1.job"),
+        origin=origin,
+    )
+
+
+def test_a_master_origin_with_an_overlay_proceeds(wired, monkeypatch):
+    calls, _ = wired
+    outcome = _run_for(
+        monkeypatch, _facts(overlay_dops=True),
+        origin="databases/mysql84-server",
+        job_origin="databases/mysql84-client",
+    )
+    assert outcome is None
+    assert calls["put_file"] == []
+
+
+def test_a_bootstrap_for_a_slave_lands_on_the_master(wired, monkeypatch):
+    calls, _ = wired
+    outcome = _run_for(
+        monkeypatch, _facts(overlay_dops=False),
+        origin="databases/mysql84-server",
+        job_origin="databases/mysql84-client",
+    )
+    assert outcome is None
+    assert len(calls["put_file"]) == 1
+    path, content = calls["put_file"][0]
+    # The master's overlay, not the slave's — the slave's dragonfly/ is
+    # never read when DFLY_PATCHDIR resolves into the master.
+    assert path == (
+        "/work/DeltaPorts/ports/databases/mysql84-server/overlay.dops"
+    )
+    assert "mysql84-client" not in path
+    assert "port databases/mysql84-server" in content
+
+
+def test_a_compat_abort_on_a_master_names_the_master(wired, monkeypatch):
+    calls, _ = wired
+    outcome = _run_for(
+        monkeypatch,
+        _facts(overlay_dops=False, makefile_dragonfly="Makefile.DragonFly"),
+        origin="databases/mysql84-server",
+        job_origin="databases/mysql84-client",
+    )
+    # Whatever the decision, it must be about the port whose overlay
+    # would be written, never the job's own origin.
+    if outcome is not None:
+        assert outcome[0] == "abort"
+    assert all("mysql84-client" not in p for p, _ in calls["put_file"])

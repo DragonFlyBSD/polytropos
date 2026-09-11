@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from .builder import CreateOptions, EnvironmentBuilder, default_delta_root, default_tool_root
@@ -134,6 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ab.add_argument("name", help="Environment name")
     ab.add_argument("origin", help="category/portname to build")
+    ab.add_argument(
+        "--also", action="append", default=None, metavar="ORIGIN",
+        help="Additional category/portname to build in the same dsynth "
+             "run; repeatable. Used to build a master port's slaves "
+             "alongside it, so a fix that breaks a sibling fails the "
+             "gate instead of passing it",
+    )
     ab.add_argument(
         "--diff", default=None,
         help="Path on host to a unified diff to apply against "
@@ -277,6 +285,7 @@ def apply_and_build(
     origin: str,
     *,
     diff_path: str | None = None,
+    also: Sequence[str] | None = None,
 ) -> dict:
     """Substrate primitive for fix verification (Step 11b Slice 1).
 
@@ -292,9 +301,18 @@ def apply_and_build(
     DPorts tree and ``dbuild ORIGIN`` (dsynth). Captures combined
     dsynth output to a log file under writable.
 
-    Returns a dict with: ok, env, origin, applied_diff_sha256,
-    apply_exit, reapply_exit, dsynth_exit, log_path, stderr_tail,
-    replay_mode.
+    ``also`` names further origins to build in the same ``dtest``
+    invocation. A fix authored on a master port reaches every slave
+    that inherits from it, so building the master alone proves the
+    master still builds and nothing more; pass the sibling set and a
+    regression in any of them fails the gate. ``dtest`` already takes
+    ``ORIGIN...``, so this costs one dsynth run rather than N. The
+    pre-replay dirty check and the post-build cleanup cover the same
+    set.
+
+    Returns a dict with: ok, env, origin, built_origins,
+    applied_diff_sha256, apply_exit, reapply_exit, dsynth_exit,
+    log_path, stderr_tail, replay_mode.
     """
     import hashlib
     import json
@@ -302,6 +320,19 @@ def apply_and_build(
 
     from .chroot import ChrootRunner, chroot_env
     from .helpers import build_env_dict
+
+    # De-duplicated, order preserved: the requested origin first so it
+    # stays the one named in messages and log paths.
+    build_origins: list[str] = []
+    for candidate in (origin, *(also or ())):
+        if candidate and candidate not in build_origins:
+            build_origins.append(candidate)
+    # Hoisted: _post_build_cleanup runs from a `finally` and would see
+    # these unbound if the try body refused before reaching the build.
+    build_args = " ".join(shlex.quote(o) for o in build_origins)
+    reapply_args = " && reapply ".join(
+        shlex.quote(o) for o in build_origins
+    )
 
     require_root()
     config = load_config()
@@ -319,6 +350,7 @@ def apply_and_build(
         "ok": False,
         "env": env_name,
         "origin": origin,
+        "built_origins": list(build_origins),
         "applied_diff_sha256": None,
         "apply_exit": None,
         "reapply_exit": None,
@@ -338,9 +370,14 @@ def apply_and_build(
     # isn't. Placed BEFORE the cleanup try/finally so a refusal never
     # resets the operator's own uncommitted state.
     if diff_path is not None:
-        dirty = _port_dirty_paths(state.root_dir, origin)
+        dirty = [
+            path
+            for build_origin in build_origins
+            for path in _port_dirty_paths(state.root_dir, build_origin)
+        ]
         if dirty:
-            tail = (f"diff replay refused: ports/{origin}/ has "
+            scope = ", ".join(f"ports/{o}/" for o in build_origins)
+            tail = (f"diff replay refused: {scope} has "
                     f"uncommitted changes:\n  "
                     + "\n  ".join(dirty)
                     + "\nrun `dportsv3 dev-env reset-port ENV ORIGIN` "
@@ -385,11 +422,14 @@ def apply_and_build(
         # stderr_tail but does not flip the result; runs first so the
         # in-tree Makefile reflects the patched state make clean was
         # authored against.
+        wrkdir_script = "; ".join(
+            'cd "$DPORTS_COMPOSE_ROOT/' + o + '" && '
+            'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
+            'WRKDIRPREFIX=/work/obj BATCH=yes clean'
+            for o in build_origins
+        )
         wrkdir_cleanup = runner.run(
-            ["/bin/sh", "-c",
-             'cd "$DPORTS_COMPOSE_ROOT/' + origin + '" && '
-             'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
-             'WRKDIRPREFIX=/work/obj BATCH=yes clean', "_"],
+            ["/bin/sh", "-c", wrkdir_script, "_"],
             env=env, capture_output=True,
         )
         if wrkdir_cleanup.returncode != 0:
@@ -422,7 +462,7 @@ def apply_and_build(
         # a cleanup failure.
         reapply_cleanup = runner.run(
             ["/bin/sh", "-c",
-             f"cd {PORTS_DIR} && reapply {shlex.quote(origin)}",
+             f"cd {PORTS_DIR} && reapply {reapply_args}",
              "_"],
             env=env, capture_output=True,
         )
@@ -477,7 +517,7 @@ def apply_and_build(
         #    edited) DeltaPorts source.
         reapply_proc = runner.run(
             ["/bin/sh", "-c", f"cd {PORTS_DIR} && reapply "
-                              f"{shlex.quote(origin)}", "_"],
+                              f"{reapply_args}", "_"],
             env=env, capture_output=True,
         )
         result["reapply_exit"] = reapply_proc.returncode
@@ -493,6 +533,8 @@ def apply_and_build(
         #    from scratch, not a cached package. Capture combined
         #    output to a log file under writable so the orchestrator
         #    can POST it.
+        # dtest takes ORIGIN..., so the sibling set costs one dsynth run
+        # and one log. The log is still named for the requested origin.
         log_rel = f"work/artifacts/apply-and-build-{origin.replace('/', '_')}.log"
         log_host = writable_root / log_rel
         log_host.parent.mkdir(parents=True, exist_ok=True)
@@ -513,7 +555,7 @@ def apply_and_build(
             ["/bin/sh", "-c",
              "flag=/work/.dports-agent-hooks-disabled; "
              "trap 'rm -f \"$flag\"' EXIT; : > \"$flag\"; "
-             f"cd {PORTS_DIR} && dtest {shlex.quote(origin)} "
+             f"cd {PORTS_DIR} && dtest {build_args} "
              f"> {shlex.quote(log_chroot)} 2>&1", "_"],
             env=env, capture_output=False,
         )
@@ -646,6 +688,8 @@ def cmd_apply_and_build(args: argparse.Namespace) -> int:
     result = apply_and_build(
         args.name, args.origin,
         diff_path=args.diff,
+        # getattr: callers build this Namespace by hand in places.
+        also=getattr(args, "also", None),
     )
     if args.json:
         # Include stderr_tail when a stage failed — the verify-fix
@@ -658,6 +702,8 @@ def cmd_apply_and_build(args: argparse.Namespace) -> int:
                  f"apply={result['apply_exit']}",
                  f"reapply={result['reapply_exit']}",
                  f"dsynth={result['dsynth_exit']}"]
+        if len(result.get("built_origins") or []) > 1:
+            parts.append(f"built={','.join(result['built_origins'])}")
         if result["log_path"]:
             parts.append(f"log={result['log_path']}")
         print(" ".join(parts))

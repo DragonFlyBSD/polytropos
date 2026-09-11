@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -1424,7 +1425,24 @@ def reset_attempt_workspace(
     return result
 
 
-def _port_subtree_hash(env: str, origin: str) -> str:
+def _subtree_hash_for(
+    env: str, origin: str, also: Sequence[str],
+) -> str:
+    """:func:`_port_subtree_hash` with ``also`` omitted when it is empty.
+
+    The hash function is a monkeypatch seam in several tests. Passing
+    ``also=()`` would break every stub that predates poly-lt5q for no
+    behavioural gain, since the single-origin call is exactly what the
+    empty set means.
+    """
+    if not also:
+        return _port_subtree_hash(env, origin)
+    return _port_subtree_hash(env, origin, also=also)
+
+
+def _port_subtree_hash(
+    env: str, origin: str, *, also: Sequence[str] = (),
+) -> str:
     """Hash of ``ports/<origin>/`` contents in the env's writable layer.
 
     Used to detect "the substrate has changed since the last
@@ -1433,10 +1451,21 @@ def _port_subtree_hash(env: str, origin: str) -> str:
     chroot writes to, no need to enter the chroot. Reads files in
     sorted relpath order so the hash is stable across calls.
 
+    ``also`` folds further origins into the same digest — pass the
+    port's ``patch_origin`` so an edit in the master's subtree
+    invalidates the slave's baseline (poly-lt5q). Without it a slave
+    whose master was just edited keeps a matching hash, the
+    stale-compose guard in :func:`_dsynth_run` never fires, and dsynth
+    builds the pre-edit compose tree while reporting ``rebuild_ok``.
+    Each origin's relpaths are namespaced by origin so two subtrees
+    cannot alias each other.
+
     Returns empty string on any error (no env paths, port subtree
     doesn't exist, OS-level read failure) — caller treats that as
     "no valid baseline" and refuses dsynth_build, which is the
-    conservative answer.
+    conservative answer. A *missing* extra origin is an error too: a
+    patch origin that vanished is exactly when the baseline should not
+    be trusted.
 
     Prior shell-pipeline implementation used ``sort -z`` and
     ``xargs -0`` — both GNU-only flags. On DragonFly the BSD ``sort``
@@ -1448,24 +1477,27 @@ def _port_subtree_hash(env: str, origin: str) -> str:
         paths = env_paths(env)
     except Exception:
         return ""
-    port_dir = paths.deltaports / "ports" / origin
-    if not port_dir.is_dir():
-        return ""
     h = hashlib.sha256()
-    try:
-        for path in sorted(port_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(port_dir).as_posix()
-            h.update(rel.encode("utf-8"))
-            h.update(b"\0")
-            try:
-                h.update(path.read_bytes())
-            except OSError:
-                return ""
-            h.update(b"\0")
-    except OSError:
-        return ""
+    for current in origin_set(origin, also):
+        port_dir = paths.deltaports / "ports" / current
+        if not port_dir.is_dir():
+            return ""
+        h.update(current.encode("utf-8"))
+        h.update(b"\0")
+        try:
+            for path in sorted(port_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(port_dir).as_posix()
+                h.update(rel.encode("utf-8"))
+                h.update(b"\0")
+                try:
+                    h.update(path.read_bytes())
+                except OSError:
+                    return ""
+                h.update(b"\0")
+        except OSError:
+            return ""
     return h.hexdigest()
 
 
@@ -1570,10 +1602,32 @@ def materialize_dports(env: str, origin: str) -> dict:
     :func:`dsynth_build` can detect a stale compose tree later in
     the same attempt.
     """
-    p = _exec(env, "reapply", origin)
-    result = _exec_result(p.returncode, p.stdout, p.stderr, origin=origin)
+    # poly-lt5q: reapply every origin this job may have touched, not
+    # just its own. A slave whose fix landed in the master's subtree
+    # needs the *master* re-composed; composing only the slave leaves
+    # the change on disk and out of the compose tree dsynth reads.
+    origins = invariant_origins(env, origin)
+    # Resolved before the loop, then dropped: compose rewrites the
+    # Makefile the relation is derived from, so the next probe has to
+    # look again.
+    for current in origins:
+        forget_port_relation(env, current)
+    result = None
+    for current in origins:
+        p = _exec(env, "reapply", current)
+        current_result = _exec_result(
+            p.returncode, p.stdout, p.stderr, origin=current,
+        )
+        if result is None or not current_result.get("ok"):
+            # Report the job's own origin on success; on failure report
+            # the origin that actually failed, so the agent is not sent
+            # to look at a port that composed fine.
+            result = current_result
+        if not current_result.get("ok"):
+            break
+    assert result is not None  # origins is never empty
     if result.get("ok"):
-        h = _port_subtree_hash(env, origin)
+        h = _subtree_hash_for(env, origin, origins[1:])
         if h:
             _MATERIALIZE_STATE[(env, origin)] = h
     else:
@@ -1972,7 +2026,27 @@ def classify_dops(env: str, origin: str) -> str:
 import shlex  # noqa: E402 — needed by assert_port_clean / reset_port
 
 
-def assert_port_clean(env: str, origin: str) -> dict:
+def origin_set(origin: str, also: Sequence[str] = ()) -> list[str]:
+    """``origin`` plus ``also``, de-duplicated, order preserved.
+
+    poly-lt5q: the per-origin invariants below (clean, subtree hash,
+    commit, reset) each answer a question about "the work this job
+    touched". For a slave port that work lands at ``patch_origin`` —
+    usually the master — so scoping them to the job's own origin makes
+    them go *quiet* rather than red: preflight reports clean while the
+    master carries uncommitted work, and the stale-compose guard never
+    fires. Every one of them takes a set now.
+    """
+    out: list[str] = []
+    for candidate in (origin, *also):
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def assert_port_clean(
+    env: str, origin: str, *, also: Sequence[str] = (),
+) -> dict:
     """Step 25g: assert the env's ``ports/<origin>/`` subtree is
     at git HEAD with no uncommitted or untracked changes.
 
@@ -1987,14 +2061,23 @@ def assert_port_clean(env: str, origin: str) -> dict:
     - the patch flow's pre-job invariant (future 25d slice)
     - operator inspection via the CLI
 
+    ``also`` adds further origins to the same check — pass the port's
+    ``patch_origin`` so a fix written into the master's subtree is
+    visible here (poly-lt5q). Without it this returns clean for a slave
+    whose master is dirty, which is the failure mode that motivated the
+    parameter.
+
     Runs ``git status`` inside the chroot for substrate parity
     with every other tool.
     """
-    rel = f"ports/{origin}"
+    origins = origin_set(origin, also)
+    rels = [f"ports/{o}" for o in origins]
+    pathspec = " ".join(shlex.quote(r) for r in rels)
+    rel = " ".join(rels)
     p = _exec(
         env, "/bin/sh", "-c",
         f"cd /work/DeltaPorts && git status --porcelain "
-        f"--untracked-files=all -- {shlex.quote(rel)}",
+        f"--untracked-files=all -- {pathspec}",
         cwd="/work/DeltaPorts",
     )
     if p.returncode != 0:
@@ -2029,7 +2112,7 @@ def assert_port_clean(env: str, origin: str) -> dict:
     }
 
 
-def reset_port(env: str, origin: str) -> dict:
+def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     """Wipe the per-origin WRKDIR and re-materialize the compose tree, so the
     next job starts from a pristine WRKDIR and a baseline-derived composed
     tree.
@@ -2094,7 +2177,14 @@ def reset_port(env: str, origin: str) -> dict:
     # 1. Best-effort WRKDIR cleanup — runs against the still-patched
     # substrate (the in-tree Makefile/.DragonFly is what ``make clean``
     # was authored against). ok stays True even on failure.
+    #
+    # poly-lt5q: ``also`` extends both stages to the port's patch
+    # origin, so a master edited on the slave's behalf gets its WRKDIR
+    # cleaned and its compose tree re-materialized too.
+    origins = origin_set(origin, also)
     workdir = _clean_port_workdir(env, origin)
+    for extra in origins[1:]:
+        _clean_port_workdir(env, extra)
 
     # The substrate reset that used to sit here is gone. It ran
     # `git checkout HEAD -- . && git clean -fd` over the whole tree because
@@ -2113,6 +2203,10 @@ def reset_port(env: str, origin: str) -> dict:
     # cause and shouldn't mask as a reset failure.
     rp = _exec(env, "reapply", origin)
     reapply_ok = (rp.returncode == 0)
+    for extra in origins[1:]:
+        extra_rp = _exec(env, "reapply", extra)
+        if extra_rp.returncode != 0 and reapply_ok:
+            rp, reapply_ok = extra_rp, False
 
     result = {
         "ok": True,
@@ -2148,6 +2242,11 @@ def is_slave_port(env: str, origin: str) -> bool:
     Fail-open: any probe error (no cached target, missing Makefile,
     grep error) returns False, so a hiccup never wrongly escalates a
     normal port to MANUAL.
+
+    poly-lt5q: this is the *fallback*. :func:`probe_port_relation` asks
+    the framework directly and answers the question that actually
+    matters — where the patch has to be written. Prefer it; this stays
+    for when the framework probe cannot run.
     """
     target = peek_env_target(env) or ""
     if not target:
@@ -2159,6 +2258,243 @@ def is_slave_port(env: str, origin: str) -> bool:
         cwd="/work/DeltaPorts",
     )
     return p.returncode == 0
+
+
+#: ``(env, origin)`` -> resolved :func:`probe_port_relation` dict. The
+#: relation is a property of the composed Makefile, which only changes
+#: when the substrate does; a per-attempt cache is plenty.
+_RELATION_CACHE: dict[tuple[str, str], dict] = {}
+
+
+def _relation_from_vars(
+    origin: str, slave_port: str, master_port: str,
+    patchdir: str, dfly_patchdir: str,
+) -> dict:
+    """Shape a relation dict from four raw ``make -V`` values.
+
+    ``patch_origin`` is the whole point: the origin whose ``dragonfly/``
+    the build will actually read. ``DFLY_PATCHDIR`` is
+    ``${PATCHDIR:H}/dragonfly`` and ``PATCHDIR`` defaults to
+    ``${MASTERDIR}/files``, so for most slaves it resolves into the
+    *master's* directory and a patch materialized next to the slave's
+    own overlay is never read. Some masters opt out with the
+    ``PATCHDIR= ${.CURDIR}/files`` idiom, which gives each slave its own
+    dir; both regimes are legitimate, so resolve rather than assume.
+
+    Decided lexically with ``posixpath.normpath`` — the value carries
+    ``..`` segments and the directory need not exist yet, so
+    ``realpath`` is both unnecessary and less robust here.
+    """
+    import posixpath  # noqa: PLC0415
+
+    is_slave = slave_port.strip().lower() == "yes"
+    master = master_port.strip()
+    dfly = dfly_patchdir.strip()
+
+    own = False
+    if dfly and not posixpath.isabs(dfly):
+        # A relative DFLY_PATCHDIR (``./dragonfly``, seen on
+        # editors/pico-alpine, whose Makefile sets PATCHDIR empty so
+        # ``${PATCHDIR:H}`` degenerates to ``.``) is resolved by
+        # do-patch against the port's own directory, because that is
+        # make's cwd for the build. So it is the port's own dir.
+        own = True
+    elif dfly:
+        parent = posixpath.dirname(posixpath.normpath(dfly))
+        own = parent == origin or parent.endswith("/" + origin)
+
+    if own or not is_slave:
+        patch_origin = origin
+    else:
+        patch_origin = master or origin
+
+    return {
+        "ok": True,
+        "origin": origin,
+        "slave_port": is_slave,
+        "master_port": master,
+        "patchdir": patchdir.strip(),
+        "dfly_patchdir": dfly,
+        "patch_origin": patch_origin,
+        "own_patchdir": own,
+    }
+
+
+def _unresolved_relation(origin: str, error: str) -> dict:
+    """Fail-open relation: treat the port as its own patch origin.
+
+    That is today's behaviour for every non-slave, so a probe failure
+    degrades to the status quo rather than routing a patch somewhere
+    nothing verified.
+    """
+    return {
+        "ok": False,
+        "origin": origin,
+        "slave_port": False,
+        "master_port": "",
+        "patchdir": "",
+        "dfly_patchdir": "",
+        "patch_origin": origin,
+        "own_patchdir": True,
+        "error": error,
+    }
+
+
+def forget_port_relation(env: str, origin: str) -> None:
+    """Drop the cached relation for ``(env, origin)``.
+
+    The relation is derived from the composed Makefile, and the agent
+    edits the thing that composes it — an overlay can add ``MASTERDIR``
+    or redirect ``PATCHDIR``, which moves the patch origin. Compose is
+    the moment that can change, so :func:`materialize_dports` calls
+    this. Without it a long-lived runner would keep routing patches by
+    a relation that stopped being true several edits ago.
+    """
+    _RELATION_CACHE.pop((env, origin), None)
+
+
+def probe_port_relation(
+    env: str, origin: str, *, use_cache: bool = True,
+) -> dict:
+    """Resolve ``origin``'s master/slave relation from the framework.
+
+    ``bsd.port.mk`` derives ``SLAVE_PORT`` and ``MASTER_PORT`` from
+    ``MASTERDIR`` itself, so one ``make -V`` answers authoritatively what
+    :func:`is_slave_port`'s grep can only guess at — and, more
+    importantly, tells us ``DFLY_PATCHDIR``, which is where a patch has
+    to go to be read at all.
+
+    Returns the dict shaped by :func:`_relation_from_vars`; on any
+    failure, :func:`_unresolved_relation` with ``ok=False``. Callers
+    should use ``patch_origin`` and not re-derive it.
+
+    Same invocation shape as :func:`_extracted_wrksrc`:
+    ``PACKAGE_BUILDING`` because it changes how the ``*_DEFAULT`` knobs
+    resolve, and ``WRKDIRPREFIX`` because bsd.port.mk's default is
+    read-only in the dev-env.
+    """
+    key = (env, origin)
+    if use_cache and key in _RELATION_CACHE:
+        return _RELATION_CACHE[key]
+
+    cmd = (
+        f'cd "$DPORTS_COMPOSE_ROOT/{origin}" 2>/dev/null || exit 2; '
+        f'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
+        f'     WRKDIRPREFIX="{WRKDIRPREFIX}" '
+        f'     {PACKAGE_BUILDING} '
+        f'     BATCH=yes '
+        f'     -V SLAVE_PORT -V MASTER_PORT -V PATCHDIR -V DFLY_PATCHDIR '
+        f'  2>/dev/null'
+    )
+    try:
+        p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts")
+    except Exception as exc:  # pragma: no cover - transport failure
+        return _unresolved_relation(origin, f"probe failed: {exc}")
+
+    if p.returncode != 0:
+        return _unresolved_relation(
+            origin, f"make -V exited {p.returncode}",
+        )
+
+    # `make -V` prints one line per variable, in order, and an empty
+    # line for an empty value — so the count is fixed and positional.
+    # Take the LAST four rather than the first: a port whose Makefile
+    # prints to stdout before bsd.port.mk is read would otherwise shift
+    # every value by one and silently yield a wrong patch origin.
+    lines = (p.stdout or "").splitlines()
+    if len(lines) < 4:
+        return _unresolved_relation(
+            origin, f"make -V returned {len(lines)} lines, expected 4",
+        )
+
+    relation = _relation_from_vars(origin, *lines[-4:])
+    if use_cache:
+        _RELATION_CACHE[key] = relation
+    return relation
+
+
+def patch_origin_for(env: str, origin: str) -> str:
+    """``origin``'s patch origin, or ``origin`` itself when unresolvable.
+
+    Convenience for the many callers that want only this one field.
+    """
+    return probe_port_relation(env, origin).get("patch_origin") or origin
+
+
+#: ``(env, master_origin)`` -> resolved sibling list.
+_SIBLING_CACHE: dict[tuple[str, str], list[str]] = {}
+
+
+def slave_siblings(
+    env: str, master_origin: str, *, use_cache: bool = True,
+) -> list[str]:
+    """Every port whose ``MASTER_PORT`` resolves to ``master_origin``.
+
+    A fix authored on a master reaches every slave that inherits from
+    it, so ``rebuild_ok`` on the master alone is not evidence the fix is
+    safe — it is evidence the master still builds. This is the set that
+    has to build with it.
+
+    Two stages, because neither alone is both cheap and correct. A grep
+    for the master's *directory name* in ``MASTERDIR`` assignments
+    narrows ~32k ports to a handful in one pass; ``make -V MASTER_PORT``
+    then confirms each candidate authoritatively, since the grep cannot
+    tell ``../mysql84-server`` from ``../mysql84-server-foo`` and a
+    basename can repeat across categories.
+
+    Returns ``[]`` when the grep finds nothing or fails — a sibling set
+    we could not enumerate must not silently narrow the build, so
+    callers treat empty as "no siblings known" and the caller-side log
+    says so.
+    """
+    key = (env, master_origin)
+    if use_cache and key in _SIBLING_CACHE:
+        return _SIBLING_CACHE[key]
+
+    basename = master_origin.rsplit("/", 1)[-1]
+    if not basename:
+        return []
+    # -l: names only. The pattern keeps the assignment anchor so a bare
+    # ${MASTERDIR} mention in an .include does not match.
+    cmd = (
+        f'cd "$DPORTS_COMPOSE_ROOT" 2>/dev/null || exit 2; '
+        f'grep -rlE '
+        f'{shlex.quote("^MASTERDIR[[:space:]]*[?:]?=.*" + basename)} '
+        f'--include=Makefile . 2>/dev/null '
+        r'| sed "s|^\./||; s|/Makefile$||"'
+    )
+    try:
+        p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts")
+    except Exception:  # pragma: no cover - transport failure
+        return []
+    if p.returncode not in (0, 1):
+        return []
+
+    siblings: list[str] = []
+    for candidate in (p.stdout or "").split():
+        candidate = candidate.strip()
+        if not candidate or candidate == master_origin:
+            continue
+        relation = probe_port_relation(env, candidate)
+        if relation.get("master_port") == master_origin:
+            siblings.append(candidate)
+
+    siblings.sort()
+    if use_cache:
+        _SIBLING_CACHE[key] = siblings
+    return siblings
+
+
+def invariant_origins(env: str, origin: str) -> list[str]:
+    """Every origin a job for ``origin`` may legitimately have touched.
+
+    The subtree hash recorded by ``materialize_dports`` and the one
+    checked by ``dsynth_build`` have to cover the same ground or the
+    stale-compose guard compares two different questions. Both resolve
+    the set through here rather than making each caller thread it, so
+    they cannot drift apart. Cheap — the relation probe is cached.
+    """
+    return origin_set(origin, [patch_origin_for(env, origin)])
 
 
 def _clean_port_workdir(env: str, origin: str) -> dict:
@@ -2550,6 +2886,7 @@ def _verify_branch_name_for(bundle_id: str) -> str:
 
 def commit_port_changes(
     env: str, origin: str, message: str, paths: str | None = None,
+    *, also: Sequence[str] = (),
 ) -> dict:
     """Commit working-tree changes under ``ports/<origin>/`` (or a
     narrower ``paths`` subpath) to the env's git, so the next job's
@@ -2564,6 +2901,13 @@ def commit_port_changes(
     port should be swept in. Defaults to the whole ``ports/<origin>/``
     subtree.
 
+    ``also`` adds further origins — pass the port's ``patch_origin`` so
+    a bootstrapped master overlay is committed too (poly-lt5q).
+    Otherwise it stays untracked into the patch job, which then trips
+    ``patch_preflight_dirty`` once :func:`assert_port_clean` can see it.
+    Ignored when an explicit ``paths`` is given: that form exists to
+    commit exactly one path and nothing else.
+
     No-op when the target is already clean (no diff, no untracked). The
     commit author is set to a dportsv3-managed identity so
     operator-authored commits stay distinguishable.
@@ -2571,7 +2915,12 @@ def commit_port_changes(
     Returns the standard worker result dict. ``committed: bool``
     distinguishes "committed N files" from "nothing to commit".
     """
-    rel = paths or f"ports/{origin}"
+    if paths:
+        rels = [paths]
+    else:
+        rels = [f"ports/{o}" for o in origin_set(origin, also)]
+    rel = " ".join(rels)
+    pathspec = " ".join(shlex.quote(r) for r in rels)
     # `git add -A` picks up tracked-modified, deleted, AND untracked
     # files. `git diff --cached --quiet` returns non-zero when the
     # index has staged changes — that's our signal to commit.
@@ -2581,13 +2930,13 @@ def commit_port_changes(
     safe_msg = message.replace("'", "'\\''")
     cmd = (
         f"cd /work/DeltaPorts && "
-        f"git add -A -- {shlex.quote(rel)} && "
-        f"if git diff --cached --quiet -- {shlex.quote(rel)}; then "
+        f"git add -A -- {pathspec} && "
+        f"if git diff --cached --quiet -- {pathspec}; then "
         f"  echo 'nothing-to-commit'; "
         f"else "
         f"  git -c user.name=dportsv3-runner "
         f"      -c user.email=runner@dportsv3 "
-        f"      commit -m '{safe_msg}' -- {shlex.quote(rel)}; "
+        f"      commit -m '{safe_msg}' -- {pathspec}; "
         f"fi"
     )
     p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts")
@@ -2603,7 +2952,7 @@ def commit_port_changes(
         "ok": True,
         "origin": origin,
         "committed": committed,
-        "paths_changed": [rel] if committed else [],
+        "paths_changed": list(rels) if committed else [],
         "stdout_tail": out[-1024:],
     }
 
@@ -3083,10 +3432,20 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     - Install a structurally broken diff. A malformed hunk copies fine
       and only surfaces much later, as a do-patch failure with no link
       back to the tool call that caused it.
+
+    A third, added in poly-lt5q: install into a directory the build
+    never reads. For a slave port ``DFLY_PATCHDIR`` resolves into the
+    *master's* tree, so ``ports/<slave>/dragonfly/`` is written and
+    ignored — the patch simply has no effect, and the agent spends its
+    remaining attempts wondering why. The destination is redirected to
+    the resolved patch origin and the result says so, rather than
+    refusing: the model has no way to know the relation, so telling it
+    to try again somewhere else would just cost a turn.
     """
     paths = env_paths(env)
     src = paths.writable / "work" / "genpatch-out"
-    dst = paths.deltaports / "ports" / origin / "dragonfly"
+    dest_origin = patch_origin_for(env, origin)
+    dst = paths.deltaports / "ports" / dest_origin / "dragonfly"
     if not src.is_dir():
         raise FileNotFoundError(f"genpatch output dir does not exist: {src}")
     if patches is None:
@@ -3135,7 +3494,20 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         target = dst / f.name
         shutil.copy2(f, target)
         installed.append(str(target.relative_to(paths.deltaports)))
-    return {"origin": origin, "destination": str(dst), "installed": installed}
+    result = {
+        "origin": origin,
+        "patch_origin": dest_origin,
+        "destination": str(dst),
+        "installed": installed,
+    }
+    if dest_origin != origin:
+        result["note"] = (
+            f"{origin} is a slave port; its DFLY_PATCHDIR resolves into "
+            f"{dest_origin}, so the patches were installed there. Author "
+            f"the overlay at ports/{dest_origin}/overlay.dops and build "
+            f"with dsynth_build({origin!r}) as usual."
+        )
+    return result
 
 
 DSYNTH_LOGS_DIR = "/work/dsynth/logs"
@@ -3180,13 +3552,19 @@ def _dsynth_log_path(origin: str) -> str:
 
 
 def _dsynth_run(env: str, origin: str, subcommand: str,
-                tool: str) -> dict:
+                tool: str, *, also: Sequence[str] = ()) -> dict:
     """Shared body for the dsynth-driving tools.
 
     ``subcommand`` is dsynth's; ``tool`` is the agent-facing name,
     used only so a refusal names the tool the model actually called.
     Parameterised because there were briefly two of these — see
     poly-9sw for why there is now one.
+
+    ``also`` builds further origins in the same dsynth invocation.
+    dsynth takes a port list, so the sibling set of a master fix costs
+    one run rather than N (poly-lt5q). The verdict is over the whole
+    list: any port in it failing means ``rebuild_ok=False``, which is
+    the point — a master fix that breaks a sibling is not a fix.
     """
     # Stale-compose guard: refuse if substrate state at last
     # successful materialize_dports doesn't match the substrate
@@ -3210,7 +3588,9 @@ def _dsynth_run(env: str, origin: str, subcommand: str,
             ),
             "blocked_by": "stale_compose",
         }
-    current = _port_subtree_hash(env, origin)
+    current = _subtree_hash_for(
+        env, origin, invariant_origins(env, origin)[1:],
+    )
     if current and current != baseline:
         return {
             "ok": False,
@@ -3245,13 +3625,14 @@ def _dsynth_run(env: str, origin: str, subcommand: str,
     # if dsynth exits non-zero. ``/work`` is the dev-env's writable
     # overlay so we can write/remove it freely from any in-chroot
     # process.
+    build_origins = origin_set(origin, also)
     cmd = (
         'flag=/work/.dports-agent-hooks-disabled; '
         'trap "rm -f \\"$flag\\"" EXIT; '
         ': > "$flag"; '
-        f'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" {subcommand} "$1"'
+        f'dsynth -S -y -p "$DPORTS_DSYNTH_PROFILE" {subcommand} "$@"'
     )
-    p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)
+    p = _exec(env, "/bin/sh", "-c", cmd, "_", *build_origins)
     # Name the log dsynth actually wrote. The unflavored path is a
     # guess that is wrong for every flavored port, and handing the
     # model a path that does not exist costs it turns discovering so.
@@ -3264,10 +3645,13 @@ def _dsynth_run(env: str, origin: str, subcommand: str,
         rebuild_ok=p.returncode == 0,
         log_hint=log_hint,
         log_flavors=[_dsynth_log_flavor(x, origin) for x in written],
+        built_origins=build_origins,
     )
 
 
-def dsynth_build(env: str, origin: str) -> dict:
+def dsynth_build(
+    env: str, origin: str, *, also: Sequence[str] | None = None,
+) -> dict:
     """Run ``dsynth test <origin>`` inside the chroot — build + gate.
 
     Invokes dsynth directly (not via the ``dbuild`` / ``dtest`` helpers,
@@ -3296,8 +3680,25 @@ def dsynth_build(env: str, origin: str) -> dict:
     the port has more than one. On failure, the agent should call
     ``dsynth_log(origin)`` to read it — stdout/stderr_tail here only
     capture the wrapper output, not the actual build error.
+
+    ``also`` extends the run to further origins (poly-lt5q). Left
+    unset it resolves to the port's patch origin — for a slave, the
+    master whose ``dragonfly/`` the fix was written into — so the agent
+    loop proves both halves of the thing it just changed without the
+    model having to know the relation. At most one extra port, so the
+    inner loop stays cheap.
+
+    The *full* sibling set is deliberately not swept here: a master like
+    ``lang/php82`` has dozens of slaves, and building them on every
+    agent iteration would cost more than it teaches. Verify does that
+    sweep once, against the final fix — see
+    :func:`verify_fix.sibling_origins_for`.
+
+    Pass ``also=()`` to force a single-port build.
     """
-    return _dsynth_run(env, origin, "test", "dsynth_build")
+    if also is None:
+        also = invariant_origins(env, origin)[1:]
+    return _dsynth_run(env, origin, "test", "dsynth_build", also=also)
 
 
 def _dsynth_log_flavor(path: Path, origin: str) -> str:

@@ -51,7 +51,11 @@ from dportsv3.engine.models import (
     Plan,
     PlanOp,
 )
-from dportsv3.engine.oracle import normalize_oracle_profile, run_bmake_oracle
+from dportsv3.engine.oracle import (
+    literal_expectations,
+    normalize_oracle_profile,
+    run_bmake_oracle,
+)
 from dportsv3.policy import PATCH_TIMEOUT_SECONDS
 
 Executor = Callable[[PlanOp, ApplyContext, FileTransaction], ApplyOpResult]
@@ -409,9 +413,23 @@ def apply_plan(
             oracle_skipped = 1
         else:
             oracle_root = _materialize_staged_tree(port_root, txn)
+            # poly-lt5q: assert the values this plan set are the values
+            # the framework ends up with. An `mk set` is written above
+            # the port's trailing `.include`, so for a slave port a
+            # plain assignment in the master silently wins and the
+            # overlay is inert — visible here, or not at all.
+            expect = literal_expectations({
+                str(op.payload.get("name")): str(op.payload.get("value"))
+                for op, row in zip(plan.ops, op_results, strict=False)
+                if op.kind == "mk.var.set"
+                and row.status != "failed"
+                and isinstance(op.payload.get("name"), str)
+                and isinstance(op.payload.get("value"), str)
+            })
             try:
                 oracle_result = run_bmake_oracle(
-                    oracle_root, profile=normalized_oracle_profile
+                    oracle_root, profile=normalized_oracle_profile,
+                    expect=expect,
                 )
             finally:
                 shutil.rmtree(oracle_root, ignore_errors=True)
