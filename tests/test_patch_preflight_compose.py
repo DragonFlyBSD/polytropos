@@ -135,7 +135,7 @@ def test_the_bootstrap_overlay_is_established_before_the_compose() -> None:
     a port whose overlay vanished, and refusing for a reason that has
     nothing to do with the port (poly-451)."""
     src = _patch_preflight_source()
-    boot = src.index("_worker.ensure_bootstrap_overlay(env, origin)")
+    boot = src.index("_worker.ensure_bootstrap_overlay(env, boot_origin)")
     compose = src.index("_worker.materialize_dports(env, origin)")
     assert boot < compose
 
@@ -144,8 +144,10 @@ def test_the_bootstrap_comes_after_the_clean_check() -> None:
     """Writing into a dirty tree before anyone has checked it is dirty
     would bake the write into someone else's leftovers."""
     src = _patch_preflight_source()
-    clean = src.index("_worker.assert_port_clean(env, origin)")
-    boot = src.index("_worker.ensure_bootstrap_overlay(env, origin)")
+    # The clean check runs through _clean_check(), defined just above
+    # it, so anchor on the definition rather than the call.
+    clean = src.index("def _clean_check()")
+    boot = src.index("_worker.ensure_bootstrap_overlay(env, boot_origin)")
     assert clean < boot
 
 
@@ -155,7 +157,7 @@ def test_a_failed_bootstrap_is_recorded_but_leaves_the_gate_to_compose() -> None
     only change which message an unreachable env produces. So say what
     happened and let the compose arbitrate."""
     src = _patch_preflight_source()
-    block = src[src.index("_worker.ensure_bootstrap_overlay(env, origin)"):]
+    block = src[src.index("_worker.ensure_bootstrap_overlay(env, boot_origin)"):]
     block = block[:block.index("_worker.materialize_dports(env, origin)")]
     assert "patch_overlay_bootstrap_failed" in block
     assert "JobEvent.PATCH_GAVE_UP" not in block, (

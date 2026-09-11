@@ -584,3 +584,75 @@ def test_compose_drops_the_cached_relation(monkeypatch):
     monkeypatch.setattr(worker, "_port_subtree_hash", lambda e, o, **k: "h")
     worker.materialize_dports("e", "db/client")
     assert ("e", "db/client") not in worker._RELATION_CACHE
+
+
+def test_the_patch_step_bootstraps_every_origin_it_composes():
+    # The regression that took the first live run down: triage wrote the
+    # header overlay at the master, the patch step re-established only
+    # the slave's in its worktree, and composing the master then refused
+    # with an empty error.
+    import inspect
+
+    from dportsv3.agent import steps
+
+    src = inspect.getsource(steps.PatchAttemptStep.run)
+    assert "for boot_origin in [origin, *also_origins]:" in src
+    assert "ensure_bootstrap_overlay(env, boot_origin)" in src
+    assert "ensure_bootstrap_overlay(env, origin)" not in src
+
+
+def test_a_compose_refusal_names_the_origin_that_actually_failed():
+    import inspect
+
+    from dportsv3.agent import steps
+
+    src = inspect.getsource(steps.PatchAttemptStep.run)
+    assert 'failed_origin = composed.get("origin") or origin' in src
+    assert "could not compose {failed_origin}" in src
+
+
+def test_materialize_reports_the_origin_that_failed(monkeypatch):
+    calls = []
+
+    def fake_exec(env, *argv, **kw):
+        calls.append(argv)
+        rc = 0 if argv[-1] == "db/client" else 1
+        return subprocess.CompletedProcess(argv, rc, "", "")
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
+    monkeypatch.setattr(
+        worker, "invariant_origins", lambda e, o: ["db/client", "db/server"],
+    )
+    res = worker.materialize_dports("e", "db/client")
+    assert res["ok"] is False
+    # the master, not the job's origin
+    assert res["origin"] == "db/server"
+
+
+def test_the_model_is_told_where_a_slaves_patches_are_read_from():
+    # The prompt says "edit ports/<origin>/overlay.dops"; for a slave
+    # that file is never read. The model cannot know the relation from
+    # the bundle, so the payload has to carry it.
+    import inspect
+
+    from dportsv3.agent import steps
+
+    src = inspect.getsource(steps.PatchAttemptStep.run)
+    assert "## This is a slave port" in src
+    assert "payload += (" in src
+    # and it must NOT tell the model to move mk ops, which belong on the
+    # slave's own Makefile
+    assert "`mk` ops** stay in" in src
+
+
+def test_the_dops_gate_accepts_a_fix_authored_at_the_patch_origin():
+    import inspect
+
+    from dportsv3.agent import steps
+
+    src = inspect.getsource(steps.PatchAttemptStep.run)
+    assert "_worker.classify_dops(env, o)" in src
+    assert 'for o in [origin, *also_origins]' in src
+    assert '"converted" if "converted" in states else states[0]' in src
+    # the single-origin form is gone
+    assert "classify_dops(env, origin)" not in src

@@ -1213,6 +1213,39 @@ class PatchAttemptStep:
         patch_origin = _worker.patch_origin_for(env, origin)
         also_origins = [patch_origin] if patch_origin != origin else []
 
+        if patch_origin != origin:
+            # The prompt tells the model to edit
+            # ports/<origin>/overlay.dops, and for a slave that is a file
+            # the build never reads: DFLY_PATCHDIR resolves into the
+            # master. The model cannot know that from the bundle, so say
+            # it here. Not a redirect — a slave's own overlay is still
+            # the right home for `mk` ops, which are read from its
+            # Makefile; only the patch payload has to move.
+            payload += (
+                f"\n\n---\n\n"
+                f"## This is a slave port\n\n"
+                f"`{origin}` sets `MASTERDIR` and its master is "
+                f"`{patch_origin}`. The ports framework reads this "
+                f"port's patches from the master's directory "
+                f"(`DFLY_PATCHDIR` resolves to "
+                f"`ports/{patch_origin}/dragonfly/`), so:\n\n"
+                f"- **Patches** — `dragonfly/patch-*` files and any "
+                f"`file materialize` / `patch apply` op — go in "
+                f"`/work/DeltaPorts/ports/{patch_origin}/overlay.dops`. "
+                f"Written under `{origin}` they are silently ignored and "
+                f"the build fails unchanged. `install_patches` already "
+                f"redirects there for you.\n"
+                f"- **`mk` ops** stay in "
+                f"`/work/DeltaPorts/ports/{origin}/overlay.dops` — they "
+                f"edit this port's own Makefile, which the framework "
+                f"does read. Note the master's Makefile is included "
+                f"*after* yours, so a plain assignment there overrides "
+                f"an `mk set` here.\n\n"
+                f"Both files already exist as bootstrapped headers. "
+                f"Build with `dsynth_build(\"{origin}\")` as usual — it "
+                f"builds the master alongside it.\n"
+            )
+
         def _clean_check() -> dict:
             # `also` is omitted when empty: assert_port_clean is a
             # monkeypatch seam, and the single-origin call is exactly
@@ -1338,42 +1371,58 @@ class PatchAttemptStep:
         # Best-effort, and the compose below is still the gate: a second
         # refusal path here would only change which message an
         # unreachable env produces.
-        boot = _worker.ensure_bootstrap_overlay(env, origin)
-        if boot.get("written"):
-            services.activity_log(
-                queue_root, "patch_overlay_bootstrapped",
-                (f"{origin}: re-established type="
-                 f"{boot.get('overlay_type')} bootstrap overlay in this "
-                 f"job's worktree"),
-                job_id=ctx.job_id,
-                extra={"origin": origin,
-                       "overlay_type": boot.get("overlay_type")},
-            )
-        elif boot.get("error"):
-            # Not fatal here, but it is the poly-451 failure recurring,
-            # and the compose error that follows will not name it.
-            services.activity_log(
-                queue_root, "patch_overlay_bootstrap_failed",
-                (f"{origin}: could not establish the bootstrap overlay "
-                 f"({boot.get('reason')}): {boot.get('error')}"),
-                job_id=ctx.job_id,
-                extra={"origin": origin, "reason": boot.get("reason"),
-                       "error": boot.get("error")},
-            )
+        # Every origin this job composes needs its bootstrap overlay
+        # here, not just the job's own: for a slave, triage wrote the
+        # header at the *patch* origin (the master), and that file is as
+        # untracked — and so as absent from this worktree — as the
+        # slave's own. Composing a master with no overlay refuses for a
+        # reason that has nothing to do with the port (poly-lt5q).
+        for boot_origin in [origin, *also_origins]:
+            boot = _worker.ensure_bootstrap_overlay(env, boot_origin)
+            if boot.get("written"):
+                services.activity_log(
+                    queue_root, "patch_overlay_bootstrapped",
+                    (f"{boot_origin}: re-established type="
+                     f"{boot.get('overlay_type')} bootstrap overlay in this "
+                     f"job's worktree"),
+                    job_id=ctx.job_id,
+                    extra={"origin": boot_origin,
+                           "overlay_type": boot.get("overlay_type")},
+                )
+            elif boot.get("error"):
+                # Not fatal here, but it is the poly-451 failure
+                # recurring, and the compose error that follows will not
+                # name it.
+                services.activity_log(
+                    queue_root, "patch_overlay_bootstrap_failed",
+                    (f"{boot_origin}: could not establish the bootstrap "
+                     f"overlay ({boot.get('reason')}): {boot.get('error')}"),
+                    job_id=ctx.job_id,
+                    extra={"origin": boot_origin, "reason": boot.get("reason"),
+                           "error": boot.get("error")},
+                )
 
         composed = _worker.materialize_dports(env, origin)
         if not composed.get("ok"):
+            # materialize_dports composes the whole origin set and
+            # reports the one that failed, which is not necessarily the
+            # job's origin — name it, or the message sends the reader to
+            # the wrong port.
+            failed_origin = composed.get("origin") or origin
+            detail = (
+                composed.get("stderr_tail") or composed.get("error") or ""
+            )[:300] or f"reapply {failed_origin} produced no output"
             msg = (
-                f"patch refused: could not compose {origin} before "
+                f"patch refused: could not compose {failed_origin} before "
                 f"starting. The compose tree is shared across jobs, so "
                 f"proceeding would work against whatever the previous "
-                f"job left there. Underlying error: "
-                f"{(composed.get('stderr_tail') or composed.get('error') or '')[:300]}"
+                f"job left there. Underlying error: {detail}"
             )
             services.activity_log(
                 queue_root, "patch_preflight_compose_failed",
                 msg, job_id=ctx.job_id,
-                extra={"origin": origin, "rc": composed.get("rc")},
+                extra={"origin": origin, "failed_origin": failed_origin,
+                       "rc": composed.get("rc")},
             )
             services.write_error_note(job_path, msg)
             return _err(msg, services, job_path,
@@ -1513,8 +1562,20 @@ class PatchAttemptStep:
         # port to have reached a valid 'converted' overlay — rebuild_ok
         # alone accepts compat writes (Makefile.DragonFly / bare
         # dragonfly/*) that build but don't advance the dops migration.
+        # poly-lt5q: a slave's durable fix lives in its patch origin's
+        # overlay, so classifying only the slave would read a port the
+        # agent never edited and escalate a correct fix to MANUAL. Both
+        # are legitimate homes — `mk` ops belong on the slave's own
+        # Makefile, patches on the master — so the port counts as
+        # converted when either one is.
         try:
-            ctx.state["post_patch_dops_state"] = _worker.classify_dops(env, origin)
+            states = [
+                _worker.classify_dops(env, o)
+                for o in [origin, *also_origins]
+            ]
+            ctx.state["post_patch_dops_state"] = (
+                "converted" if "converted" in states else states[0]
+            )
         except Exception as exc:
             ctx.state["post_patch_dops_state"] = None
             services.activity_log(
@@ -1550,7 +1611,8 @@ class PatchAttemptStep:
         else:
             services.activity_log(
                 queue_root, "patch_post_reset",
-                f"reset ports/{origin}/ to baseline after patch "
+                f"reset {', '.join(f'ports/{o}/' for o in [origin, *reset_also])} "
+                f"to baseline after patch "
                 f"(reapply_ok={reset.get('reapply_ok')})",
                 job_id=ctx.job_id,
             )
