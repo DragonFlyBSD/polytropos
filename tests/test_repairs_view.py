@@ -168,11 +168,79 @@ def test_runner_owned_work_is_not_queue_work(tmp_path: Path) -> None:
 # --- what each band says -------------------------------------------------
 
 
-def test_each_band_offers_its_own_action(client) -> None:
+def test_the_row_opens_a_workspace_rather_than_naming_an_action(
+    client,
+) -> None:
+    """Every band used to put its own verb on the row -- Accept, Verify,
+    Retry latest -- on a button that was a link to ?occ=. So a green
+    "Accept" in the queue moved a selection and accepted nothing. One
+    honest label; the acting is done by the operator action bar in the
+    pane the row opens (poly-x3pg.7)."""
     body = client.get("/agentic").text
+    rail = body.split('class="repair-detail"')[0]
 
-    for label in ("Accept", "Verify", "Retry latest", "Open"):
-        assert label in body
+    assert "Review \u2192" in rail
+    for gone in ("wl-btn-accept", "wl-btn-verify", "wl-btn-decide",
+                 "wl-btn-take", "Retry latest"):
+        assert gone not in rail, gone
+
+
+def test_the_queue_filters(client) -> None:
+    """The queue caps at 500 issues and the cap drops the long tail, which
+    is exactly where the port someone came looking for lives. Scrolling to
+    it is not a search (poly-x3pg.7)."""
+    all_rail = client.get("/agentic").text.split('class="repair-detail"')[0]
+    assert "devel/alpha" in all_rail
+    assert "graphics/beta" in all_rail
+
+    filtered = client.get("/agentic?q=graphics").text
+    rail = filtered.split('class="repair-detail"')[0]
+
+    assert "graphics/beta" in rail
+    assert "devel/alpha" not in rail
+
+
+def test_a_filter_that_matches_nothing_says_so(client) -> None:
+    """A third nothing. The queue would otherwise have claimed nothing
+    needs you, which is a different and much better piece of news."""
+    body = client.get("/agentic?q=no-such-port").text
+
+    assert "No issue matches" in body
+    assert "Nothing needs you right now" not in body
+
+
+def test_a_band_chip_narrows_the_queue(client) -> None:
+    """They were #wl-<band> anchors: at 500 issues that lands you on a
+    heading with every other band still rendered below it, which is the
+    scrolling problem again."""
+    body = client.get("/agentic?band=verify").text
+    rail = body.split('class="repair-detail"')[0]
+
+    assert "graphics/beta" in rail          # the verify band
+    assert "devel/alpha" not in rail        # the ready band
+
+    # ...and the chips still count every band, because they are the only
+    # place the others are visible while one is showing.
+    assert "Ready to accept" in rail
+
+
+def test_an_unknown_band_shows_the_whole_queue(client) -> None:
+    """A hand-typed or stale band is not an error; the queue is the view."""
+    rail = client.get("/agentic?band=nonsense").text.split(
+        'class="repair-detail"')[0]
+
+    assert "devel/alpha" in rail
+    assert "graphics/beta" in rail
+
+
+def test_the_filter_survives_selecting_an_occurrence(client) -> None:
+    """Otherwise picking a row out of a filtered queue throws you back to
+    all 500 of them."""
+    rail = client.get("/agentic?q=graphics").text.split(
+        'class="repair-detail"')[0]
+
+    assert "q=graphics" in rail
+    assert "occ=" in rail
 
 
 def test_the_confirming_band_says_where_in_the_loop_each_issue_is(

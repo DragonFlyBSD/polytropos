@@ -620,6 +620,8 @@ def register(app, ctx):
         issue: str | None = None,
         occ: str | None = None,
         artifact: str | None = None,
+        q: str | None = None,
+        band: str | None = None,
     ) -> Any:
         # Lazy delivery reconcile FIRST: a PR merged upstream resolves its
         # issue (WS4), so it runs before the issues are read and the render
@@ -635,11 +637,18 @@ def register(app, ctx):
             # need you, grouped and bucketed by their actionable occurrence.
             # 500 is a generous window — resolved/muted issues live in the
             # collapsed archives, not the actionable bands.
-            issues = issues_with_occurrences(conn, limit=_WORKLIST_CAP)
+            # The filter is the answer to the cap: at 500 issues the tail
+            # the cap drops is exactly where the port you are looking for
+            # lives, and scrolling to it is not a search (poly-x3pg.7).
+            search = (q or "").strip() or None
+            selected_band = (band or "").strip() or None
+            issues = issues_with_occurrences(
+                conn, search=search, limit=_WORKLIST_CAP,
+            )
             # The cap orders times_seen DESC, so what it drops is the long
             # tail -- exactly where a specific port someone is looking for
             # usually lives. Say so rather than looking complete.
-            issue_total = count_issues(conn)
+            issue_total = count_issues(conn, search=search)
             worklist = issue_state.build_issue_worklist(issues)
             bands = [
                 {
@@ -652,7 +661,14 @@ def register(app, ctx):
                 for key, label, cls in issue_state.ISSUE_WORKLIST_SECTIONS
                 if key not in ("done", "muted")
             ]
+            # Every band keeps its count even while one is showing: the
+            # chips are the only place the others are still visible, so a
+            # chip that read 0 because of its own filter would be a lie.
             focus_count = sum(b["count"] for b in bands)
+            if selected_band is not None and selected_band not in {
+                b["key"] for b in bands
+            }:
+                selected_band = None
             # The split: a queue on the left, the selected occurrence's
             # workspace on the right, both on screen (M4). Selection is a
             # URL so it is linkable and survives a reload; without JS every
@@ -673,6 +689,10 @@ def register(app, ctx):
                     "selected_occurrence": selected,
                     "cockpit": cockpit,
                     "status": agentic_status(conn),
+                    # The strip still reports whether an env is broken --
+                    # that is queue-relevant, it is why nothing is moving.
+                    # The table and the picker moved to Runner, which is
+                    # the page about the machinery (poly-x3pg.7).
                     "env_health": env_health_statuses(conn),
                     "active_env": get_active_env(conn),
                     "bands": bands,
@@ -682,6 +702,13 @@ def register(app, ctx):
                     "issue_total": issue_total,
                     "worklist_cap": _WORKLIST_CAP,
                     "confirm_for": _confirm_for(conn),
+                    "search": search,
+                    "selected_band": selected_band,
+                    # Not `artifact`: the artifact set differs per bundle,
+                    # so a relpath carried onto a sibling occurrence 404s.
+                    "query_for": _query_for({
+                        "q": search, "band": selected_band, "occ": selected,
+                    }),
                 },
             )
 
@@ -1296,6 +1323,12 @@ def register(app, ctx):
                     # says whether to believe it. A runner killed mid-job
                     # leaves `processing` on the row forever.
                     "runner_live": runner_is_live(conn),
+                    # Here rather than in the Repairs queue, where the table
+                    # sat in a 372px column below the whole worklist. This
+                    # page already explains that the runner pauses itself on
+                    # a broken env; that is the same subject (poly-x3pg.7).
+                    "env_health": env_health_statuses(conn),
+                    "active_env": get_active_env(conn),
                 },
             )
 

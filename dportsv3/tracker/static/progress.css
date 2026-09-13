@@ -1447,10 +1447,14 @@ details.section-collapse > summary .muted {
 }
 .worklist .wl-empty .lbl { font-weight: 600; color: var(--text-dim); }
 
-/* Row */
+/* Row -- two lines, ~62px. The port owns the first one on its own; status,
+ * how often, and the action share the second. It used to be a five-track
+ * grid built for a full-width page, which collapsed in the 372px rail to
+ * four stacked lines and ~132px, so the queue showed three issues at a
+ * time out of a possible 500 (poly-x3pg.7). */
 .worklist .wl-row {
-  display: grid; grid-template-columns: 3px 20px 1fr auto auto;
-  align-items: center; gap: 0 12px; padding: 11px 16px 11px 0;
+  display: grid; grid-template-columns: 3px 20px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 3px 10px; padding: 8px 12px 8px 0;
   border-top: 1px solid var(--border); position: relative;
 }
 .worklist .wl-list > .wl-row:first-child,
@@ -1472,23 +1476,43 @@ details.section-collapse > summary .muted {
 .worklist .wl-group.open .wl-chev { transform: rotate(90deg); }
 .worklist .wl-chev.leaf { visibility: hidden; }
 
-.worklist .wl-ident { grid-column: 3; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; min-width: 0; }
-.worklist .wl-port { font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; }
+.worklist .wl-ident {
+  grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 9px;
+  min-width: 0;
+}
+/* The one field that identifies the row, so it gets the whole line and
+ * ellipses rather than wrapping or yielding width to a badge. */
+.worklist .wl-port {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13.5px; font-weight: 600; color: var(--text); text-decoration: none;
+}
+.worklist .wl-when {
+  grid-column: 4; grid-row: 1; justify-self: end; white-space: nowrap;
+  color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+/* The whole width, so the status pill never has to give any of it up. */
+.worklist .wl-meta {
+  grid-column: 3 / span 3; grid-row: 2; display: flex; align-items: center;
+  gap: 7px; min-width: 0; overflow: hidden;
+}
 a.wl-port:hover { color: var(--amber-dim); }
+/* nowrap + no shrink on both: on one shared line a badge that wraps inside
+ * itself costs the row a third line, which is the height this layout exists
+ * to get back (poly-x3pg.7). The port name is what absorbs the squeeze. */
 .worklist .wl-x {
+  flex: none; white-space: nowrap;
   font-size: 12px; font-weight: 700; color: var(--c-failed, var(--red));
   background: var(--c-failed-bg, var(--red-soft)); border-radius: 3px; padding: 1px 8px;
   font-variant-numeric: tabular-nums;
 }
 .worklist .wl-recur {
+  flex: none; white-space: nowrap;
   font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--c-failed, var(--red)); border: 1px solid var(--c-failed, var(--red-line));
   border-radius: 4px; padding: 0 4px; opacity: .8;
 }
 .worklist .wl-subid { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--text-faint, var(--muted)); }
 
-.worklist .wl-rollup { grid-column: 3; grid-row: 2; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
-.worklist .wl-mid { grid-column: 4; display: flex; align-items: center; gap: 14px; justify-self: end; }
 .worklist .wl-age { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .worklist .wl-pill {
@@ -1501,18 +1525,34 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-pill.skipped { background: var(--c-skipped-bg, var(--amber-soft)); color: var(--c-skipped, var(--amber)); }
 .worklist .wl-pill.total   { background: var(--c-neutral-bg, var(--surface-2)); color: var(--text); }
 
-/* Row primary action */
-.worklist .wl-actions { grid-column: 5; display: flex; align-items: center; gap: 6px; justify-self: end; }
+/* Row action. One label on every band: the row opens a workspace, it does
+ * not accept or verify anything, and a green "Accept" that only moved a
+ * selection was a button naming something it could not do (poly-x3pg.7).
+ * On line two, where there is room for it without costing the port name. */
+.worklist .wl-actions { grid-column: 5; grid-row: 1; display: flex; align-items: center; gap: 6px; justify-self: end; }
 .worklist .wl-btn {
   font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
   border-radius: 7px; padding: 5px 13px; white-space: nowrap; border: 1px solid transparent;
 }
-.worklist .wl-btn-accept { background: var(--c-built, var(--green)); color: var(--on-accent); }
-.worklist .wl-btn-accept:hover { background: var(--green); }
-.worklist .wl-btn-verify { background: var(--c-skipped, var(--amber)); color: var(--on-accent); }
-.worklist .wl-btn-decide { background: var(--bg-card); color: var(--amber-dim); border-color: var(--amber-line); }
-.worklist .wl-btn-decide:hover { background: var(--surface); }
-.worklist .wl-btn-take { background: var(--bg-card); color: var(--text-dim); border-color: var(--border-strong, var(--line)); }
+.worklist .wl-btn-review {
+  background: var(--bg-card); color: var(--text-dim);
+  border-color: var(--border-strong, var(--line));
+  border-radius: 4px; padding: 3px 9px;
+}
+.worklist .wl-btn-review:hover { color: var(--cyan); border-color: var(--cyan); }
+
+/* Filter. Full width under the heading, because it is the answer to a
+ * queue that caps at 500 and drops the tail you came looking for. */
+.worklist .wl-search { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.worklist .wl-search input[type="search"] {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px; font-size: 13px;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border-strong, var(--line)); border-radius: 3px;
+}
+.worklist .wl-search input[type="search"]:focus {
+  outline: none; border-color: var(--cyan);
+}
+.worklist .wl-search-clear { font-size: 12px; color: var(--text-dim); }
 
 /* Expanded per-attempt children */
 .worklist .wl-children { display: none; background: var(--bg-sunk, var(--surface-2)); border-top: 1px solid var(--border); }
@@ -1952,8 +1992,11 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
  * A queue rail and the selected occurrence's workspace, both on screen.
  * Picking an issue used to mean leaving the queue behind.
  */
+/* 420px: the queue is the thing being worked, and the pane beside it was
+ * 1350px wide holding a 30px action bar. Wide enough that the second
+ * line of a row fits its pill, its count and its action (poly-x3pg.7). */
 .repairs-split {
-  display: grid; grid-template-columns: 372px minmax(0, 1fr);
+  display: grid; grid-template-columns: 420px minmax(0, 1fr);
   min-height: 100%; background: var(--bg);
 }
 .repairs-split.solo { grid-template-columns: minmax(0, 1fr); }
@@ -1966,16 +2009,9 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
 .repair-rail .heading-actions { display: none; }
 .repair-rail .page-body { padding: 0 12px 16px; }
 .repair-detail { min-width: 0; overflow-y: auto; }
-/* Inside the rail the row is a narrow column, so the wide grid the
-   worklist uses on a full page has to collapse the same way it does on a
-   phone. Same rules, different trigger. */
-.repair-rail .worklist .wl-row {
-  grid-template-columns: 3px 20px minmax(0, 1fr);
-  row-gap: 6px;
-}
-.repair-rail .worklist .wl-rollup,
-.repair-rail .worklist .wl-mid,
-.repair-rail .worklist .wl-actions { grid-column: 3; justify-self: start; }
+/* The row is two compact lines at every width now, so the rail no longer
+   has to collapse it into the phone layout -- that collapse is what made
+   one issue cost 132px in a 372px column (poly-x3pg.7). */
 .repair-rail .worklist .wl-focus-num { font-size: 30px; }
 .repair-rail .worklist .wl-chips { margin-left: 0; }
 /* The selected occurrence, marked in the queue that is still beside it.
@@ -2007,13 +2043,6 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
   /* The row is a five-track grid built for a wide screen. Narrow, the
      action button and the status pill run past the edge -- the page itself
      does not scroll, so the button is simply clipped off. */
-  .worklist .wl-row {
-    grid-template-columns: 3px 20px minmax(0, 1fr);
-    row-gap: 6px;
-  }
-  .worklist .wl-rollup,
-  .worklist .wl-mid,
-  .worklist .wl-actions { grid-column: 3; justify-self: start; }
   .worklist .wl-focus-num { font-size: 30px; }
   .worklist .wl-chips { margin-left: 0; }
 }

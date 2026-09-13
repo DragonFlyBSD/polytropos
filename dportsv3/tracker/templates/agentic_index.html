@@ -10,14 +10,15 @@
 
 {% block body %}
 
-  {# Per-band primary action: label + button style. Buttons link to the
-     (latest attempt's) bundle detail, where the action executes. #}
-  {% set band_action = {
-      'ready':  ('Accept',        'wl-btn-accept'),
-      'verify': ('Verify',        'wl-btn-verify'),
-      'decide': ('Retry latest…', 'wl-btn-decide'),
-      'owned':  ('Open',          'wl-btn-take'),
-  } %}
+  {# The row selects; it does not act. Every band used to name its own
+     action -- Accept, Verify, Retry latest… -- on a button that was a link
+     to ?occ=, so a green "Accept" moved a selection and accepted nothing.
+     One honest label instead, and the acting is done by the operator action
+     bar in the pane the row opens (poly-x3pg.7).
+
+     The band still colours the stripe, so what a row needs is legible
+     without a button repeating it in words. #}
+  {% set review_label = 'Review →' %}
 
 {# The split (M4): a queue on the left, the selected occurrence's
    workspace on the right, both on screen. Picking an issue used to mean
@@ -49,24 +50,59 @@
 
   <div class="page-body worklist">
 
-    {# Focus header: one number + action-named jump chips. #}
+    {# A filter, because the queue caps at 500 issues and the cap drops the
+       long tail -- which is exactly where the port someone came looking for
+       lives. Server-side and a plain GET, so it works with no JS and the
+       result is a URL you can keep (poly-x3pg.7).
+
+       It searches origin, issue_key and fingerprint: the first is what an
+       operator types, the other two are what they paste. #}
+    <form class="wl-search" method="get"
+          action="{{ request.url_for('agentic_index') }}" role="search">
+      <input type="search" name="q" value="{{ search or '' }}"
+             placeholder="Filter by port, issue or fingerprint"
+             aria-label="Filter the queue">
+      {# The selection and the band survive the filter; the artifact does
+         not, because its relpath belongs to one bundle. #}
+      {% if selected_band %}<input type="hidden" name="band" value="{{ selected_band }}">{% endif %}
+      {% if selected_occurrence %}<input type="hidden" name="occ" value="{{ selected_occurrence }}">{% endif %}
+      <button type="submit" class="wl-btn wl-btn-review">Filter</button>
+      {% if search %}
+      <a class="wl-search-clear" href="?{{ query_for(q=None) }}">clear</a>
+      {% endif %}
+    </form>
+
+    {# Focus header: one number + the bands, as filters. #}
     <div class="wl-focus">
       {% if focus_count %}
       <span class="wl-focus-num">{{ focus_count }}</span>
       <span class="wl-focus-cap">need<br>you</span>
       {% else %}
-      {# Two different nothings, and the queue said the first one on a
-         fresh install where nothing had ever been ingested (UI-7). #}
-      {% if issue_total %}
+      {# Three different nothings now. The queue said the first one on a
+         fresh install where nothing had ever been ingested (UI-7), and
+         would have said it again for a filter that matched nothing. #}
+      {% if search %}
+      <span class="wl-clear">No issue matches “{{ search }}”</span>
+      {% elif issue_total %}
       <span class="wl-clear">✓ Nothing needs you right now</span>
       {% else %}
       <span class="wl-clear">No issues yet — nothing has been fingerprinted
         on this tracker</span>
       {% endif %}
       {% endif %}
+      {# Chips narrow the list rather than jumping to it: at 500 issues an
+         anchor lands you at a band heading with every other band still
+         rendered below it, which is the scrolling problem again. #}
       <div class="wl-chips">
+        <a href="?{{ query_for(band=None) }}"
+           class="wl-chip{% if not selected_band %} active{% endif %}"
+           {% if not selected_band %}aria-current="true"{% endif %}>
+          <span>All</span> <span class="n">{{ focus_count }}</span>
+        </a>
         {% for band in bands %}
-        <a href="#wl-{{ band.key }}" class="wl-chip {{ band.cls }}{% if band.count %} active{% else %} zero{% endif %}">
+        <a href="?{{ query_for(band=band.key) }}"
+           class="wl-chip {{ band.cls }}{% if selected_band == band.key %} active{% endif %}{% if not band.count %} zero{% endif %}"
+           {% if selected_band == band.key %}aria-current="true"{% endif %}>
           <span>{{ band.label }}</span> <span class="n">{{ band.count }}</span>
         </a>
         {% endfor %}
@@ -81,7 +117,10 @@
         {% if status.manual_pending %}<a href="{{ request.url_for('agentic_manual_list') }}"><b>{{ status.manual_pending }}</b></a>{% else %}<b>0</b>{% endif %}
       </span>
       <span class="wl-ops-item">
-        {% if env_broken %}<a href="#env-health"><span class="wl-dot bad"></span>Env: <b>{{ env_broken|length }} broken</b></a>
+        {# The strip stays -- a broken env is why the queue is not moving.
+           The table it used to jump to now lives on Runner, which is the
+           page about the machinery (poly-x3pg.7). #}
+        {% if env_broken %}<a href="{{ request.url_for('agentic_runner') }}#env-health"><span class="wl-dot bad"></span>Env: <b>{{ env_broken|length }} broken</b></a>
         {% else %}<span class="wl-dot ok"></span>Env <b>{{ active_env or 'auto' }}</b>: ready{% endif %}
       </span>
       <span class="wl-ops-spacer"></span>
@@ -89,10 +128,13 @@
       <a href="{{ request.url_for('agentic_activity') }}">activity</a>
     </div>
 
-    {# Actionable bands, highest-urgency first. #}
+    {# Actionable bands, highest-urgency first -- or the one band a chip
+       asked for. Rendering all five and expecting an anchor to find one
+       was the scrolling problem wearing a hat (poly-x3pg.7). #}
     {% for band in bands %}
-    {% set action = band_action.get(band.key, ('Open', 'wl-btn-take')) %}
-    {% if band.count %}
+    {% if selected_band and selected_band != band.key %}
+    {# filtered out #}
+    {% elif band.count %}
     <section class="wl-band" id="wl-{{ band.key }}">
       <div class="wl-band-head">
         <h2>{{ band.label }}</h2>
@@ -119,36 +161,35 @@
             <span class="wl-stripe"></span>
             <button type="button" class="wl-chev" aria-label="Expand occurrences"
                     aria-expanded="{{ 'true' if _holds_selection else 'false' }}">›</button>
-            <div class="wl-ident">
-              <span class="wl-port">{{ g.origin }}</span>
-              <span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>
-              {% if g.regressed %}<span class="wl-recur" title="Fixed before — came back">regressed</span>
-              {% elif g.systemic %}<span class="wl-recur" title="Failing repeatedly — likely systemic">systemic</span>{% endif %}
-            </div>
-            <div class="wl-rollup">
+            {# Line one is the port and nothing else. It is what the row is,
+               and it was the field that lost width to everything sharing
+               the line with it. #}
+            <div class="wl-ident"><span class="wl-port" title="{{ g.origin }}">{{ g.origin }}</span></div>
+            <div class="wl-when" title="last failure {{ g.latest_ts }}">{{ g.latest_ts | relative_age }}</div>
+            <div class="wl-meta">
               {% for r in g.rollup %}
               <span class="wl-pill {{ r.cls }} sm">{{ r.label }}{% if r.n > 1 %} ×{{ r.n }}{% endif %}</span>
               {% endfor %}
-            </div>
-            <div class="wl-mid">
               {% if band.key == 'confirming' %}
               {% set cf = confirm_for(g.issue) %}
               <span class="pill {{ cf.pill }}" title="{{ cf.detail }}">{{ cf.label }}</span>
               {% endif %}
-              <span class="wl-age" title="last failure {{ g.latest_ts }}">last {{ g.latest_ts | relative_age }}</span>
+              <span class="wl-x" title="this fingerprint has been seen {{ g.times_seen }} times">seen ×{{ g.times_seen }}</span>
+              {% if g.regressed %}<span class="wl-recur" title="Fixed before — came back">regressed</span>
+              {% elif g.systemic %}<span class="wl-recur" title="Failing repeatedly — likely systemic">systemic</span>{% endif %}
             </div>
             <div class="wl-actions">
               {% if g.latest %}
-              <a class="wl-btn {{ action[1] }}" href="?occ={{ g.latest.bundle_id }}" onclick="event.stopPropagation()">{{ action[0] }}</a>
+              <a class="wl-btn wl-btn-review" href="?{{ query_for(occ=g.latest.bundle_id) }}" onclick="event.stopPropagation()">{{ review_label }}</a>
               {% else %}
-              <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}" onclick="event.stopPropagation()">Open issue</a>
+              <a class="wl-btn wl-btn-review" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}" onclick="event.stopPropagation()">Open issue</a>
               {% endif %}
             </div>
           </div>
           <div class="wl-children">
             {% for b in g.occurrences %}
             {% set s = fix_status(b) %}
-            <a class="wl-child{% if b.bundle_id == selected_occurrence %} current{% endif %}" href="?occ={{ b.bundle_id }}">
+            <a class="wl-child{% if b.bundle_id == selected_occurrence %} current{% endif %}" href="?{{ query_for(occ=b.bundle_id) }}">
               <span class="wl-cid">{{ b.bundle_id }}</span>
               <span class="wl-cmid">
                 <span class="wl-pill {{ s.cls }} sm">{{ s.label }}</span>
@@ -167,14 +208,15 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}">{{ g.origin }}</a>
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}" title="{{ g.origin }}">{{ g.origin }}</a>
+          </div>
+          <div class="wl-when">—</div>
+          <div class="wl-meta">
+            <span class="wl-pill total">no occurrences recorded</span>
             <span class="wl-subid">{{ g.issue_key }}</span>
           </div>
-          <div class="wl-mid">
-            <span class="wl-pill total">no occurrences recorded</span>
-          </div>
           <div class="wl-actions">
-            <a class="wl-btn {{ action[1] }}" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}">Open issue</a>
+            <a class="wl-btn wl-btn-review" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) }}">Open issue</a>
           </div>
         </div>
         {% else %}
@@ -185,21 +227,21 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="?occ={{ b.bundle_id }}">{{ g.origin }}</a>
-            {% if g.regressed %}<span class="wl-recur" title="Fixed before — came back">regressed</span>{% endif %}
-            <span class="wl-subid">{{ b.bundle_id }}</span>
+            <a class="wl-port" href="?{{ query_for(occ=b.bundle_id) }}" title="{{ g.origin }}">{{ g.origin }}</a>
           </div>
-          <div class="wl-mid">
+          <div class="wl-when" title="{{ b.ts_utc }}">{{ b.ts_utc | relative_age }}</div>
+          <div class="wl-meta">
             {% if band.key == 'confirming' %}
             {% set cf = confirm_for(g.issue) %}
             <span class="pill {{ cf.pill }}" title="{{ cf.detail }}">{{ cf.label }}</span>
             {% else %}
-            <span class="wl-pill {{ s.cls }}">{{ s.label }}</span>
+            <span class="wl-pill {{ s.cls }} sm">{{ s.label }}</span>
             {% endif %}
-            <span class="wl-age" title="{{ b.ts_utc }}">{{ b.ts_utc | relative_age }}</span>
+            {% if g.regressed %}<span class="wl-recur" title="Fixed before — came back">regressed</span>{% endif %}
+            <span class="wl-subid">{{ b.bundle_id }}</span>
           </div>
           <div class="wl-actions">
-            <a class="wl-btn {{ action[1] }}" href="?occ={{ b.bundle_id }}">{{ action[0] }}</a>
+            <a class="wl-btn wl-btn-review" href="?{{ query_for(occ=b.bundle_id) }}">{{ review_label }}</a>
           </div>
         </div>
         {% endif %}
@@ -222,14 +264,13 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
-            {% if g.times_seen > 1 %}<span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>{% endif %}
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}" title="{{ g.origin }}">{{ g.origin }}</a>
           </div>
-          <div class="wl-mid">
-            <span class="wl-pill {{ g.status.pill }}">{{ g.status.label }}</span>
-            <span class="wl-age" title="{{ g.last_seen_at }}">{{ g.last_seen_at | relative_age }}</span>
+          <div class="wl-when" title="{{ g.last_seen_at }}">{{ g.last_seen_at | relative_age }}</div>
+          <div class="wl-meta">
+            <span class="wl-pill {{ g.status.pill }} sm">{{ g.status.label }}</span>
+            {% if g.times_seen > 1 %}<span class="wl-x" title="this fingerprint has been seen {{ g.times_seen }} times">seen ×{{ g.times_seen }}</span>{% endif %}
           </div>
-          <div class="wl-actions"></div>
         </div>
         {% endfor %}
       </div>
@@ -246,71 +287,17 @@
           <span class="wl-stripe"></span>
           <span class="wl-chev leaf">›</span>
           <div class="wl-ident">
-            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}">{{ g.origin }}</a>
-            {% if g.times_seen > 1 %}<span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>{% endif %}
+            <a class="wl-port" href="{{ request.url_for('agentic_issue_detail', issue_key=g.issue_key) if not g.latest else request.url_for('agentic_bundle_detail', bundle_id=g.latest.bundle_id) }}" title="{{ g.origin }}">{{ g.origin }}</a>
+          </div>
+          <div class="wl-when" title="{{ g.last_seen_at }}">{{ g.last_seen_at | relative_age }}</div>
+          <div class="wl-meta">
             <span class="wl-recur" title="Muted — no surfacing, no auto-triage">muted</span>
+            {% if g.times_seen > 1 %}<span class="wl-x" title="this fingerprint has been seen {{ g.times_seen }} times">seen ×{{ g.times_seen }}</span>{% endif %}
           </div>
-          <div class="wl-mid">
-            <span class="wl-age" title="{{ g.last_seen_at }}">last {{ g.last_seen_at | relative_age }}</span>
-          </div>
-          <div class="wl-actions"></div>
         </div>
         {% endfor %}
       </div>
     </details>
-    {% endif %}
-
-    <h2 id="env-health" style="margin-top:30px;">Environment health</h2>
-    <div class="env-active-banner">
-      Active env (runner default + verify-fix fallback):
-      <strong>{{ active_env or 'none — runner will auto-pick if exactly one env exists' }}</strong>
-      {% if active_env %}
-        <button type="button" class="btn btn-ghost btn-sm env-set-btn" data-env="" title="Clear the active env">clear</button>
-      {% endif %}
-      <div style="color:var(--text-dim);font-size:12px;margin-top:4px;">
-        Name is not validated when set — a typo only surfaces when
-        the runner or verify-fix tries to use it.
-      </div>
-    </div>
-    {% if env_health %}
-    <div class="wl-tablecard">
-    <div class="table-scroll-x">
-    <table class="tracker-table">
-      <thead><tr><th scope="col">Active</th><th scope="col">Env</th><th scope="col">Status</th><th scope="col">Probed</th><th scope="col">Operator action</th><th scope="col">Checks</th></tr></thead>
-      <tbody>
-        {% for h in env_health %}
-        <tr {% if h.env == active_env %}class="env-row-active"{% endif %}>
-          <td>
-            {% if h.env == active_env %}
-              <span class="stat-pill built" title="This env is the runner default">active</span>
-            {% else %}
-              <button type="button" class="btn btn-ghost btn-sm env-set-btn" data-env="{{ h.env }}" title="Make {{ h.env }} the active env">set</button>
-            {% endif %}
-          </td>
-          <td>{{ h.env }}</td>
-          <td>
-            {% set cls = {'ready':'built','degraded':'skipped','broken':'failed'}.get(h.status,'total') %}
-            <span class="stat-pill {{ cls }}">{{ h.status }}</span>
-          </td>
-          <td>{{ h.probed_at or h.updated_at or '—' }}</td>
-          <td>{{ h.operator_action or '—' }}</td>
-          <td>
-            {% if h.checks %}
-              {% for c in h.checks %}
-                <span class="stat-pill {{ {'ok':'built','warn':'skipped','broken':'failed'}.get(c.status,'total') }}" title="{{ c.detail }}">{{ c.name }}: {{ c.status }}</span>
-              {% endfor %}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
-    </div>
-    {% else %}
-    <div class="empty-state">No environment health probes recorded yet.</div>
     {% endif %}
 
     <p style="margin-top:22px;color:var(--text-dim);font-size:12px;">
@@ -327,9 +314,15 @@
     {# How this page addresses an occurrence: append a bundle id. The
        cockpit's partials each build their own URLs from it, so selecting
        an artifact or a sibling occurrence stays in the split instead of
-       navigating to the standalone page (poly-icif, poly-v50g). #}
+       navigating to the standalone page (poly-icif, poly-v50g).
+
+       query_for(occ=None) is the filter without a selection, so switching
+       occurrence from inside the pane keeps the queue you filtered down to
+       rather than throwing you back to all 500 (poly-x3pg.7). #}
+    {% set _occ_query = query_for(occ=None) %}
     {% with cockpit_heading = 'h2',
-            cockpit_occ_base = request.url_for('agentic_index')|string ~ '?occ=',
+            cockpit_occ_base = request.url_for('agentic_index')|string ~ '?'
+                ~ ((_occ_query ~ '&') if _occ_query else '') ~ 'occ=',
             title = cockpit.title, bundle = cockpit.bundle,
             issue = cockpit.issue, bundle_jobs = cockpit.bundle_jobs,
             tool_trace = cockpit.tool_trace,
@@ -371,18 +364,5 @@
       // what makes the toggle work before it has loaded.
       if (window.dpWlRemember) { window.dpWlRemember(group); }
     }
-    document.querySelectorAll('.env-set-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var name = btn.dataset.env || null;
-        fetch('/api/config/active-env', {
-          method: 'PUT',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: name}),
-        }).then(function (r) {
-          if (r.ok) { window.location.reload(); }
-          else { alert('Failed to set active env: HTTP ' + r.status); }
-        }).catch(function (e) { alert('Failed to set active env: ' + e); });
-      });
-    });
   </script>
 {% endblock %}

@@ -289,11 +289,11 @@ def test_view_agentic_index(client: TestClient) -> None:
     assert "Ready to accept" in body
     assert "Needs verify" in body
     assert "Needs a decision" in body
-    # Runner in-flight glance + environment health preserved.
+    # Runner in-flight glance preserved. Environment health is no longer
+    # here: the table sat in a 420px column below the whole worklist, and
+    # moved to Runner, which is the page about the machinery (poly-x3pg.7).
     assert "in flight" in body
-    assert "Environment health" in body
-    assert "test-env" in body
-    assert "fix python runtime" in body
+    assert "Environment health" not in body
     # Pending-manual count in the ops strip links out to the queue
     # (fixture has one open row).
     assert "Manual queue" in body
@@ -1515,8 +1515,11 @@ def test_view_nav_offers_the_three_primary_views(client: TestClient) -> None:
 # --------------------------------------------------------------------
 
 
-def test_view_agentic_index_renders_active_env_banner_unset(client: TestClient) -> None:
-    resp = client.get("/agentic")
+def test_view_runner_renders_active_env_banner_unset(client: TestClient) -> None:
+    """On Runner rather than the Repairs queue: this page already explains
+    that the runner pauses itself on a broken env, and the queue is a list
+    of ports to work (poly-x3pg.7)."""
+    resp = client.get("/agentic/runner")
     assert resp.status_code == 200
     body = resp.text
     # Banner shows the "none" message when unset.
@@ -1524,14 +1527,24 @@ def test_view_agentic_index_renders_active_env_banner_unset(client: TestClient) 
     assert "none" in body
     # Per-row "set" button is present for the seeded env.
     assert 'data-env="test-env"' in body
+    assert "fix python runtime" in body
 
 
-def test_view_agentic_index_renders_active_env_when_set(client: TestClient) -> None:
+def test_view_runner_renders_active_env_when_set(client: TestClient) -> None:
     # PUT to set the active env, then re-render.
     client.put("/api/config/active-env", json={"name": "test-env"})
-    resp = client.get("/agentic")
+    resp = client.get("/agentic/runner")
     body = resp.text
     assert "<strong>test-env</strong>" in body
     # Active row gets the active pill (instead of a set button).
     assert "env-row-active" in body
     assert ">active</span>" in body
+
+
+def test_the_queue_still_says_when_an_env_is_broken(client: TestClient) -> None:
+    """The table moved; the one-line glance did not. A broken env is why
+    the queue is not moving, which is queue business."""
+    body = client.get("/agentic").text
+
+    assert "Env" in body
+    assert "/agentic/runner#env-health" in body or "Env <b>" in body
