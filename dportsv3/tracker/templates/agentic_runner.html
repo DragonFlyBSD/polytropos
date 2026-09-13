@@ -18,11 +18,36 @@
        "the runner", never "a runner" -- stable identity and a per-runner
        view are poly-fij.3 and poly-fij.6. #}
     <p class="lede">
-      The single agent queue runner, from its own heartbeat.
-      There is no operator pause: the runner pauses itself when its
-      dev-env is broken, when no env is resolved, or while dsynth holds
-      the build lock, and the stage below says which.
+      The single agent queue runner, from its own heartbeat. It also pauses
+      itself — when its dev-env is broken, when no env is resolved, or
+      while dsynth holds the build lock — and the stage below says which.
     </p>
+
+    {# The operator's own hold, separate from the three above and shown
+       apart from them, because "paused" on this page has meant four
+       different things since this landed and only one of them is yours
+       (poly-0w6j). #}
+    <div class="tracker-card runner-hold{% if control.paused %} held{% endif %}">
+      <div class="hold-state">
+        {% if control.paused %}
+        <strong>You have paused the runner</strong>
+        <span>
+          {% if control.reason %}{{ control.reason }}{% else %}No reason given.{% endif %}
+          Held since {{ control.requested_at or 'unknown' }}.
+        </span>
+        {% else %}
+        <strong>The runner is claiming work</strong>
+        <span>Pausing stops it taking anything new. A job already in
+          flight runs to its end — killing the process is what loses work,
+          and this is here so nobody has to.</span>
+        {% endif %}
+      </div>
+      <button type="button" id="runner-hold-btn"
+              class="btn {{ 'btn-success' if control.paused else 'btn-danger' }}"
+              data-paused="{{ 'true' if control.paused else 'false' }}">
+        {{ 'Resume' if control.paused else 'Pause' }}
+      </button>
+    </div>
 
     <div class="tracker-card">
       <div class="table-scroll-x">
@@ -128,6 +153,32 @@
   <script src="{{ request.url_for('static', path='live.js') }}?v={{ static_v }}" defer></script>
   <script src="{{ request.url_for('static', path='agentic-runner.js') }}?v={{ static_v }}" defer></script>
   <script>
+    // The operator hold. A reason is asked for but not required: an
+    // urgent pause should not be gated behind typing (poly-0w6j).
+    var hold = document.getElementById('runner-hold-btn');
+    if (hold) {
+      hold.addEventListener('click', function () {
+        var paused = hold.dataset.paused === 'true';
+        var body = {paused: !paused};
+        if (!paused) {
+          var why = prompt(
+            'Pause the runner? It will finish the job it has and claim ' +
+            'nothing new.\n\nReason (optional, shown on this page):', '');
+          if (why === null) { return; }
+          body.reason = why;
+        }
+        hold.disabled = true;
+        fetch('/api/runner/pause', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        }).then(function (r) {
+          if (r.ok) { window.location.reload(); }
+          else { hold.disabled = false; alert('Failed: HTTP ' + r.status); }
+        }).catch(function (e) { hold.disabled = false; alert('Failed: ' + e); });
+      });
+    }
+
     // Came with the table. PUT rather than a form post because the setting
     // is one value on a config endpoint, not a page of its own.
     document.querySelectorAll('.env-set-btn').forEach(function (btn) {

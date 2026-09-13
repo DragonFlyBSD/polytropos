@@ -324,6 +324,25 @@ CREATE TABLE IF NOT EXISTS job_events (
 -- Operator-triggered verify: the tracker INSERTs a row, the runner polls
 -- and enqueues the verify job (keeps the tracker off the runner's queue
 -- filesystem). status: 'pending' | 'enqueued' | 'failed'.
+-- Operator pause. The runner pauses ITSELF for three reasons -- broken
+-- dev-env, no env resolved, dsynth holding the build lock -- and writes all
+-- of them to runner_status.status, which it rewrites on essentially every
+-- tick. A tracker write there would be overwritten by the next loop, and
+-- the runner could not tell its own pause from the operator's: same string,
+-- same column (poly-0w6j).
+--
+-- So: a durable single row the runner's gate reads, alongside
+-- verify_requests and user_context_requests -- operator intent reaching the
+-- runner is a solved shape here. Durable because a pause that vanishes on
+-- runner restart is a trap.
+CREATE TABLE IF NOT EXISTS runner_control (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    paused          INTEGER NOT NULL DEFAULT 0,
+    reason          TEXT,
+    requested_by    TEXT,
+    requested_at    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS verify_requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     bundle_id       TEXT NOT NULL,

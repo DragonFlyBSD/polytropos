@@ -18,6 +18,8 @@ from dportsv3.tracker.agentic_queries import (
     env_health_statuses,
     get_active_env,
     get_bundle,
+    get_runner_control,
+    set_runner_pause,
     get_job,
     get_run,
     list_bundles,
@@ -125,6 +127,50 @@ def register(app, ctx):
     def api_get_active_env() -> dict[str, Any]:
         with _conn() as conn:
             return {"name": get_active_env(conn)}
+
+    @app.put("/api/runner/pause")
+    def api_runner_pause(payload: dict[str, Any]) -> dict[str, Any]:
+        """Stop the runner claiming new work, or let it start again.
+
+        Not runner_status.status: the runner rewrites that every tick, so a
+        write there would be overwritten and it could not tell its own
+        pause from this one. This is a durable row its gate reads, checked
+        before its three self-pauses so a health pause clearing does not
+        undo an operator hold (poly-0w6j).
+
+        It stops claiming, not the job already in flight. That job runs to
+        its end -- killing the process is what loses work, and this exists
+        so nobody has to.
+        """
+        forbid_anonymous("Pausing the runner")
+        paused = payload.get("paused")
+        if not isinstance(paused, bool):
+            raise HTTPException(
+                status_code=400, detail="body must include 'paused': true|false",
+            )
+        reason = payload.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise HTTPException(
+                status_code=400, detail="'reason' must be a string",
+            )
+        write_conn = sqlite3.connect(
+            str(app.state.db_path), check_same_thread=False,
+            isolation_level=None,
+        )
+        write_conn.row_factory = sqlite3.Row
+        try:
+            control = set_runner_pause(
+                write_conn, paused, reason=(reason or "").strip() or None,
+            )
+            from dportsv3.artifact_store import emit_event  # noqa: PLC0415
+            emit_event(
+                write_conn,
+                "runner_paused" if paused else "runner_resumed",
+                {"reason": control.get("reason")},
+            )
+        finally:
+            write_conn.close()
+        return {"ok": True, **control}
 
     @app.put("/api/config/active-env")
     def api_put_active_env(payload: dict[str, Any]) -> dict[str, Any]:

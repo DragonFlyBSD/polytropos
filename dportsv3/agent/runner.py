@@ -936,6 +936,35 @@ def enqueue_triage_job(
     return job_path
 
 
+def _operator_pause() -> dict[str, object]:
+    """The operator's pause, read fresh every gate.
+
+    A fourth tracker-written channel alongside verify_requests and
+    user_context_requests -- operator intent reaching the runner is a
+    solved shape here (poly-0w6j). Unreadable means not paused: a runner
+    that stops working because it could not read a table would be a worse
+    failure than one that keeps going.
+    """
+    if _state_db_conn is None:
+        return {"paused": False}
+    try:
+        with _state_db_lock:
+            row = _state_db_conn.execute(
+                "SELECT paused, reason, requested_by FROM runner_control "
+                "WHERE id = 1"
+            ).fetchone()
+    except sqlite3.Error:
+        return {"paused": False}
+    if row is None:
+        return {"paused": False}
+    keyed = hasattr(row, "keys")
+    return {
+        "paused": bool(row["paused"] if keyed else row[0]),
+        "reason": (row["reason"] if keyed else row[1]) or "",
+        "requested_by": (row["requested_by"] if keyed else row[2]) or "operator",
+    }
+
+
 def process_verify_requests(queue_root: Path) -> None:
     """Reconcile operator-triggered verify requests (Step 11c
     layer-violation cleanup).
@@ -5216,12 +5245,47 @@ def main(argv: list[str] | None = None) -> int:
     _last_busy_reason = ""
     _last_health_reason = ""
     _last_no_env_reason = ""
+    # None means "not paused as far as this loop has noticed", which is
+    # different from "" -- a pause with no reason given.
+    _last_operator_pause: str | None = None
     health_cache_seconds = int(
         settings.get("runner.health_cache_seconds")
     )
 
     def _gate_blocked() -> bool:
         nonlocal _last_busy_reason, _last_health_reason, _last_no_env_reason
+        nonlocal _last_operator_pause
+        # The operator's pause outranks all three self-pauses, and is
+        # checked before them: ordered the other way, a health pause
+        # clearing would log "resumed" and start claiming work again while
+        # the operator's hold was still in force (poly-0w6j).
+        #
+        # It stops the runner CLAIMING, not the job it already has. A job
+        # in flight runs to its end -- killing the process is what loses
+        # work, and this exists so nobody has to.
+        control = _operator_pause()
+        if control.get("paused"):
+            reason = (control.get("reason") or "").strip()
+            who = control.get("requested_by") or "operator"
+            if reason != _last_operator_pause:
+                log(queue_root, "INFO",
+                    f"runner paused by {who}"
+                    + (f": {reason}" if reason else ""))
+                activity_log(queue_root, "operator_paused",
+                             f"runner paused by {who}",
+                             extra={"reason": reason[:500]})
+                _last_operator_pause = reason
+            stage = f"operator_paused by {who}"
+            if reason:
+                stage += f": {reason[:100]}"
+            update_runner_status("paused", job_id=None, stage=stage)
+            return True
+        if _last_operator_pause is not None:
+            log(queue_root, "INFO", "runner resumed by operator")
+            activity_log(queue_root, "operator_resumed",
+                         "runner resumed by operator")
+            _last_operator_pause = None
+
         # Re-resolve per cycle (cached for 1 s) so operator selection
         # in the tracker UI takes effect without a runner restart.
         runner_env = resolve_env_for_gate() or ""

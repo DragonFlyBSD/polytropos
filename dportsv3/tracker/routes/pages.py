@@ -25,6 +25,7 @@ from dportsv3.tracker.agentic_queries import (
     distinct_targets,
     env_health_statuses,
     get_active_env,
+    get_runner_control,
     get_artifact_ref,
     get_bundle,
     open_delivery_bundle_ids,
@@ -1439,6 +1440,9 @@ def register(app, ctx):
                     # a broken env; that is the same subject (poly-x3pg.7).
                     "env_health": env_health_statuses(conn),
                     "active_env": get_active_env(conn),
+                    # The operator's own hold, which is not the same thing
+                    # as the three the runner puts on itself (poly-0w6j).
+                    "control": get_runner_control(conn),
                 },
             )
 

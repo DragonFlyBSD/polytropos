@@ -30,6 +30,8 @@ from dportsv3.tracker.agentic_queries.env import (
     get_active_env,
     set_active_env,
     env_health_statuses,
+    get_runner_control,
+    set_runner_pause,
 )
 from dportsv3.tracker.agentic_queries.runs import (
     list_runs,
@@ -120,6 +122,7 @@ __all__ = [
     "get_active_env",
     "set_active_env",
     "env_health_statuses",
+    "get_runner_control", "set_runner_pause",
     "list_chat_turns", "append_chat_turn", "clear_chat_turns",
     "list_runs",
     "get_run",

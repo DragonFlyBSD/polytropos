@@ -2276,3 +2276,15 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   .t-def{grid-template-columns:1fr;gap:2px}
   .worklist .wl-mid,.worklist .wl-actions{grid-column:3}
 }
+
+/* The operator's hold on the runner. Apart from the status table above it,
+ * because "paused" on that page has meant four different things and only
+ * one of them is the operator's (poly-0w6j). */
+.runner-hold {
+  display: flex; align-items: center; gap: 16px; margin-top: 12px;
+}
+.runner-hold .hold-state { display: grid; gap: 3px; min-width: 0; }
+.runner-hold .hold-state strong { font-size: 13px; }
+.runner-hold .hold-state span { color: var(--text-dim); font-size: 12px; }
+.runner-hold button { margin-left: auto; flex: none; }
+.runner-hold.held { border-color: var(--c-skipped, var(--amber)); }

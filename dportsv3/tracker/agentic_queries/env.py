@@ -76,3 +76,61 @@ def env_health_statuses(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         item["checks"] = checks
         items.append(item)
     return items
+
+
+# --- Operator pause -------------------------------------------------------
+#
+# Separate from runner_status on purpose. That column is the runner talking
+# about itself and it rewrites it every tick, so a tracker write there would
+# be overwritten and the runner could not tell its own pause from the
+# operator's (poly-0w6j).
+
+def get_runner_control(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Whether an operator has stopped the runner claiming new work.
+
+    Always returns a row; an untouched tracker has never been paused.
+    """
+    row = conn.execute(
+        "SELECT paused, reason, requested_by, requested_at "
+        "FROM runner_control WHERE id = 1"
+    ).fetchone()
+    if row is None:
+        return {"paused": False, "reason": None,
+                "requested_by": None, "requested_at": None}
+    control = _row_dict(row)
+    control["paused"] = bool(control.get("paused"))
+    return control
+
+
+def set_runner_pause(
+    conn: sqlite3.Connection,
+    paused: bool,
+    *,
+    reason: str | None = None,
+    requested_by: str = "operator",
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Pause or resume. Returns the control row as it now stands.
+
+    Resuming clears the reason rather than keeping it as history: the
+    activity log is where what happened lives, and a stale reason beside
+    `paused: no` reads as though it were still in force.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    stamp = now or datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO runner_control
+               (id, paused, reason, requested_by, requested_at)
+           VALUES (1, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+               paused = excluded.paused,
+               reason = excluded.reason,
+               requested_by = excluded.requested_by,
+               requested_at = excluded.requested_at""",
+        (1 if paused else 0,
+         (reason or None) if paused else None,
+         requested_by if paused else None,
+         stamp),
+    )
+    return get_runner_control(conn)

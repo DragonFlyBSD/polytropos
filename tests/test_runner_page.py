@@ -78,11 +78,19 @@ def dead(tmp_path: Path) -> TestClient:
 # --- no control the page does not have ------------------------------------
 
 
-def test_the_page_offers_no_runner_pause(live: TestClient) -> None:
+def test_the_runner_pause_is_the_operators_own(live: TestClient) -> None:
+    """poly-0e02.8 dropped a MOCKED Pause button because writing
+    runner_status.status would have been overwritten by the next tick and
+    the runner could not have told its own pause from the operator's. The
+    real one writes a durable row the gate reads, and it is labelled as
+    the operator's rather than as a fourth kind of "paused" (poly-0w6j)."""
     body = live.get("/agentic/runner").text
 
+    assert 'id="runner-hold-btn"' in body
     assert "[pause]" not in body
-    assert not re.search(r"<button[^>]*>\s*Pause\s*</button>", body, re.I)
+    # ...and it is not the page-refresh control, which sits below it.
+    assert 'id="live-toggle"' in body
+    assert body.index("runner-hold-btn") < body.index("live-toggle")
 
 
 def test_the_refresh_control_names_what_it_controls(live: TestClient) -> None:
@@ -104,13 +112,17 @@ def test_the_js_toggle_labels_do_not_read_as_runner_controls() -> None:
         assert "refresh" in label
 
 
-def test_the_page_says_who_can_pause_the_runner(live: TestClient) -> None:
-    """Rather than leaving the absence unexplained: the runner pauses
-    itself for three reasons and the stage cell names which."""
-    body = live.get("/agentic/runner").text
+def test_the_page_keeps_the_two_kinds_of_pause_apart(
+    live: TestClient,
+) -> None:
+    """The runner pauses ITSELF for three reasons and the stage cell names
+    which; the operator's hold is a fourth thing and has its own card, so
+    "paused" on this page does not mean four things in one place."""
+    body = _flat(live.get("/agentic/runner").text)
 
-    assert "no operator pause" in _flat(body).lower()
+    assert "pauses itself" in body
     assert "dsynth" in body
+    assert "The runner is claiming work" in body
 
 
 # --- one runner, not a fleet ----------------------------------------------
