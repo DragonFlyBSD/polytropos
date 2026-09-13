@@ -487,6 +487,33 @@ def resolve_artifact_path(
 
 
 
+def artifact_raw_text(
+    artifact_root: Path, relpath: str, ref: dict[str, Any] | None,
+) -> str | None:
+    """The artifact's own text, before any rendering.
+
+    ``artifact_view_data`` returns a display body, and for markdown, diffs,
+    JSON and logs that body is already HTML -- diffing two of those would
+    diff the markup. Comparing occurrences needs the bytes (poly-0e02.14).
+
+    Same gzip handling and same decompression bound as the viewer, because
+    that logic belongs in one place. None when the file is gone, which on
+    a pruned evidence tree is the ordinary case.
+    """
+    if ref is None:
+        return None
+    path = resolve_artifact_path(artifact_root, ref)
+    if path is None or not path.exists():
+        return None
+    gzipped = ref.get("kind") == "gzip" or relpath.endswith(".gz")
+    try:
+        return _read_gzip_text(path) if gzipped else path.read_text(
+            errors="replace",
+        )
+    except (OSError, gzip.BadGzipFile, EOFError):
+        return None
+
+
 def load_tool_trace(artifact_root: Path, ref: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Parse analysis/tool_trace.jsonl for compact bundle rendering."""
     if ref is None:

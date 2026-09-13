@@ -1,0 +1,132 @@
+{% extends "_base.html" %}
+{% block title %}{{ a.bundle_id }} vs {{ b.bundle_id }} — DeltaPorts Tracker{% endblock %}
+{% block nav %}
+  {% set crumbs = [{"label": "Repairs", "url": request.url_for('agentic_index')}] %}
+  {% if issue %}{% set crumbs = crumbs + [{"label": issue.origin, "url": request.url_for('agentic_issue_detail', issue_key=issue.issue_key)}] %}{% endif %}
+  {% set crumbs = crumbs + [{"label": "compare"}] %}
+  {% with nav_crumbs = crumbs %}{% include "_tracker_nav.html" %}{% endwith %}
+  {% include "_agentic_subnav.html" %}
+{% endblock %}
+
+{% block body %}
+  {# What changed between two attempts at the same issue. The selector next
+     door lists occurrences and says how far each got; it cannot say what
+     the agent did differently, which is most of why you are reading them
+     (poly-0e02.14). #}
+  <div class="page-heading">
+    <div>
+      <h1 class="occ-h1">{{ a.origin }}<span class="occ-when">two attempts</span></h1>
+      <p class="occ-facts">
+        <span class="occ-subid">{{ a.bundle_id }}</span> vs
+        <span class="occ-subid">{{ b.bundle_id }}</span>
+        {%- if issue %} · <a href="{{ request.url_for('agentic_issue_detail', issue_key=issue.issue_key) }}">the issue</a>{% endif %}
+      </p>
+    </div>
+    <div class="heading-actions">
+      <a class="control" href="{{ request.url_for('agentic_index') }}?occ={{ a.bundle_id | urlencode }}">Open {{ a.bundle_id }}</a>
+      <a class="control" href="{{ request.url_for('agentic_index') }}?occ={{ b.bundle_id | urlencode }}">Open {{ b.bundle_id }}</a>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    {# Re-pick either side. A plain GET, so the pair is a URL you can keep
+       and the page works with no JS. #}
+    {% if siblings | length > 1 %}
+    <form class="cmp-pick" method="get" action="{{ request.url_for('agentic_compare') }}">
+      <label for="cmp-a">Compare</label>
+      <select class="control" name="a" id="cmp-a">
+        {% for s in siblings %}
+        <option value="{{ s.bundle_id }}" {% if s.bundle_id == a.bundle_id %}selected{% endif %}>{{ s.bundle_id }} · {{ s.ts_utc | relative_age }}</option>
+        {% endfor %}
+      </select>
+      <label for="cmp-b">with</label>
+      <select class="control" name="b" id="cmp-b">
+        {% for s in siblings %}
+        <option value="{{ s.bundle_id }}" {% if s.bundle_id == b.bundle_id %}selected{% endif %}>{{ s.bundle_id }} · {{ s.ts_utc | relative_age }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="control button-primary">Compare</button>
+    </form>
+    {% endif %}
+
+    {# How far each got. occurrence_attempts already answers this per
+       occurrence; what was missing is the two of them beside each other. #}
+    <div class="cmp-grid">
+      {% for side, bundle in [('A', a), ('B', b)] %}
+      {% set st = stats.get(bundle.bundle_id) %}
+      <div class="tracker-card cmp-side">
+        <div class="cmp-side-head"><strong>{{ bundle.bundle_id }}</strong>
+          <span class="muted">{{ bundle.ts_utc | relative_age }}</span></div>
+        <dl class="cmp-facts">
+          <dt>Resolution</dt><dd>{{ bundle.resolution or '—' }}</dd>
+          <dt>Verification</dt><dd>{{ bundle.verification_status or '—' }}</dd>
+          <dt>Jobs</dt><dd>{% if st %}{{ st.jobs }}{% else %}0{% endif %}</dd>
+          <dt>Reached</dt><dd>{% if st and st.furthest_state %}{{ st.furthest_state }}{% else %}—{% endif %}</dd>
+          <dt>Ended</dt><dd>{% if st and st.outcome %}{{ st.outcome }}{% else %}—{% endif %}</dd>
+        </dl>
+      </div>
+      {% endfor %}
+    </div>
+
+    {# The cheap half. sha256 is the blob backend's own key, so two
+       attempts producing the same patch is a string comparison and costs
+       no read at all -- and an artifact only one side has is a finding in
+       itself: an attempt that never wrote a patch has no changes.diff. #}
+    <h2>What each attempt produced</h2>
+    <div class="wl-tablecard">
+    <div class="table-scroll-x">
+    <table class="tracker-table cmp-table">
+      <thead><tr>
+        <th scope="col">Artifact</th>
+        <th scope="col">{{ a.bundle_id }}</th>
+        <th scope="col">{{ b.bundle_id }}</th>
+        <th scope="col">Status</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr {% if r.relpath == selected %}class="cmp-open"{% endif %}>
+          <td>
+            {% if r.diffable %}
+            <a href="?a={{ a.bundle_id | urlencode }}&amp;b={{ b.bundle_id | urlencode }}&amp;file={{ r.relpath | urlencode }}">{{ r.relpath }}</a>
+            {% else %}{{ r.relpath }}{% endif %}
+          </td>
+          <td class="tabular">{% if r.a %}{{ '{:,}'.format(r.a.size or 0) }}{% else %}—{% endif %}</td>
+          <td class="tabular">{% if r.b %}{{ '{:,}'.format(r.b.size or 0) }}{% else %}—{% endif %}</td>
+          <td>
+            {% set pill = {'same': 'neutral', 'changed': 'amber',
+                           'only_a': 'cyan', 'only_b': 'cyan',
+                           'unknown': 'neutral'}.get(r.status, 'neutral') %}
+            {% set label = {'same': 'identical', 'changed': 'changed',
+                            'only_a': 'only ' ~ a.bundle_id,
+                            'only_b': 'only ' ~ b.bundle_id,
+                            'unknown': 'not hashed'}.get(r.status, r.status) %}
+            <span class="pill {{ pill }}"
+                  {% if r.status == 'unknown' %}title="This backend does not record a hash, so telling would mean reading both copies"{% endif %}>{{ label }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    </div>
+
+    {% if selected %}
+    <h2>{{ selected }}</h2>
+    {% if diff_html %}
+    {{ diff_html | safe }}
+    {% elif diff_error %}
+    <div class="empty"><strong>Nothing to show</strong>{{ diff_error }}</div>
+    {% endif %}
+    {% else %}
+    {# Not a hole. Two attempts that produced byte-identical evidence is a
+       real answer, and usually the answer: the agent tried the same thing
+       again. #}
+    <div class="empty">
+      <strong>Nothing differs</strong>
+      Every artifact both attempts produced has the same hash, so there is
+      no diff to show. The agent did the same thing twice.
+    </div>
+    {% endif %}
+  </div>
+{% endblock %}

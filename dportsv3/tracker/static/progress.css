@@ -1634,6 +1634,22 @@ a.wl-port:hover { color: var(--amber-dim); }
 .occ-row:last-child { border-bottom: 0; }
 .occ-row:hover { background: var(--surface-2); }
 .occ-row.current { background: var(--surface-3); box-shadow: inset 3px 0 var(--cyan); }
+
+/* --- Two occurrences, side by side (poly-0e02.14) ------------------------ */
+.occ-compare { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12.5px; }
+.cmp-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.cmp-pick label { color: var(--text-dim); font-size: 13px; }
+.cmp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.cmp-side-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
+.cmp-side-head strong { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; }
+/* Two columns of label/value, so the two cards read across as well as down. */
+.cmp-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+.cmp-facts dt { color: var(--text-dim); }
+.cmp-facts dd { margin: 0; }
+.cmp-table .tabular { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+/* The row the diff below belongs to. */
+.cmp-table tr.cmp-open > td { background: var(--surface-2); }
+.cmp-table tr.cmp-open > td:first-child { box-shadow: inset 3px 0 var(--cyan); }
 .occ-row-id { font: 12px var(--mono); color: var(--cyan); }
 .occ-row-mid { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .occ-row-when { color: var(--muted); font: 12px var(--mono); white-space: nowrap; }

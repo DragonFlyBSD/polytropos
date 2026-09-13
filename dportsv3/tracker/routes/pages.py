@@ -869,6 +869,102 @@ def register(app, ctx):
                 _cockpit_context(request, conn, bundle_id, artifact),
             )
 
+    @app.get("/agentic/compare", response_class=HTMLResponse)
+    def agentic_compare(
+        request: RequestType,
+        a: str,
+        b: str,
+        file: str | None = None,
+    ) -> Any:
+        """Two occurrences of one issue, side by side (poly-0e02.14).
+
+        The cockpit shows three attempts and says nothing about what is
+        different between them. Hashes answer most of it for free -- the
+        blob backend keys on sha256, so "the agent produced the same patch
+        again" costs no read -- and only the rows that differ are opened.
+        """
+        with _conn() as conn:
+            left = get_bundle(conn, a)
+            right = get_bundle(conn, b)
+            if left is None or right is None:
+                missing = a if left is None else b
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown bundle: {missing}",
+                )
+            rows = render.compare_artifacts(
+                left.get("artifacts") or [], right.get("artifacts") or [],
+            )
+            selected = file or render.default_relpath(rows)
+            # A relpath neither side has, or one there is nothing to show
+            # for, falls back rather than erroring: this page is a
+            # comparison, and the table above is still the answer.
+            openable = {r["relpath"] for r in rows if r["diffable"]}
+            if selected not in openable:
+                selected = render.default_relpath(rows)
+
+            diff_html = None
+            diff_error = None
+            if selected:
+                texts = [
+                    render.artifact_raw_text(
+                        app.state.artifact_root, selected,
+                        get_artifact_ref(conn, bundle_id, selected),
+                    )
+                    for bundle_id in (a, b)
+                ]
+                if any(t is None for t in texts):
+                    diff_error = (
+                        "One side's copy is not on disk any more, so there "
+                        "is nothing to compare. The hashes above still say "
+                        "whether it changed."
+                    )
+                else:
+                    # The bytes, not the rendered body: a diff of two
+                    # pre-rendered HTML fragments is a diff of markup.
+                    body = render.unified(
+                        texts[0], texts[1],
+                        f"{a} {selected}", f"{b} {selected}",
+                    )
+                    diff_html = (
+                        render.render_diff(body) if body.strip() else None
+                    )
+                    if diff_html is None:
+                        diff_error = (
+                            "The two copies differ in bytes but not in any "
+                            "line -- whitespace, or a trailing newline."
+                        )
+
+            ids = [a, b]
+            return templates.TemplateResponse(
+                request,
+                "agentic_compare.html",
+                {
+                    "title": f"{a} vs {b}",
+                    "a": left,
+                    "b": right,
+                    "rows": rows,
+                    "selected": selected,
+                    "diff_html": diff_html,
+                    "diff_error": diff_error,
+                    "issue": issue_for_bundle(conn, a),
+                    "stats": occurrence_attempts(conn, ids),
+                    "siblings": _compare_siblings(conn, left),
+                },
+            )
+
+    def _compare_siblings(conn, bundle):
+        """Every occurrence of this port, so either side can be re-picked.
+
+        The same list the occurrence selector is built from; this page is
+        reached with a pair already chosen and needs to let you change it.
+        """
+        if bundle is None or not bundle.get("origin"):
+            return []
+        return list_port_bundles(
+            conn, origin=bundle.get("origin"), target=bundle.get("target"),
+            limit=10,
+        )
+
     def _cockpit_context(request, conn, bundle_id, artifact=None):
         """Everything the occurrence workspace renders.
 

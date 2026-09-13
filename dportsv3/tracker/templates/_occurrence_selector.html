@@ -26,6 +26,15 @@
     Occurrences of this issue
     <span class="count">{{ occurrences | length }}{% if prior_attempts | length >= 10 %}+{% endif %}</span>
   </summary>
+  {# This list says how far each attempt got and never what the agent did
+     differently, which is most of why you are reading two of them. The
+     pair defaults to this occurrence and the one before it; the compare
+     page re-picks either side (poly-0e02.14). #}
+  {% if prior_attempts %}
+  <p class="occ-compare">
+    <a href="{{ request.url_for('agentic_compare') }}?a={{ prior_attempts[0].bundle_id | urlencode }}&amp;b={{ bundle.bundle_id | urlencode }}">Compare with the previous attempt →</a>
+  </p>
+  {% endif %}
   <div class="occ-list">
     {% for o in occurrences %}
     {% set st = occurrence_stats.get(o.bundle_id) %}
