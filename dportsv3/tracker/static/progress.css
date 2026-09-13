@@ -2013,18 +2013,26 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
  * line of a row fits its pill, its count and its action (poly-x3pg.7). */
 .repairs-split {
   display: grid; grid-template-columns: 420px minmax(0, 1fr);
-  min-height: 100%; background: var(--bg);
+  /* height, not min-height. <main> is already bounded to the viewport by
+     the frame's middle grid row, so this makes the split exactly that
+     tall -- which is what gives each column something to overflow inside.
+     With min-height the split grew to its content, both columns grew with
+     it, their overflow-y never engaged, and the page was the only
+     scroller the split ever had (poly-x3pg.9). */
+  height: 100%; min-height: 0; background: var(--bg);
 }
 .repairs-split.solo { grid-template-columns: minmax(0, 1fr); }
+/* min-height: 0 on the columns too: a grid item's default min-height is
+   auto, which floors it at its content and re-breaks the same thing. */
 .repair-rail {
-  min-width: 0; overflow-y: auto;
+  min-width: 0; min-height: 0; overflow-y: auto;
   background: var(--surface); border-right: 1px solid var(--line-hot);
 }
 .repair-rail .page-heading { padding: 14px 16px; }
 .repair-rail .page-heading h1 { font-size: 21px; }
 .repair-rail .heading-actions { display: none; }
 .repair-rail .page-body { padding: 0 12px 16px; }
-.repair-detail { min-width: 0; overflow-y: auto; }
+.repair-detail { min-width: 0; min-height: 0; overflow-y: auto; }
 /* The row is two compact lines at every width now, so the rail no longer
    has to collapse it into the phone layout -- that collapse is what made
    one issue cost 132px in a 372px column (poly-x3pg.7). */
@@ -2043,8 +2051,10 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
 
 @media (max-width: 1100px) {
   /* Below this the rail and the detail stop fitting side by side. One
-     column, queue first: it is the thing you navigate from. */
-  .repairs-split { grid-template-columns: minmax(0, 1fr); }
+     column, queue first: it is the thing you navigate from -- and the
+     page goes back to being the scroller, with the rail capped below so
+     the workspace is not pushed off the bottom. */
+  .repairs-split { grid-template-columns: minmax(0, 1fr); height: auto; }
   .repair-rail {
     border-right: 0; border-bottom: 1px solid var(--line-hot);
     max-height: 60vh;

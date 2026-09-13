@@ -449,10 +449,40 @@ def test_the_split_becomes_one_column_before_it_stops_fitting() -> None:
 
 def test_each_half_scrolls_on_its_own() -> None:
     """The frame gives one scrolling region; a split inside it has to
-    subdivide that or the queue scrolls away from the work."""
+    subdivide that or the queue scrolls away from the work.
+
+    The height constraint is the assertion, not the overflow property.
+    This test used to check only that `overflow-y: auto` appeared twice --
+    which it did, on a grid set to `min-height: 100%`. min-height bounds
+    nothing: the split grew to its content, both columns grew with it,
+    neither ever overflowed, and the page stayed the only scroller the
+    split had. overflow-y with no height to overflow is a no-op, and for
+    the whole life of M4 that is what these two rules were (poly-x3pg.9).
+    """
     css = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
            / "static" / "progress.css").read_text()
     block = css[css.index("/* --- The Repairs split (M4)"):]
     block = block[:block.index("/* --- Repairs, narrow")]
+    split = block[block.index(".repairs-split {"):block.index("}", block.index(".repairs-split {"))]
 
-    assert block.count("overflow-y: auto") >= 2
+    # Bounded to <main>, which the frame already bounds to the viewport.
+    assert "height: 100%" in split
+    assert "min-height: 100%" not in split
+    # A grid item's default min-height is auto, which floors it at its
+    # content and re-breaks the same thing one level down.
+    for pane in (".repair-rail {", ".repair-detail {"):
+        rule = block[block.index(pane):block.index("}", block.index(pane))]
+        assert "min-height: 0" in rule, pane
+        assert "overflow-y: auto" in rule, pane
+
+
+def test_the_narrow_layout_gives_the_page_back_its_scroll() -> None:
+    """One column, and the rail capped rather than bounded to the
+    viewport -- otherwise the workspace below it has nowhere to go."""
+    css = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+           / "static" / "progress.css").read_text()
+    narrow = css[css.index("@media (max-width: 1100px)"):]
+    narrow = narrow[:narrow.index("/* --- Repairs, narrow")]
+
+    assert "height: auto" in narrow
+    assert "max-height: 60vh" in narrow
