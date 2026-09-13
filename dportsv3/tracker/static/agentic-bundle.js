@@ -7,6 +7,22 @@
 (function () {
   const statusEl = document.getElementById('op-status');
   if (!statusEl) { return; }
+  // Everything below writes this status line, and #toast is the
+  // announcement of the same string. Mirrored rather than threaded through
+  // the thirty call sites, so a message added later is announced without
+  // anyone having to remember to -- and so the visible line stays the thing
+  // an operator is already looking at (poly-vgv0).
+  //
+  // The slow actions are the ones that need it: verify enqueues a job that
+  // takes minutes while the page polls, and a create_failed delivery
+  // deliberately does not reload, so that error lives nowhere else.
+  if (window.dpToast && window.MutationObserver) {
+    new MutationObserver(function () {
+      window.dpToast(statusEl.textContent);
+    }).observe(statusEl, {
+      childList: true, characterData: true, subtree: true,
+    });
+  }
   const initialVerificationStatus = (window.DP_BUNDLE || {}).verificationStatus;
   const allButtons = () => document.querySelectorAll('button[id^="op-"]');
 

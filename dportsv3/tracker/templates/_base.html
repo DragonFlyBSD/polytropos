@@ -79,6 +79,30 @@
    the only report of an outcome, because a toast does not survive a
    reload and the thing it is about must. #}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+{# The writer lives with the element, and ahead of the page's own scripts
+   block: those are deferred, so this inline one has already defined
+   window.dpToast by the time any of them runs (poly-vgv0). #}
+<script>
+  (function () {
+    var el = document.getElementById("toast");
+    var timer = null;
+    // role="status" announces a text change whether or not the box is
+    // visible, so this both shows and says the same string. It was an
+    // empty live region on every page -- a landmark promising an
+    // announcement that nothing ever made (poly-vgv0).
+    window.dpToast = function (text) {
+      if (!el) return;
+      var msg = text == null ? "" : String(text).trim();
+      if (!msg || msg === el.textContent) return;
+      el.textContent = msg;
+      el.classList.add("visible");
+      if (timer) clearTimeout(timer);
+      // Long enough to read; the thing it is about is on the page anyway,
+      // because a toast does not survive a reload.
+      timer = setTimeout(function () { el.classList.remove("visible"); }, 6000);
+    };
+  })();
+</script>
 {% block scripts %}{% endblock %}
 <script>
   (function () {

@@ -341,3 +341,36 @@ def test_a_diff_line_says_added_or_removed_in_text(seeded) -> None:
     add = out[out.index("diff-add"):]
     assert "+new" in add
     assert "-old" in out[out.index("diff-del"):]
+
+
+# --- the live region actually announces ----------------------------------
+
+
+def test_the_live_region_has_a_writer() -> None:
+    """_base.html renders role="status" aria-live="polite" on every page and
+    nothing in static/ ever wrote to it, so a screen-reader user got no
+    announcement for any operator action while a sighted one got the inline
+    status line. An empty live region is a promise the page does not keep
+    (poly-vgv0)."""
+    base = (TEMPLATES / "_base.html").read_text()
+
+    assert 'id="toast" role="status" aria-live="polite"' in base
+    assert "window.dpToast" in base
+    # Pages load their own scripts deferred, so the writer has to be defined
+    # by an inline script -- and this one is, ahead of that block.
+    assert base.index("window.dpToast") < base.index("{% block scripts %}")
+
+
+def test_the_operator_status_line_is_announced() -> None:
+    """The actions that most need announcing are the slow ones: verify
+    enqueues a job that takes minutes while the page polls, and a
+    create_failed delivery deliberately does not reload, so that error
+    message lives nowhere else in the UI (poly-vgv0)."""
+    js = (ROOT / "static" / "agentic-bundle.js").read_text()
+
+    assert "window.dpToast" in js
+    # Announced by mirroring the visible line rather than by threading a
+    # helper through thirty call sites -- so a message added later is
+    # announced without anyone remembering to.
+    assert "MutationObserver" in js
+    assert "op-status" in js
