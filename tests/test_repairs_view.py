@@ -296,8 +296,12 @@ def test_an_issue_with_no_confirm_build_in_play_shows_no_pill(client) -> None:
     """An unresolved issue has no accepted fix, so there is nothing to
     confirm and a badge would be noise."""
     body = client.get("/agentic/issues?state=unresolved").text
+    # <main>, not the whole document: the operator guide is shell chrome
+    # outside it, and its chapters name every status and control the
+    # tracker has (poly-9u7).
+    page = body[body.index("<main "):body.index("</main>")]
 
-    assert "confirm build" not in body
+    assert "confirm build" not in page
 
 
 # --- the shell -----------------------------------------------------------

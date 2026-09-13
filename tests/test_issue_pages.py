@@ -85,7 +85,11 @@ def test_issue_detail_shows_occurrences_and_controls(client):
     assert "c1" in body and "c2" in body
     # an open issue can be muted or resolved (not unmuted/reopened)
     assert ">Mute<" in body and ">Resolve<" in body
-    assert ">Unmute<" not in body and ">Reopen<" not in body
+    # <main>, not the whole document: the operator guide is shell chrome
+    # outside it, and its chapters name every status and control the
+    # tracker has (poly-9u7).
+    page = body[body.index("<main "):body.index("</main>")]
+    assert ">Unmute<" not in page and ">Reopen<" not in page
 
 
 def test_issue_detail_unknown_404(client):

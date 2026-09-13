@@ -99,6 +99,12 @@ def _get(client: TestClient, path: str) -> str:
     return resp.text
 
 
+def _main(body: str) -> str:
+    """The page's own content. The shell around it -- nav, footer, the
+    operator guide -- is not what these assertions are about."""
+    return body[body.index("<main "):body.index("</main>")]
+
+
 def _flat(body: str) -> str:
     return re.sub(r"\s+", " ", body)
 
@@ -332,7 +338,9 @@ def test_the_group_holding_the_selection_is_open(client) -> None:
 def test_a_group_that_holds_nothing_stays_closed(client) -> None:
     """Open is a statement about the selection, not a default -- a queue
     with every group expanded is the scrolling problem again."""
-    body = _flat(_get(client, "/agentic?occ=b-i-owned"))
+    # <main>, not the whole document: the operator guide is shell chrome
+    # outside it, and chapter 1 illustrates an open group (poly-9u7).
+    body = _flat(_main(_get(client, "/agentic?occ=b-i-owned")))
 
     assert 'class="wl-group"' in body
     assert 'class="wl-group open"' not in body

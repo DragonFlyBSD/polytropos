@@ -159,6 +159,10 @@ def create_app(db_path: str | Path) -> Any:
     # render one status pill instead of reconciling resolution +
     # verification_status + job.state by eye.
     templates.env.globals["fix_status"] = fix_state.fix_status
+    # Chapter 6 of the operator guide is generated from the same
+    # projection the pages use, so it cannot drift from the rules it
+    # documents (poly-9u7).
+    templates.env.globals["status_matrix"] = fix_state.status_matrix()
     # The issue-level projections: lifecycle badge + which issue-level
     # controls to show (mute/unmute/resolve/reopen).
     templates.env.globals["issue_status"] = issue_state.issue_status

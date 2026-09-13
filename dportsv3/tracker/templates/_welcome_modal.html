@@ -1,0 +1,335 @@
+{# The operator guide: six chapters and a glossary, over a blurred page.
+   The surface teaches nothing about its own model -- an issue, an
+   occurrence and a job are three different things with three different
+   state machines, `regressed` is derived on read and never stored, and
+   the worklist hides in-progress work on purpose. All of that was written
+   down only in the docstrings of issue_state.py, fix_state.py and
+   fingerprint.py (poly-9u7).
+
+   Included from _base.html, so any tracker page can open it. The trigger
+   is the ? in the Repairs subnav, plus one auto-open on a first visit
+   keyed on localStorage['dportsv3.tour.v1'] -- bump that key when the
+   model changes and every operator gets the new guide once.
+
+   Chapter 6 is generated; everything else is prose. The design demo
+   specified two webfonts to separate the handbook from the console; they
+   are dropped here in favour of their own fallbacks, because a tracker
+   that runs on a build host should not need a font CDN to explain
+   itself. #}
+<div class="t-scrim" id="tour" hidden>
+  <div class="t-dialog" role="dialog" aria-modal="true" aria-labelledby="t-title" id="t-dialog">
+    <button type="button" class="t-close" id="t-close" aria-label="Close the guide">&#10005;</button>
+
+    <nav class="t-rail" aria-label="Chapters">
+      <div class="t-brand"><b>First Turns</b><span>v1</span></div>
+      <p class="t-brand-sub">How the tracker turns a failed build into a fix you can ship.</p>
+      <ul class="t-rail-list" id="t-rail"></ul>
+    </nav>
+
+    <div class="t-pane" id="t-pane">
+
+      <section class="t-panel" data-title="Where failures land" hidden>
+        <p class="t-eyebrow">Chapter 1 · Orientation</p>
+        <h2 id="t-title">Where failures land</h2>
+        <p class="t-lead">Nobody files a ticket here. Every port that fails a dsynth build uploads its own evidence, and the tracker keeps three things apart. Most early confusion is these three run together.</p>
+        <dl class="t-defs">
+          <div class="t-def"><dt>Issue</dt><dd>One fingerprinted problem — the thing you resolve. <em>devel/py-cffi · @2026Q3 · fp 9f21e0c4bb31d70a</em></dd></div>
+          <div class="t-def"><dt>Occurrence</dt><dd>One build failure of that problem, with its logs, its port files, and whatever the agent did about it. The API and the queue call it a <em>bundle</em>.</dd></div>
+          <div class="t-def"><dt>Job</dt><dd>One piece of runner work against an occurrence: triage, patch, verify, confirm build. Jobs come and go; the occurrence keeps their result.</dd></div>
+        </dl>
+        <p>Coming from Sentry, the first two words mean what you expect. The difference is what happens between them: an agent reads the failure and tries to fix it before you ever look, so an issue usually arrives with an answer attached — and your job is to judge it.</p>
+        <figure class="worklist">
+          <div class="wl-list">
+            <div class="wl-group open">
+              <div class="wl-row ready">
+                <span class="wl-stripe"></span><span class="wl-chev">›</span>
+                <div class="wl-ident"><span class="wl-port">devel/py-cffi</span></div>
+                <div class="wl-when">41m ago</div>
+                <div class="wl-meta">
+                  <span class="wl-pill built sm">verified</span>
+                  <span class="wl-pill failed sm">agent gave up ×2</span>
+                  <span class="wl-x">seen ×4</span>
+                  <span class="wl-recur">systemic</span>
+                </div>
+                <div class="wl-actions"><span class="wl-btn wl-btn-review">Review →</span></div>
+              </div>
+              <div class="wl-children">
+                <span class="wl-child"><span class="wl-cid">bnd-8d41c07a</span><span class="wl-cmid"><span class="wl-pill built sm">verified</span><span class="wl-age">41m ago</span></span><span class="wl-copen">open →</span></span>
+                <span class="wl-child"><span class="wl-cid">bnd-51b0e9f3</span><span class="wl-cmid"><span class="wl-pill failed sm">agent gave up</span><span class="wl-age">yesterday</span></span><span class="wl-copen">open →</span></span>
+                <span class="wl-child"><span class="wl-cid">bnd-2a77d410</span><span class="wl-cmid"><span class="wl-pill skipped sm">discarded</span><span class="wl-age">4d ago</span></span><span class="wl-copen">open →</span></span>
+              </div>
+            </div>
+          </div>
+          <figcaption>One issue, four occurrences, four separate attempts at it. The row you see is the issue; expanding it lists the occurrences, and Review opens the newest — the only one still worth acting on.</figcaption>
+        </figure>
+      </section>
+
+      <!-- ── 2 ── -->
+      <section class="t-panel" data-title="How a failure becomes an issue" hidden>
+        <p class="t-eyebrow">Chapter 2 · Grouping</p>
+        <h2>How a failure becomes an issue</h2>
+        <p class="t-lead">Grouping is not by port. The same port fails for unrelated reasons, so failures are grouped by the first line of <code>logs/errors.txt</code>, canonicalised until only the reason is left.</p>
+        <figure class="t-fp">
+          <p class="t-fp-lbl">the failing line, as dsynth wrote it</p>
+          <div class="t-fp-row"><mark>/work/usr/ports/devel/py-cffi/work/cffi-1.17.1/c/</mark>_cffi_backend.c<mark>:412:9</mark>: error: implicit declaration of function 'ffi_prep_closure' at <mark>0x7f3a91c02440</mark> [-Wimplicit-function-declaration]</div>
+          <div class="t-rules"><span>path → basename</span><span>:line:col dropped</span><span>0x… → 0xADDR</span><span>2026-… → TIMESTAMP</span><span>123+ → N</span><span>spaces collapsed</span></div>
+          <p class="t-fp-arrow">↓</p>
+          <p class="t-fp-lbl">what actually gets hashed</p>
+          <div class="t-fp-row out">_cffi_backend.c: error: implicit declaration of function 'ffi_prep_closure' at <ins>0xADDR</ins> [-Wimplicit-function-declaration]</div>
+          <p class="t-fp-arrow">↓</p>
+          <p class="t-fp-lbl">fingerprint, then issue key</p>
+          <div class="t-fp-row out">
+            <div>sha256(line)[:16] &nbsp;=&nbsp; <span class="t-digest">9f21e0c4bb31d70a</span></div>
+            <div style="margin-top:5px">sha256(target ␀ origin ␀ fingerprint)[:16] &nbsp;=&nbsp; <span class="t-digest">5c0aa9e21f4d8b03</span></div>
+          </div>
+          <figcaption>Two builds hitting the same wall land on the same key even though their paths, line numbers and addresses all differ. The key is recomputed at ingest, never stored from a guess.</figcaption>
+        </figure>
+        <div class="t-note"><span class="lbl">note</span><span>The origin is part of the key, so the same compiler error in two ports is two issues — each port needs its own fix. A failure with no usable error line still gets an issue: all of them for one target and port collapse into a single catch-all instead of one per build.</span></div>
+      </section>
+
+      <!-- ── 3 ── -->
+      <section class="t-panel" data-title="Who does what" hidden>
+        <p class="t-eyebrow">Chapter 3 · The loop</p>
+        <h2>Who does what</h2>
+        <p class="t-lead">The runner goes as far as it can without you. Your side starts when a fix exists and someone has to judge it, and ends two clicks later.</p>
+        <figure>
+          <svg class="t-svg" viewBox="0 0 700 520" role="img" aria-label="A two-column flow: the runner builds, uploads, fingerprints, triages and patches on the left; you verify and accept on the right; the runner then runs a confirm build and resolves the issue.">
+            <defs>
+              <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+              </marker>
+              <marker id="ar-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,1 L9,5 L0,9 z" fill="#c03030"></path>
+              </marker>
+            </defs>
+            <text x="24" y="18" font-family="Menlo,monospace" font-size="10" letter-spacing="1.4" fill="#a8a091">RUNNER · NO INPUT NEEDED</text>
+            <text x="386" y="18" font-family="Menlo,monospace" font-size="10" letter-spacing="1.4" fill="#c47000">YOU · ONE CLICK EACH</text>
+
+            <rect x="24" y="34" width="270" height="50" rx="8" fill="#ffffff" stroke="#d8d2c4"></rect>
+            <text x="40" y="55" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">dsynth builds the port</text>
+            <text x="40" y="71" font-family="Menlo,monospace" font-size="11" fill="#888070">…and it fails</text>
+
+            <rect x="24" y="104" width="270" height="50" rx="8" fill="#ffffff" stroke="#d8d2c4"></rect>
+            <text x="40" y="125" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">the failure hook uploads</text>
+            <text x="40" y="141" font-family="Menlo,monospace" font-size="11" fill="#888070">logs, port files, metadata</text>
+
+            <rect x="24" y="174" width="270" height="50" rx="8" fill="#ffffff" stroke="#d8d2c4"></rect>
+            <text x="40" y="195" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">fingerprint → issue</text>
+            <text x="40" y="211" font-family="Menlo,monospace" font-size="11" fill="#888070">new issue, or a 5th sighting</text>
+
+            <rect x="24" y="244" width="270" height="50" rx="8" fill="#ffffff" stroke="#d8d2c4"></rect>
+            <text x="40" y="265" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">triage → patch → rebuild</text>
+            <text x="40" y="281" font-family="Menlo,monospace" font-size="11" fill="#888070">two models, in a chroot</text>
+
+            <rect x="386" y="314" width="290" height="50" rx="8" fill="#fffaf2" stroke="#c47000"></rect>
+            <text x="402" y="335" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">you: Verify</text>
+            <text x="402" y="351" font-family="Menlo,monospace" font-size="11" fill="#888070">rebuild the port with the fix applied</text>
+
+            <rect x="386" y="384" width="290" height="50" rx="8" fill="#fffaf2" stroke="#c47000"></rect>
+            <text x="402" y="405" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">you: Accept</text>
+            <text x="402" y="421" font-family="Menlo,monospace" font-size="11" fill="#888070">opens the pull request</text>
+
+            <rect x="24" y="454" width="270" height="50" rx="8" fill="#ecf7ec" stroke="#2a7a2a"></rect>
+            <text x="40" y="475" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">confirm build → resolved</text>
+            <text x="40" y="491" font-family="Menlo,monospace" font-size="11" fill="#5c7a5c">two greens in a row, unattended</text>
+
+            <g stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#ar)">
+              <path d="M159,84 V104"></path>
+              <path d="M159,154 V174"></path>
+              <path d="M159,224 V244"></path>
+              <path d="M159,294 V306 H531 V314"></path>
+              <path d="M531,364 V384"></path>
+              <path d="M531,434 V444 H159 V454"></path>
+            </g>
+            <g font-family="Menlo,monospace" font-size="10.5" fill="#888070">
+              <text x="167" y="98">fails</text>
+              <text x="167" y="168">one occurrence per failure</text>
+              <text x="167" y="238">enqueues a job</text>
+              <text x="200" y="302">agent fixed it — now it needs your eyes</text>
+              <text x="539" y="378">verified by a real rebuild</text>
+              <text x="200" y="440">the issue moves to “awaiting delivery”</text>
+            </g>
+            <path d="M294,269 H392" stroke="#c03030" stroke-width="1.4" stroke-dasharray="4 3" fill="none" marker-end="url(#ar-red)"></path>
+            <text x="398" y="260" font-family="Menlo,monospace" font-size="10.5" fill="#c03030">gave up, escalated,</text>
+            <text x="398" y="274" font-family="Menlo,monospace" font-size="10.5" fill="#c03030">out of budget →</text>
+            <text x="398" y="288" font-family="Menlo,monospace" font-size="10.5" fill="#c03030">Needs a decision</text>
+          </svg>
+          <figcaption>The left column runs unattended; the right column is the whole of your involvement. The dashed exit is the agent losing — that is what fills the “Needs a decision” band.</figcaption>
+        </figure>
+        <div class="t-note"><span class="lbl">note</span><span>While a job holds an occurrence it is deliberately kept out of the worklist. If work is in flight there is nothing for you to decide yet, and a queue that shows it anyway trains you to ignore it.</span></div>
+      </section>
+
+      <!-- ── 4 ── -->
+      <section class="t-panel" data-title="Your worklist" hidden>
+        <p class="t-eyebrow">Chapter 4 · The queue</p>
+        <h2>Your worklist</h2>
+        <p class="t-lead">The landing page is not a list of failures. It is a list of decisions, banded by which decision each one is waiting for, in the order worth doing them. Every row opens the same workspace; the band is what says which decision is waiting.</p>
+        <figure class="table-scroll-x">
+          <table class="t-table">
+            <thead><tr><th>Band</th><th>What lands here</th><th>Then</th></tr></thead>
+            <tbody>
+              <tr><td><span class="t-band-name"><i class="ready"></i>Ready to accept</span></td><td>A fix that a rebuild has already proved. The judgement is “does this belong in the tree”, not “does it work”.</td><td>Accept it, or reject the fix</td></tr>
+              <tr><td><span class="t-band-name"><i class="verify"></i>Needs verify</span></td><td>The agent changed something and believes it builds. Nothing independent has confirmed that yet.</td><td>Verify, in a dev-env</td></tr>
+              <tr><td><span class="t-band-name"><i class="decide"></i>Needs a decision</span></td><td>The agent gave up, ran out of budget, escalated, or its fix failed verification — and issues whose accepted fix fell out of the delivery path.</td><td>Take it over, retry with context, or discard</td></tr>
+              <tr><td><span class="t-band-name"><i class="owned"></i>You own</span></td><td>You took it over. Auto-triage stops for that port until you release it, so the agent cannot fight you for the file.</td><td>Fix it yourself, then verify or release</td></tr>
+              <tr><td><span class="t-band-name"><i class="delivering"></i>Awaiting delivery</span></td><td>Accepted, waiting on the confirm build. Nothing to do — it either resolves itself or comes back to you.</td><td>—</td></tr>
+              <tr><td><span class="t-band-name"><i class="archive"></i>Resolved · Muted</span></td><td>Collapsed at the bottom. Muted also stops the agent from working new occurrences of that issue.</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </figure>
+        <p>Inside a band, the issues seen most often float to the top, then the most recent. Three sightings or more earns a <span class="t-pill failed">systemic</span> tag: one port failing six times and six ports failing once are different problems, and the tag is what tells them apart at a glance.</p>
+      </section>
+
+      <!-- ── 5 ── -->
+      <section class="t-panel" data-title="The issue lifecycle" hidden>
+        <p class="t-eyebrow">Chapter 5 · State</p>
+        <h2>The issue lifecycle</h2>
+        <p class="t-lead">Four states are stored. <code>regressed</code> is not one of them — it is recomputed every time a page renders, so the badge can never disagree with what the builds actually did.</p>
+        <figure>
+          <svg class="t-svg" viewBox="0 0 700 280" role="img" aria-label="Issue state machine: unresolved moves to resolving when you accept a fix, and to resolved after two green confirm builds. A red confirm returns it to unresolved. Muted sits beside unresolved. Regressed is derived from resolved when the fingerprint returns.">
+            <defs>
+              <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+              </marker>
+              <marker id="ar2s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M10,1 L1,5 L10,9 z" fill="currentColor"></path>
+              </marker>
+              <marker id="ar2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,1 L9,5 L0,9 z" fill="#c03030"></path>
+              </marker>
+            </defs>
+
+            <rect x="30" y="26" width="150" height="46" rx="8" fill="#eeebe4" stroke="#d8d2c4"></rect>
+            <text x="46" y="46" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">muted</text>
+            <text x="46" y="62" font-family="Menlo,monospace" font-size="10.5" fill="#888070">agent skips it too</text>
+
+            <rect x="30" y="120" width="150" height="46" rx="8" fill="#ffffff" stroke="#d8d2c4"></rect>
+            <text x="46" y="140" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">unresolved</text>
+            <text x="46" y="156" font-family="Menlo,monospace" font-size="10.5" fill="#888070">open, needs you</text>
+
+            <rect x="275" y="120" width="150" height="46" rx="8" fill="#fffaf2" stroke="#c47000"></rect>
+            <text x="291" y="140" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">resolving</text>
+            <text x="291" y="156" font-family="Menlo,monospace" font-size="10.5" fill="#888070">fix accepted</text>
+
+            <rect x="520" y="120" width="150" height="46" rx="8" fill="#ecf7ec" stroke="#2a7a2a"></rect>
+            <text x="536" y="140" font-family="Menlo,monospace" font-size="12.5" fill="#1c1c1c">resolved</text>
+            <text x="536" y="156" font-family="Menlo,monospace" font-size="10.5" fill="#5c7a5c">a build proved it</text>
+
+            <rect x="520" y="26" width="150" height="46" rx="8" fill="#fdeaea" stroke="#c03030" stroke-dasharray="5 3"></rect>
+            <text x="536" y="46" font-family="Menlo,monospace" font-size="12.5" fill="#c03030">regressed</text>
+            <text x="536" y="62" font-family="Menlo,monospace" font-size="10.5" fill="#b06060">derived, not stored</text>
+
+            <g stroke="currentColor" stroke-width="1.4" fill="none">
+              <path d="M180,143 H271" marker-end="url(#ar2)"></path>
+              <path d="M425,143 H516" marker-end="url(#ar2)"></path>
+              <path d="M105,76 V116" marker-end="url(#ar2)" marker-start="url(#ar2s)"></path>
+              <path d="M350,166 V200 H130 V170" marker-end="url(#ar2)"></path>
+              <path d="M595,166 V240 H70 V170" marker-end="url(#ar2)"></path>
+            </g>
+            <path d="M595,116 V76" stroke="#c03030" stroke-width="1.4" stroke-dasharray="5 3" fill="none" marker-end="url(#ar2r)"></path>
+
+            <g font-family="Menlo,monospace" font-size="10.5" fill="#888070">
+              <text x="196" y="136">accept a fix</text>
+              <text x="447" y="136">2× green</text>
+              <text x="113" y="100">mute / unmute</text>
+              <text x="150" y="216">a red confirm build, or three that could not run</text>
+              <text x="150" y="256">you reopen it by hand</text>
+              <text x="585" y="94" text-anchor="end" fill="#c03030">the fingerprint</text>
+              <text x="585" y="108" text-anchor="end" fill="#c03030">comes back</text>
+            </g>
+          </svg>
+          <figcaption>Solid edges are stored transitions. The dashed one is read-time: nothing writes <code>regressed</code> to the database.</figcaption>
+        </figure>
+        <h3>Two details worth knowing</h3>
+        <ul class="t-gates">
+          <li><b>Two greens, not one.</b> A single green confirm build is provisional — networks and toolchains flake, and one lucky build would close an issue that is not fixed. The threshold is <code>runner.confirm_green_threshold</code>, default 2. Three builds that cannot run at all (env gone, nothing to replay) stop the retries and hand it back to you, spaced by a backoff that starts at a minute and doubles to an hour.</li>
+          <li><b>Green Head is a watermark, not a build.</b> When a confirm build resolves an issue, the tracker records which farm build was current at that moment. A later build re-emitting the same fingerprint is past that mark, and that is what <code>regressed</code> means — build ordinals, no clocks, no skew. An issue you resolved by hand has no watermark and falls back to comparing timestamps.</li>
+        </ul>
+      </section>
+
+      <!-- ── 6 ── -->
+      <section class="t-panel" data-title="What each action needs" hidden>
+        <p class="t-eyebrow">Chapter 6 · Actions</p>
+        <h2>What each action needs</h2>
+        <p class="t-lead">Buttons appear when the state allows them, and the server checks the same rule again — a stale page cannot talk you into an illegal move. Here is every status an occurrence can show you.</p>
+        <figure class="table-scroll-x">
+          {# Generated from fix_state.status_matrix(), which asks the same
+             three functions the page asks -- fix_status for the pill,
+             worklist_bucket for the band, bundle_actions for the buttons.
+             Written by hand this would be a second copy of those rules,
+             and the copy is the one that goes stale (poly-9u7). #}
+          <table class="t-table">
+            <thead><tr><th>Status</th><th>Band</th><th>Open to you</th></tr></thead>
+            <tbody>
+              {% for row in status_matrix %}
+              <tr>
+                <td class="k"><span class="t-pill {{ row.pill }}">{{ row.label }}</span></td>
+                <td>{{ row.band or '— hidden —' }}</td>
+                <td>
+                  {%- if row.actions %}{{ row.actions | join(', ') }}
+                  {%- else %}Nothing. A job holds it; it will come back
+                  {%- endif %}
+                  {%- if row.shown_disabled %} <span class="t-dis">({{ row.shown_disabled | join(', ') }} is drawn but dead until a rebuild proves the change)</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </figure>
+        <h3>The rules behind the buttons</h3>
+        <ul class="t-gates">
+          <li><b>Accept</b> needs a verified rebuild. The button renders on the agent-fixed lane so you can see where the path leads, but stays disabled until something has actually built the change.</li>
+          <li><b>Verify</b> is blocked only by Accept and Reject. Even a discarded occurrence can be verified — sometimes you want to know whether the fix you threw away worked.</li>
+          <li><b>Take over</b> claims the port. Auto-triage stops for it until you <b>Release</b>, so the agent will not queue work against a file you are editing.</li>
+          <li><b>Reopen</b> is the only thing a closed occurrence accepts; it clears the disposition and puts the problem back in front of you.</li>
+          <li><b>Build now</b> and <b>Cancel build</b> exist only while an issue is <code>resolving</code> — they nudge the confirm build the runner is already going to schedule.</li>
+          <li><b>A merged pull request beats everything.</b> The tree already changed, so upstream wins over whatever the local disposition said. The tracker notices on its own, at most once every five minutes per open PR.</li>
+        </ul>
+      </section>
+
+      <!-- ── reference ── -->
+      <section class="t-panel" data-title="Glossary" data-ref="1" hidden>
+        <p class="t-eyebrow">Reference</p>
+        <h2>Glossary</h2>
+        <p class="t-lead">The words this tracker uses in a sense of its own.</p>
+        <dl class="t-gloss">
+          <div><dt>origin</dt><dd>A port's path in the tree, <code>devel/py-cffi</code>. Half of an issue's identity.</dd></div>
+          <div><dt>target</dt><dd>The ports branch being built, <code>@2026Q3</code>. The other half.</dd></div>
+          <div><dt>occurrence · bundle</dt><dd>One failure and its evidence. The UI says occurrence; the API, the queue and the disk say bundle.</dd></div>
+          <div><dt>fingerprint</dt><dd>16 hex characters of the canonicalised first error line.</dd></div>
+          <div><dt>dsynth</dt><dd>The bulk builder. Every failure here started as one of its build logs.</dd></div>
+          <div><dt>dev-env</dt><dd>The DragonFly chroot the agent edits and rebuilds in. Your checkout is never touched.</dd></div>
+          <div><dt>dops</dt><dd>The overlay language a port's DragonFly changes are written in. What the agent edits.</dd></div>
+          <div><dt>confirm build</dt><dd>An unattended rebuild that exists to prove an accepted fix, not to produce packages.</dd></div>
+          <div><dt>Green Head</dt><dd>The farm build that was current when a confirm build proved a fix — the line a regression has to cross.</dd></div>
+          <div><dt>systemic</dt><dd>Seen three times or more. Usually one cause behind many failures.</dd></div>
+          <div><dt>delivery</dt><dd>What Accept does with the fix: a pull request, or a patch file when no forge is configured.</dd></div>
+          <div><dt>manual queue</dt><dd>Escalations waiting for you to add context and send them back to the agent.</dd></div>
+        </dl>
+      </section>
+
+    </div>
+
+    <div class="t-foot">
+      <span class="t-progress" id="t-progress"><span class="t-dots" id="t-dots"></span><span id="t-count">1 of 6</span></span>
+      <span class="t-skip">
+        <label class="t-check" id="t-check-wrap"><input type="checkbox" id="t-dontshow"> Don't show this at startup</label>
+        <button type="button" class="t-btn quiet" id="t-back">Back</button>
+        <button type="button" class="t-btn primary" id="t-next">Next</button>
+      </span>
+    </div>
+  </div>
+</div>
+    </div>
+
+    <div class="t-foot">
+      <span class="t-progress" id="t-progress"><span class="t-dots" id="t-dots"></span><span id="t-count"></span></span>
+      <span class="t-skip">
+        <input type="checkbox" id="t-dontshow">
+        <label class="t-check" for="t-dontshow">Don&rsquo;t show this at startup</label>
+        <button type="button" class="t-btn quiet" id="t-back">Back</button>
+        <button type="button" class="t-btn primary" id="t-next">Next</button>
+      </span>
+    </div>
+  </div>
+</div>

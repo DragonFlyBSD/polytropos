@@ -16,4 +16,8 @@
   <a href="{{ request.url_for('agentic_bundles') }}"
      {% if _p.startswith(request.url_for('agentic_bundles').path) %}class="active" aria-current="page"{% endif %}>Occurrences</a>
   <span class="section-context">Repair workspace</span>
+  {# The way back into the guide. It opens on a first visit and then only
+     from here, so the model it explains stays reachable (poly-9u7). #}
+  <button type="button" class="help-btn" id="open-help"
+          title="How this tracker works" aria-label="How this tracker works">?</button>
 </nav>

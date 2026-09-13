@@ -468,3 +468,104 @@ def worklist_bucket(bundle: dict[str, Any]) -> str | None:
     exact mapping instead of re-deriving it.
     """
     return _WORKLIST_BUCKET.get(fix_status(bundle).key)
+
+
+# --- The status matrix, for the operator guide ----------------------------
+#
+# Chapter 6 of the welcome guide is "every status an occurrence can show
+# you, its band, and what it opens". Written by hand it would be a second
+# copy of this module's rules, and the copy is the one that goes stale
+# (poly-9u7). So it is generated from the same three functions the page
+# itself uses: fix_status for the pill, worklist_bucket for the band, and
+# bundle_actions for the buttons.
+
+#: One representative occurrence per distinct status the projection can
+#: produce. (resolution, verification_status, job state) -- the same three
+#: columns fix_status reads, and the only three it reads.
+_MATRIX_CASES: tuple[tuple[str | None, str | None, str | None], ...] = (
+    (RESOLUTION_AGENT_FIXED, VERIFIED, None),
+    (RESOLUTION_OPERATOR_OWNED, VERIFIED, None),
+    (RESOLUTION_AGENT_FIXED, None, None),
+    (RESOLUTION_AGENT_FIXED, VERIFICATION_FAILED, None),
+    (RESOLUTION_AGENT_GAVE_UP, None, None),
+    (RESOLUTION_AGENT_BUDGET, None, None),
+    (RESOLUTION_ESCALATED, None, None),
+    (RESOLUTION_TRIAGE_FAILED, None, None),
+    (RESOLUTION_OPERATOR_OWNED, None, None),
+    (None, None, "patching"),
+    (None, None, None),
+    (RESOLUTION_ACCEPTED, VERIFIED, None),
+    (RESOLUTION_MERGED, VERIFIED, None),
+    (RESOLUTION_REJECTED, None, None),
+    (RESOLUTION_DISCARDED, None, None),
+)
+
+#: Capability flag -> the word the operator sees on the button. Ordered the
+#: way the action bar orders them.
+_ACTION_WORDS: tuple[tuple[str, str], ...] = (
+    ("can_verify", "Verify"),
+    ("can_accept", "Accept"),
+    ("can_reject", "Reject"),
+    ("can_take_over", "Take over"),
+    ("can_discard", "Discard"),
+    ("can_retry", "Retry with context"),
+    ("can_release", "Release"),
+    ("can_reopen", "Reopen"),
+)
+
+#: Which band label each bucket key renders under in the worklist.
+_BUCKET_LABEL: dict[str, str] = {
+    "ready": "Ready to accept",
+    "verify": "Needs verify",
+    "decide": "Needs a decision",
+    "owned": "You own",
+    "done": "Resolved",
+}
+
+
+def status_matrix() -> list[dict[str, Any]]:
+    """Every status an occurrence can show, with its band and its actions.
+
+    One row per distinct ``FixStatus`` the projection produces. ``actions``
+    is what ``bundle_actions`` enables for that state; ``shown_disabled``
+    names the buttons that render but stay dead, because "nothing on the
+    page says why the button is disabled" is the specific confusion this
+    documents -- Accept is drawn on the agent-fixed lane so the path is
+    visible, and stays disabled until a rebuild has proved the change.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for resolution, verification, job_state in _MATRIX_CASES:
+        bundle = {
+            "resolution": resolution,
+            "verification_status": verification,
+            "state": job_state,
+            # bundle_actions needs both to offer Take over, and every real
+            # occurrence has them.
+            "origin": "devel/example",
+            "target": "@main",
+        }
+        status = fix_status(bundle)
+        if status.key in seen:
+            continue
+        seen.add(status.key)
+        acts = bundle_actions(bundle)
+        bucket = worklist_bucket(bundle)
+        enabled = [word for flag, word in _ACTION_WORDS if acts.get(flag)]
+        disabled = (
+            ["Accept"]
+            if acts.get("show_accept_button") and not acts.get("can_accept")
+            else []
+        )
+        rows.append({
+            "key": status.key,
+            "label": status.label,
+            "pill": status.pill,
+            "bucket": bucket,
+            # None means the worklist hides it on purpose: a job holds it
+            # and the operator has nothing to do.
+            "band": _BUCKET_LABEL.get(bucket) if bucket else None,
+            "actions": enabled,
+            "shown_disabled": disabled,
+        })
+    return rows

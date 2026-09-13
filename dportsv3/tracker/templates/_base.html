@@ -79,6 +79,11 @@
    the only report of an outcome, because a toast does not survive a
    reload and the thing it is about must. #}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+{# The operator guide. In the shell rather than on one page, so any surface
+   can open it and the first-visit auto-open happens wherever you land
+   (poly-9u7). #}
+{% include "_welcome_modal.html" %}
+<script src="{{ request.url_for('static', path='tour.js') }}?v={{ static_v }}" defer></script>
 {# The writer lives with the element, and ahead of the page's own scripts
    block: those are deferred, so this inline one has already defined
    window.dpToast by the time any of them runs (poly-vgv0). #}

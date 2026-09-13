@@ -644,7 +644,12 @@ def test_view_agentic_bundle_detail_hides_dops_when_null(
     resp = client.get("/agentic/bundles/b-q2-foo")
     assert resp.status_code == 200
     # Without an UPDATE the dops_state stays NULL; pill suppressed.
-    assert ">dops<" not in resp.text
+    body = resp.text
+    # <main>, not the whole document: the operator guide is shell chrome
+    # outside it, and its chapters name every status and control the
+    # tracker has (poly-9u7).
+    page = body[body.index("<main "):body.index("</main>")]
+    assert ">dops<" not in page
 
 
 def test_view_agentic_bundle_detail_shows_lifetime_token_cost(client: TestClient) -> None:

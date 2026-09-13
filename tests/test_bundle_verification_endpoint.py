@@ -286,9 +286,13 @@ def test_a_failed_bundle_does_not_claim_it_was_verified(client, seeded_db):
     )
 
     body = client.get("/agentic/bundles/b-failed").text
+    # This page's own claim about this bundle, so <main> and not the whole
+    # document: the operator guide sits outside it in the shell and its
+    # chapter-1 illustration shows a verified pill (poly-9u7).
+    page = body[body.index("<main "):body.index("</main>")]
 
-    assert ">verified<" not in body
-    assert "verify failed" in body
+    assert ">verified<" not in page
+    assert "verify failed" in page
 
 
 def test_bundle_detail_omits_status_row_when_unset(client, seeded_db):
@@ -303,7 +307,11 @@ def test_bundle_detail_omits_status_row_when_unset(client, seeded_db):
     conn.commit()
     conn.close()
     body = client.get("/agentic/bundles/b-verified").text
-    assert ">Status<" not in body
+    # <main>, not the whole document: the operator guide is shell chrome
+    # outside it, and its chapters name every status and control the
+    # tracker has (poly-9u7).
+    page = body[body.index("<main "):body.index("</main>")]
+    assert ">Status<" not in page
 
 
 def test_bundle_list_renders_status_column(client, seeded_db):
