@@ -183,6 +183,11 @@ def create_app(db_path: str | Path) -> Any:
     )
     # Compact relative ages ("18m ago") for the worklist queue rows.
     templates.env.filters["relative_age"] = render.relative_age
+    # Stored chat turns are rendered server-side now, with the same
+    # Markdown subset the reply came back as and the artifact previews
+    # use. render_markdown escapes everything it does not emit itself, so
+    # the template's `| safe` is safe (poly-pf4a).
+    templates.env.filters["markdown"] = render.render_markdown
 
     @app.on_event("startup")
     def _startup() -> None:

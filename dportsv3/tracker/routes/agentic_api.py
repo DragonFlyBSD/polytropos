@@ -12,6 +12,8 @@ from dportsv3.tracker import (
 from dportsv3.tracker.agentic_queries import (
     activity_for_job,
     agentic_status,
+    append_chat_turn,
+    clear_chat_turns,
     runner_is_live,
     env_health_statuses,
     get_active_env,
@@ -20,6 +22,7 @@ from dportsv3.tracker.agentic_queries import (
     get_run,
     list_bundles,
     list_jobs,
+    list_chat_turns,
     list_jobs_for_bundle,
     list_runs,
     recent_activity,
@@ -298,27 +301,27 @@ def register(app, ctx):
                        "tracker process to enable fix-review chat",
             )
 
-        raw = body.get("messages")
-        if not isinstance(raw, list) or not raw:
+        # The new question, and only that: the conversation is stored
+        # against the bundle now, so the client no longer carries it and
+        # two operators on the same port see the same thread (poly-pf4a).
+        # `messages` is still accepted -- the last user turn in it is the
+        # question -- so an older client keeps working.
+        question = body.get("message")
+        if not isinstance(question, str) or not question.strip():
+            raw = body.get("messages")
+            question = None
+            if isinstance(raw, list):
+                for m in raw:
+                    if (isinstance(m, dict) and m.get("role") == "user"
+                            and isinstance(m.get("content"), str)
+                            and m["content"].strip()):
+                        question = m["content"]
+        if not isinstance(question, str) or not question.strip():
             raise HTTPException(
                 status_code=400,
-                detail="body must include a non-empty 'messages' list",
+                detail="body must include a non-empty 'message'",
             )
-        chat_turns: list[dict[str, str]] = []
-        for m in raw:
-            if not isinstance(m, dict):
-                continue
-            role = m.get("role")
-            content = m.get("content")
-            if (role in ("user", "assistant")
-                    and isinstance(content, str) and content.strip()):
-                chat_turns.append({"role": role, "content": content})
-        if not chat_turns or chat_turns[-1]["role"] != "user":
-            raise HTTPException(
-                status_code=400,
-                detail="'messages' must be user/assistant turns ending "
-                       "with a user turn",
-            )
+        question = question.strip()
 
         with _conn() as conn:
             bundle = get_bundle(conn, bundle_id)
@@ -369,6 +372,16 @@ def register(app, ctx):
             except OSError:
                 return None
 
+        # History from the store, not from the request: whatever the last
+        # operator asked is part of this conversation even if it was asked
+        # from another browser.
+        with _conn() as conn:
+            stored = list_chat_turns(conn, bundle_id)
+        chat_turns: list[dict[str, str]] = [
+            {"role": t["role"], "content": t["content"]} for t in stored
+        ]
+        chat_turns.append({"role": "user", "content": question})
+
         from dportsv3.agent import fix_chat  # noqa: PLC0415
         messages, assembled = fix_chat.build_chat_messages(
             bundle_meta=bundle,
@@ -398,18 +411,36 @@ def register(app, ctx):
                 status_code=502, detail=f"chat model error: {exc}",
             )
 
+        # Both turns, and only now: a question whose answer 502'd would
+        # otherwise sit in the thread forever with nothing under it.
+        reply_text = resp.text or ""
+        write_conn = sqlite3.connect(
+            str(app.state.db_path), check_same_thread=False,
+            isolation_level=None,
+        )
+        write_conn.row_factory = sqlite3.Row
+        try:
+            append_chat_turn(write_conn, bundle_id, "user", question)
+            append_chat_turn(
+                write_conn, bundle_id, "assistant", reply_text,
+                session_relpath=session_relpath,
+                artifacts_included=assembled["artifacts_included"],
+            )
+        finally:
+            write_conn.close()
+
         return {
             "ok": True,
             "bundle_id": bundle_id,
             "session_relpath": session_relpath,
             "artifacts_included": assembled["artifacts_included"],
             "session_truncated": assembled["session_truncated"],
-            "reply": resp.text or "",
+            "reply": reply_text,
             # Server-rendered so the panel reuses the same Markdown subset
             # (headings/lists/code/tables) the artifact previews use,
             # rather than shipping a JS renderer. render.render_markdown escapes
             # all content, so this is innerHTML-safe.
-            "reply_html": render.render_markdown(resp.text or ""),
+            "reply_html": render.render_markdown(reply_text),
             "usage": {
                 "prompt_tokens": resp.usage.prompt_tokens,
                 "completion_tokens": resp.usage.completion_tokens,
@@ -420,6 +451,31 @@ def register(app, ctx):
                 "billable_tokens": resp.usage.billable_tokens,
             },
         }
+
+    @app.delete("/api/bundles/{bundle_id}/chat")
+    def api_bundle_chat_clear(bundle_id: str) -> dict[str, Any]:
+        """Drop this occurrence's fix-review conversation.
+
+        A delete, not a soft-hide: an operator asking for it to be gone is
+        asking for it to be gone, and a conversation nobody wants kept is
+        not evidence (poly-pf4a).
+        """
+        forbid_anonymous("Fix-review chat")
+        with _conn() as conn:
+            if get_bundle(conn, bundle_id) is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown bundle: {bundle_id}",
+                )
+        write_conn = sqlite3.connect(
+            str(app.state.db_path), check_same_thread=False,
+            isolation_level=None,
+        )
+        write_conn.row_factory = sqlite3.Row
+        try:
+            removed = clear_chat_turns(write_conn, bundle_id)
+        finally:
+            write_conn.close()
+        return {"ok": True, "bundle_id": bundle_id, "removed": removed}
 
     @app.post("/api/bundles/{bundle_id}/verification")
     def api_bundle_verification(

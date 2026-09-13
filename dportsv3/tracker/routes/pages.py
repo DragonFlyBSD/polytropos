@@ -39,6 +39,7 @@ from dportsv3.tracker.agentic_queries import (
     get_issue,
     get_run,
     issue_for_bundle,
+    list_chat_turns,
     issue_inventory,
     issues_with_occurrences,
     job_events_for_job,
@@ -1103,13 +1104,20 @@ def register(app, ctx):
             "verify_envs": verify_envs,
             "verify_default_env": verify_default_env,
         }
-        # Fix-review chat: only offer the panel when the tracker has a
-        # chat model configured (llm.chat.model) AND this bundle
-        # carries a session dump to seed it. Both must hold or the panel
-        # is hidden — no dead UI.
+        # Fix-review chat: offer the panel when the tracker has a chat
+        # model configured (llm.chat.model) AND there is something to
+        # ground it in -- a session dump to seed a new question, or a
+        # conversation already held about this occurrence. Otherwise the
+        # panel is hidden; no dead UI.
+        #
+        # The second half is what persistence needs: the thread is
+        # evidence now, and evidence gets pruned. A stored conversation
+        # whose session dump has since gone would otherwise disappear
+        # with it (poly-pf4a).
         chat_session_relpath = _pick_default_session_relpath(bundle)
-        chat_enabled = (
-            _chat_llm_config() is not None and chat_session_relpath is not None
+        chat_turns = list_chat_turns(conn, bundle_id)
+        chat_enabled = _chat_llm_config() is not None and (
+            chat_session_relpath is not None or bool(chat_turns)
         )
         return (
             {
@@ -1132,6 +1140,12 @@ def register(app, ctx):
                 "bundle_activity": bundle_activity,
                 "chat_enabled": chat_enabled,
                 "chat_session_relpath": chat_session_relpath,
+                # Server-rendered, because the conversation is
+                # stored against the bundle now rather than in one
+                # operator's localStorage -- so it is there on a
+                # fresh browser, and there for the next person
+                # looking at the same port (poly-pf4a).
+                "chat_turns": chat_turns,
             }
         )
 

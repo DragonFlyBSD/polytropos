@@ -283,6 +283,19 @@ CREATE TABLE IF NOT EXISTS blob_objects (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS bundle_chat_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bundle_id TEXT NOT NULL,
+    role TEXT NOT NULL,                 -- 'user' | 'assistant'
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    -- What grounded the answer, so a turn can be read back knowing what
+    -- the model was actually shown. build_chat_messages already computes
+    -- both; they were reported to the UI and then dropped.
+    session_relpath TEXT,
+    artifacts_included TEXT             -- JSON list of relpaths
+);
+
 CREATE TABLE IF NOT EXISTS artifact_refs (
     bundle_id TEXT NOT NULL,
     relpath TEXT NOT NULL,
@@ -390,6 +403,18 @@ CREATE INDEX IF NOT EXISTS idx_user_context_history_lookup
     ON user_context_history(run_id, origin, context_rev);
 CREATE INDEX IF NOT EXISTS idx_artifact_refs_bundle ON artifact_refs(bundle_id);
 CREATE INDEX IF NOT EXISTS idx_artifact_refs_sha ON artifact_refs(sha256);
+
+-- Fix-review chat, one row per turn. Keyed on the occurrence rather than
+-- the issue because that is what the conversation is about: the chat is
+-- seeded with one bundle's frozen artifacts and that bundle's session
+-- dump, so a turn means nothing beside a different attempt (poly-pf4a).
+--
+-- It lived in the operator's localStorage, which restores a reload on the
+-- same machine and nothing else: two operators on the same failing port
+-- could not see each other's questions, and the reasoning behind a
+-- decision was not attached to the bundle that was decided.
+CREATE INDEX IF NOT EXISTS idx_bundle_chat_bundle
+    ON bundle_chat_turns(bundle_id, id);
 
 -- issues
 CREATE INDEX IF NOT EXISTS idx_issues_state ON issues(state);

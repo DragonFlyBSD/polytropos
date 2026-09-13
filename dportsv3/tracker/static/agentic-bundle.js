@@ -382,16 +382,11 @@
   const inputEl = document.getElementById('chat-input');
   const sendBtn = document.getElementById('chat-send');
   const statusEl = document.getElementById('chat-status');
-  // Client-held history, mirrored to localStorage keyed by bundle so a
-  // reload restores the conversation (the server persists nothing). The
-  // assistant entries also cache their server-rendered HTML so restore
-  // doesn't need to re-call the model.
-  const STORE_KEY = 'dp_chat_' + bundleId;
-  const history = [];
-
-  function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(history)); } catch (e) {}
-  }
+  // No client-held history any more. The conversation is stored against
+  // the bundle and rendered into #chat-log server-side, so it is there on
+  // a fresh browser and there for the next operator looking at the same
+  // port -- localStorage restored neither (poly-pf4a). This appends the
+  // new pair as it arrives; a reload re-renders the same thread.
 
   function addMsg(role, content, html) {
     const wrap = document.createElement('div');
@@ -414,25 +409,21 @@
     wrap.appendChild(body);
     logEl.appendChild(wrap);
     logEl.scrollTop = logEl.scrollHeight;
+    return wrap;
   }
 
-  function restore() {
-    let saved;
-    try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); }
-    catch (e) { saved = []; }
-    if (!Array.isArray(saved)) { return; }
-    saved.forEach(function (m) {
-      addMsg(m.role, m.content, m.html);
-      history.push(m);
-    });
+  function failed(node, message) {
+    if (node && node.parentNode) { node.parentNode.removeChild(node); }
+    addMsg('error', message);
+    statusEl.textContent = '';
+    sendBtn.disabled = false; inputEl.disabled = false; inputEl.focus();
   }
 
   async function send() {
     const text = inputEl.value.trim();
     if (!text) { return; }
     inputEl.value = '';
-    addMsg('user', text);
-    history.push({role: 'user', content: text});
+    const pending = addMsg('user', text);
     sendBtn.disabled = true;
     inputEl.disabled = true;
     statusEl.textContent = 'thinking…';
@@ -443,29 +434,25 @@
         {method: 'POST',
          headers: {'Content-Type': 'application/json'},
          body: JSON.stringify({
-          messages: history.map(m => ({role: m.role, content: m.content})),
+          // Just the question: the server holds the thread.
+          message: text,
           session_relpath: sessionRelpath,
         })}
       );
       data = await resp.json();
     } catch (exc) {
-      addMsg('error', 'request failed: ' + exc);
-      history.pop();  // let the operator retry the same question
-      statusEl.textContent = '';
-      sendBtn.disabled = false; inputEl.disabled = false; inputEl.focus();
+      // The server stores nothing until the model has answered, so a
+      // failed turn leaves no half-thread behind -- drop the optimistic
+      // bubble and let the operator retry the same question.
+      failed(pending, 'request failed: ' + exc);
       return;
     }
     if (!resp.ok) {
-      addMsg('error', (data && data.detail) ? data.detail : ('error ' + resp.status));
-      history.pop();
-      statusEl.textContent = '';
-      sendBtn.disabled = false; inputEl.disabled = false; inputEl.focus();
+      failed(pending, (data && data.detail) ? data.detail : ('error ' + resp.status));
       return;
     }
     const reply = data.reply || '(empty reply)';
     addMsg('assistant', reply, data.reply_html);
-    history.push({role: 'assistant', content: reply, html: data.reply_html});
-    save();
     const u = data.usage || {};
     const consulted = (data.artifacts_included || []).length
       ? (' · consulted: ' + data.artifacts_included.join(', '))
@@ -493,19 +480,24 @@
   if (clearBtn) {
     clearBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      if (!history.length) { return; }
-      if (!confirm('Clear this fix-review conversation?')) { return; }
-      try { localStorage.removeItem(STORE_KEY); } catch (err) {}
-      history.length = 0;
-      logEl.innerHTML = '';
-      statusEl.textContent = '';
-      inputEl.focus();
+      if (!logEl.children.length) { return; }
+      if (!confirm(
+        'Delete this fix-review conversation? It is stored with the ' +
+        'occurrence, so this clears it for everyone.'
+      )) { return; }
+      fetch('/api/bundles/' + encodeURIComponent(bundleId) + '/chat',
+            {method: 'DELETE'})
+        .then(function (r) {
+          if (!r.ok) { statusEl.textContent = 'could not clear: ' + r.status; return; }
+          logEl.innerHTML = '';
+          statusEl.textContent = '';
+          inputEl.focus();
+        })
+        .catch(function (err) { statusEl.textContent = 'could not clear: ' + err; });
     });
   }
 
-  // Restore any saved conversation for this bundle so a reload doesn't
-  // lose it.
-  restore();
+  // Nothing to restore: #chat-log arrives rendered.
 })();
 
 // --- Artifact reader: in-place detail swap ---

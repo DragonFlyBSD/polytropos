@@ -1,6 +1,10 @@
     {% if chat_enabled %}
-    {# Fix-review chat: talk to a fresh model seeded with the agent's
-       saved session for this fix. Tools-off Q&A; nothing persisted. #}
+    {# Fix-review chat: talk to a fresh model seeded with the agent's saved
+       session for this fix. Tools-off Q&A.
+
+       Stored against this occurrence, and rendered here from the store, so
+       it survives a reload on any machine and the next operator looking at
+       the same failing port sees what was already asked (poly-pf4a). #}
     <h2>Chat about this fix
       <a href="#" id="chat-clear" style="font-size:12px;font-weight:normal;margin-left:8px;">[clear]</a>
     </h2>
@@ -8,10 +12,20 @@
       <div style="color:var(--text-dim);font-size:12px;margin-bottom:8px;">
         Ask the agent why it made this fix. Grounded in this bundle's
         artifacts (diff, triage, errors, session). Read-only — no tools,
-        no rebuild. Kept in this browser only (server saves nothing) — a
-        reload restores it; [clear] wipes it.
+        no rebuild. Saved with this occurrence, so anyone looking at it
+        sees the thread; [clear] deletes it for everyone.
       </div>
-      <div id="chat-log" class="chat-log"></div>
+      <div id="chat-log" class="chat-log">
+        {% for t in chat_turns %}
+        <div class="chat-msg {{ t.role }}">
+          <div class="chat-role">{{ 'You' if t.role == 'user' else 'Model' }}</div>
+          {# The assistant answers in Markdown and render_markdown escapes
+             everything it does not itself emit, so this is safe; a user
+             turn is plain text and is escaped by autoescaping. #}
+          <div>{% if t.role == 'assistant' %}{{ t.content | markdown | safe }}{% else %}{{ t.content }}{% endif %}</div>
+        </div>
+        {% endfor %}
+      </div>
       <div class="chat-input-row">
         <label class="visually-hidden" for="chat-input">Ask about this
           fix</label>
