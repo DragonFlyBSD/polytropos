@@ -57,6 +57,39 @@ Credentials are never settings. Each is a file named by a `*_file` setting, so
 its mode can follow whichever service reads it — the runner is root, the
 tracker is not.
 
+## Built from a design? Name it, and compare before closing
+
+An epic whose work comes from a mock, a wireframe or a click-through
+**names that source in its description** — the URL *and* which version was
+read, with the date. Not a reference at the bottom: the thing the work is
+measured against.
+
+Without the version, "does this match?" cannot be answered later. The
+source moves.
+
+**Closing such an epic requires the side-by-side.** Render the design and
+the built views at the same width and put them next to each other —
+headless Chrome and a two-column page is about ten minutes. Look at them.
+
+This is not optional diligence. `poly-0e02` shipped all 22 planned children
+and two of its three views were different applications from the design:
+Pipeline was six cards where the design is a flow with a feedback loop,
+Repairs was two pages where the design never leaves one. Every child was
+built faithfully — the beads had dropped the design's structural ideas
+without recording that they were dropping anything. Nothing downstream
+could notice, because the audits measured contrast, overflow, landmarks and
+touch targets across 26 pages and not one of them ever opened the design.
+Fixing it took a second epic and seven more beads.
+
+**Produce the pictures; do not assert on them.** A screenshot diff would be
+noise — sample data differs and every deliberate divergence lights up
+forever. The value comes from a person reading two images.
+
+**A divergence that survives is a decision, and gets written down** — in
+the bead, with the measurement or the reason behind it. Not absent. The
+built views may be right to differ; what is not allowed is differing by
+accident.
+
 ## Beads: look it up, don't recall it
 
 Look bead IDs up (`bd list`, `bd search`) before citing one — never write an ID
