@@ -255,3 +255,28 @@ def test_the_artifact_reader_has_fixed_geometry() -> None:
 
     assert "height:" in block
     assert "overflow: hidden" in block
+
+
+def test_a_diff_in_the_reader_scrolls_once(tmp_path: Path) -> None:
+    """The frame is fixed and .a-body is its scroller, so .diff-view must
+    not cap its own height on top of that -- it nested a second vertical
+    scrollbar inside the first. The cap belongs to the standalone artifact
+    view, which has no .reader around it; the selector was just unscoped
+    (poly-dpf).
+
+    `overflow-x: auto` is what makes the vertical axis scrollable at all:
+    CSS computes the opposite axis from `visible` to `auto`. So the cap is
+    the whole bug, and horizontal has to stay for long diff lines."""
+    css = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+           / "static" / "progress.css").read_text()
+
+    # The standalone view keeps its bound on an arbitrarily long render...
+    standalone = css[css.index(".diff-view {"):]
+    standalone = standalone[:standalone.index("}")]
+    assert "max-height" in standalone
+    assert "overflow-x: auto" in standalone
+
+    # ...and inside the reader it is lifted, after that rule so it wins.
+    scoped = ".reader .diff-view { max-height: none; }"
+    assert scoped in css
+    assert css.index(".diff-view {") < css.index(scoped)
