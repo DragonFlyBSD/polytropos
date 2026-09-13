@@ -421,16 +421,26 @@ select, option { background: var(--surface); color: var(--text); }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 
 /* Form controls, matched to .action's metrics so they line up in a row. */
+/* inline-flex and centred, like .action and .result-filter beside it.
+   Without it the rule only looked right on a <button>, where the UA
+   centres the content for you: on an <a> the box was still 32px tall from
+   min-height while the 13px line box sat against the top border, which is
+   how "Open issue" and "Port history" came to be top-aligned. It also
+   made the coarse-pointer 40px touch target grow the dead space under the
+   label rather than the label's own box (poly-x3pg.10). */
 .control {
+  display: inline-flex; align-items: center; justify-content: center;
   appearance: none; min-height: 32px; padding: 0 10px;
   color: var(--text); background: var(--surface-2);
   border: 1px solid var(--line-hot); border-radius: 3px;
-  font: 500 13px/1 var(--sans);
+  font: 500 13px/1 var(--sans); text-decoration: none; white-space: nowrap;
 }
 .control:hover { border-color: var(--cyan); }
 .control:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
-/* A select keeps its native arrow. Stripped, it is indistinguishable from
-   the buttons beside it and nobody knows it opens. */
+/* A select keeps its native arrow -- stripped, it is indistinguishable
+   from the buttons beside it and nobody knows it opens -- and both of
+   these lay out their own contents, so neither wants to be a flex box. */
+select.control, input.control, textarea.control { display: inline-block; }
 select.control { appearance: auto; padding: 0 4px 0 8px; }
 
 /* The dashboard's two summary panels, side by side while there is room. */
@@ -1661,6 +1671,10 @@ a.wl-port:hover { color: var(--amber-dim); }
   border-bottom: 1px solid var(--line-hot);
 }
 .cockpit-tab {
+  /* Centred like every other control, though these are only ever
+     <button> today and the UA was doing it. A min-height with nothing
+     centring inside it is the trap poly-x3pg.10 was. */
+  display: inline-flex; align-items: center; justify-content: center;
   appearance: none; min-height: 36px; padding: 0 16px;
   color: var(--muted); background: transparent; border: 0;
   font: 650 13px/1 var(--sans); cursor: pointer;

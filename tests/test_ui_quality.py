@@ -374,3 +374,46 @@ def test_the_operator_status_line_is_announced() -> None:
     # announced without anyone remembering to.
     assert "MutationObserver" in js
     assert "op-status" in js
+
+
+# --- a control centres its own label --------------------------------------
+#
+# A min-height with nothing centring inside it only looks right on a
+# <button>, where the UA centres the content for you. On an <a> the box is
+# still that tall and the line box sits against the top border, which is how
+# "Open issue" and "Port history" came to be top-aligned in a 32px button
+# (poly-x3pg.10). Measured before the fix: gapAbove=-1.0, gapBelow=17.0.
+
+#: Classes that draw a button and are used on more than one element type,
+#: or could be. Each has to do its own centring.
+_CONTROL_RULES = (
+    ".action {",
+    ".control {",
+    ".result-filter {",
+    ".cockpit-tab {",
+    ".section-nav a {",
+)
+
+
+def _rule(css: str, selector: str) -> str:
+    start = css.index(selector)
+    return css[start:css.index("}", start)]
+
+
+@pytest.mark.parametrize("selector", _CONTROL_RULES)
+def test_a_control_centres_its_own_label(selector: str) -> None:
+    rule = _rule(CSS.read_text(), selector)
+
+    assert "flex" in rule, selector
+    assert "align-items: center" in rule, selector
+
+
+def test_a_control_that_lays_out_its_own_contents_opts_back_out() -> None:
+    """A select keeps its native arrow and a text input centres its own
+    value; neither wants to be a flex container."""
+    css = CSS.read_text()
+
+    rule = _rule(css, "select.control, input.control, textarea.control {")
+    assert "display: inline-block" in rule
+    # ...and it comes after the rule it is overriding.
+    assert css.index(".control {") < css.index("select.control, input.control")
