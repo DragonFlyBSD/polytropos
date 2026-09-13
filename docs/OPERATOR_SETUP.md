@@ -280,6 +280,14 @@ the hooks to fire. With hooks live, watch:
   bundles as they upload.
 - `http://localhost:8080/agentic/jobs?target=@2026Q2&state=pending`
   — triage jobs as the runner picks them up.
+- `http://localhost:8080/agentic` — Repairs, the operator's queue: the
+  problems that need a decision from you, with the selected one's
+  workspace beside them.
+
+The server has three views and they answer different questions;
+[tracker-ui.md](tracker-ui.md) names them. The **?** in the Repairs subnav
+opens a guide to the model itself — issues versus occurrences versus jobs,
+the worklist bands, and what each action needs before it will run.
 
 ## 8. Inspect a result
 

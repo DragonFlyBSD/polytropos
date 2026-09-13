@@ -320,13 +320,24 @@ dportsv3 tracker status --target @2026Q1 --server http://tracker:8080
 dportsv3 tracker failures --target @2026Q1 --server http://tracker:8080
 dportsv3 tracker show-build --run 12 --server http://tracker:8080
 dportsv3 tracker compare-builds 10 12 --server http://tracker:8080
+dportsv3 tracker repair-identifiers [--apply]
 ```
+
+`repair-identifiers` is the documented remedy the server prints at startup
+when it finds a stored id that cannot be a URL path segment. Without
+`--apply` it reports and writes nothing; run it that way first.
 
 ### Tracker dashboard pages
 
-Once the server is running, the dashboard provides:
+The server has three views, each answering a different question — Builds
+(what did the farm build), Pipeline (where is work stuck) and Repairs
+(which problems need a decision from me). See
+[docs/tracker-ui.md](tracker-ui.md), which names them and the settings that
+tune them.
 
-- `/`: target overview,
+The build-side pages:
+
+- `/`: Builds, the default landing,
 - `/target/{target}`: per-target current status,
 - `/target/{target}/{cat}/{port}`: one port's current state and recent history,
 - `/builds`: recent build runs,
