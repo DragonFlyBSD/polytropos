@@ -1,8 +1,14 @@
     {% if token_usage and token_usage.has_data %}
     {# Step 9a: token-cost summary card. Aggregated from llm_turn rows in activity_log. #}
     <details class="section-collapse" id="tokens">
+    {# Billable leads, because this line is the page's at-a-glance token
+       figure and the total re-counts the cached prefix every turn -- 21x
+       apart on the job that found this (poly-9t9). The total stays, and
+       stays labelled: it is what fills a context window, and the card
+       below is built on it. One unit for the headline, never an unlabelled
+       total -- this was the last place breaking the first half. #}
     <summary>Token usage
-      <span class="muted">({{ '{:,}'.format(token_usage.total_tokens) }} total, {{ token_usage.llm_turns }} turns)</span>
+      <span class="muted">({{ '{:,}'.format(token_usage.billable_tokens) }} billable · {{ '{:,}'.format(token_usage.total_tokens) }} total · {{ token_usage.llm_turns }} turns)</span>
     </summary>
     {% set total = token_usage.total_tokens %}
     {% set p = token_usage.prompt_tokens %}

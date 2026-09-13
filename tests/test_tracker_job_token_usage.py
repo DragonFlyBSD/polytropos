@@ -350,6 +350,20 @@ def test_job_detail_renders_token_card(client):
     assert "dupe" in body
 
 
+def test_the_collapsed_card_headlines_what_it_cost(client):
+    """The summary is the page's at-a-glance token figure, and it used to
+    be the total -- which re-counts the cached prefix every turn and ran
+    21x billable on the job that found this. Both numbers, billable first,
+    and the total still labelled (poly-9t9)."""
+    body = client.get("/agentic/jobs/job-active").text
+    summary = body[body.index("<summary>Token usage"):]
+    summary = summary[:summary.index("</summary>")]
+
+    assert "billable" in summary
+    assert "total" in summary
+    assert summary.index("billable") < summary.index("total")
+
+
 def test_job_detail_renders_structured_columns(client):
     """llm_turn rows have structured token cells, not just prose."""
     body = client.get("/agentic/jobs/job-active").text
