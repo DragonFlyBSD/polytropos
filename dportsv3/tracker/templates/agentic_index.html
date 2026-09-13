@@ -101,11 +101,24 @@
       <div class="wl-list">
         {% for g in band.groups %}
         {% if g.count > 1 %}
-        {# An issue seen several times — expandable to its occurrences. #}
-        <div class="wl-group" id="grp-{{ band.key }}-{{ loop.index }}">
+        {# An issue seen several times — expandable to its occurrences.
+           Open when it holds the selection: the row you picked is inside
+           it, and a closed group renders that row display:none, so the
+           queue would come back with no sign of what the pane is showing.
+           Server-side because it has to be true with no JS (poly-x3pg.6).
+
+           data-issue keys the groups you opened by hand, which the rail
+           script carries across the navigation. The id is positional and
+           shifts as the bands re-sort, so it cannot be that key. #}
+        {% set _holds_selection = selected_occurrence
+             and selected_occurrence in (g.occurrences | map(attribute='bundle_id') | list) %}
+        <div class="wl-group{% if _holds_selection %} open{% endif %}"
+             id="grp-{{ band.key }}-{{ loop.index }}"
+             data-issue="{{ g.issue_key }}">
           <div class="wl-row {{ band.key }}{% if g.latest and g.latest.bundle_id == selected_occurrence %} current{% endif %}" onclick="wlToggle(this.parentElement)">
             <span class="wl-stripe"></span>
-            <button type="button" class="wl-chev" aria-label="Expand occurrences">›</button>
+            <button type="button" class="wl-chev" aria-label="Expand occurrences"
+                    aria-expanded="{{ 'true' if _holds_selection else 'false' }}">›</button>
             <div class="wl-ident">
               <span class="wl-port">{{ g.origin }}</span>
               <span class="wl-x" title="seen {{ g.times_seen }} times">×{{ g.times_seen }}</span>
@@ -345,8 +358,19 @@
      chat and the artifact reader are all markup and no behaviour
      (poly-icif). #}
   {% if cockpit %}{% include "_cockpit_scripts.html" %}{% endif %}
+  {# Selecting an occurrence reloads the page, and the queue is its own
+     scroll container -- so without this it comes back at the top every
+     time (poly-x3pg.6). #}
+  <script src="{{ request.url_for('static', path='repairs-rail.js') }}?v={{ static_v }}" defer></script>
   <script>
-    function wlToggle(group) { group.classList.toggle('open'); }
+    function wlToggle(group) {
+      var open = group.classList.toggle('open');
+      var chev = group.querySelector('.wl-chev');
+      if (chev) { chev.setAttribute('aria-expanded', String(open)); }
+      // Defined by repairs-rail.js, which is deferred -- so this is also
+      // what makes the toggle work before it has loaded.
+      if (window.dpWlRemember) { window.dpWlRemember(group); }
+    }
     document.querySelectorAll('.env-set-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var name = btn.dataset.env || null;

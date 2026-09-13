@@ -1978,9 +1978,16 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
 .repair-rail .worklist .wl-actions { grid-column: 3; justify-self: start; }
 .repair-rail .worklist .wl-focus-num { font-size: 30px; }
 .repair-rail .worklist .wl-chips { margin-left: 0; }
-/* The selected occurrence, marked in the queue that is still beside it. */
+/* The selected occurrence, marked in the queue that is still beside it.
+ * The child row too: a group's occurrences are the rows you switch between
+ * most, and the class was emitted for them all along with nothing to show
+ * for it (poly-x3pg.6). It has no stripe track of its own, so the mark is
+ * an inset edge -- the same one the cockpit's occurrence rows use. */
 .repair-rail .wl-row.current { background: var(--surface-3); }
 .repair-rail .wl-row.current .wl-stripe { background: var(--cyan); }
+.repair-rail .wl-child.current {
+  background: var(--surface-3); box-shadow: inset 3px 0 var(--cyan);
+}
 
 @media (max-width: 1100px) {
   /* Below this the rail and the detail stop fitting side by side. One

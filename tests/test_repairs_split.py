@@ -48,6 +48,19 @@ def _seed(db: sqlite3.Connection, artifact: Path) -> None:
             "(?, 'r-1', ?, 't1', 'failure', ?, ?, ?, ?)",
             (f"b-{key}", f"devel/{key}", TARGET, key, resolution,
              verification))
+    # An issue seen twice, so the queue renders a group with children --
+    # the shape the rail's expansion and its selected-child mark are about.
+    db.execute(
+        "INSERT INTO issues(issue_key, target, origin, state, times_seen, "
+        "first_seen_at, last_seen_at, updated_at) VALUES ('i-twice', ?, "
+        "'devel/i-twice', 'unresolved', 2, 't0', 't2', 't2')", (TARGET,))
+    for bundle_id, ts_utc in (("b-i-twice-1", "t1"), ("b-i-twice-2", "t2")):
+        db.execute(
+            "INSERT INTO bundles(bundle_id, run_id, origin, ts_utc, result, "
+            "target, issue_key, resolution, verification_status) VALUES "
+            "(?, 'r-1', 'devel/i-twice', ?, 'failure', ?, 'i-twice', "
+            "'agent_fixed', 'verified')",
+            (bundle_id, ts_utc, TARGET))
     artifact.write_text("## Classification\npatch-error\n", encoding="utf-8")
     db.execute(
         "INSERT INTO artifact_refs(bundle_id, relpath, backend, fs_path, "
@@ -293,6 +306,68 @@ def test_an_empty_tracker_shows_the_queue_alone(empty) -> None:
 
     assert "repairs-split solo" in body
     assert 'class="repair-detail"' not in body
+
+
+# --- the queue keeps your place -------------------------------------------
+#
+# The rail is its own scroll container and every row is a plain link, so
+# selecting an occurrence reloaded the page and the queue came back at the
+# top -- once per item, down a list that caps at 500 issues (poly-x3pg.6).
+
+
+def test_the_queue_carries_the_script_that_keeps_its_place(client) -> None:
+    body = _get(client, "/agentic?occ=b-i-owned")
+
+    assert "repairs-rail.js" in body
+
+
+def test_the_group_holding_the_selection_is_open(client) -> None:
+    """A closed group renders its occurrences display:none, so picking one
+    of them came back with no sign of what the right pane is showing."""
+    body = _flat(_get(client, "/agentic?occ=b-i-twice-1"))
+
+    assert 'class="wl-group open"' in body
+
+
+def test_a_group_that_holds_nothing_stays_closed(client) -> None:
+    """Open is a statement about the selection, not a default -- a queue
+    with every group expanded is the scrolling problem again."""
+    body = _flat(_get(client, "/agentic?occ=b-i-owned"))
+
+    assert 'class="wl-group"' in body
+    assert 'class="wl-group open"' not in body
+
+
+def test_the_selected_occurrence_is_marked_inside_its_group(client) -> None:
+    """The class was emitted all along and progress.css defined nothing for
+    it, so the row the right pane was showing looked like its siblings."""
+    body = _flat(_get(client, "/agentic?occ=b-i-twice-1"))
+    css = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+           / "static" / "progress.css").read_text()
+
+    assert 'class="wl-child current"' in body
+    assert ".repair-rail .wl-child.current" in css
+
+
+def test_the_chevron_says_whether_its_group_is_open(client) -> None:
+    """The group opens from the server now, so a chevron that always reads
+    collapsed is the row contradicting itself for anyone not looking at
+    it."""
+    held = _flat(_get(client, "/agentic?occ=b-i-twice-1"))
+    loose = _flat(_get(client, "/agentic?occ=b-i-owned"))
+
+    assert 'aria-expanded="true"' in held
+    assert 'aria-expanded="true"' not in loose
+    assert 'aria-expanded="false"' in loose
+
+
+def test_groups_are_keyed_by_something_a_re_sort_survives(client) -> None:
+    """The rail carries the groups you opened by hand across the
+    navigation. The id is positional -- grp-<band>-<n> -- and the bands
+    re-sort as issues move, so the key has to be the issue."""
+    body = _flat(_get(client, "/agentic?occ=b-i-twice-1"))
+
+    assert 'data-issue="i-twice"' in body
 
 
 # --- the standalone page is kept ------------------------------------------
