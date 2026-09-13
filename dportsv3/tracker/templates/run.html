@@ -152,6 +152,9 @@
   <script>
     window.DP_RUN = { portBase: {{ (request.url_for('dashboard_target', target=run.target)|string ~ '/')|tojson }} };
   </script>
+  {# live.js first: run.js polls through window.dpLive, and both are
+     deferred, so the order here is the order they run (poly-c6x). #}
+  <script src="{{ request.url_for('static', path='live.js') }}?v={{ static_v }}" defer></script>
   <script src="{{ request.url_for('static', path='run.js') }}?v={{ static_v }}" defer></script>
 {% endif %}
 {% endblock %}

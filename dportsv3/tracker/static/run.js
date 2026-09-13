@@ -17,7 +17,9 @@
 (function () {
   "use strict";
 
-  var POLL_MS = 10000;
+  var POLL_MS = 10000;       // while a run is live
+  var IDLE_POLL_MS = 60000;  // between runs, reached by backing off
+  var IDLE_STEP_MS = 10000;
   var perPage = 50;
 
   var rows = [];          // historical entries, accumulated from the chunks
@@ -184,8 +186,17 @@
         results[i].forEach(function (r) { rows.push(r); });
         loaded = wanted[i];
       }
-      fetching = false;
       render();
+    }).catch(function () {
+      // A malformed chunk must not wedge the guard. It used to leave
+      // `fetching` true forever, and because the poll calls this
+      // fire-and-forget the rejection was silent -- so the summary counters
+      // went on updating while the port list never grew again. That is the
+      // half of poly-c6x that looked intermittent, because it needs a
+      // partial chunk to trigger.
+      setText("chunk-note", "a history chunk failed to load — retrying");
+    }).finally(function () {
+      fetching = false;
     });
   }
 
@@ -308,19 +319,35 @@
     });
   }
 
-  function poll() {
-    fetchJSON("summary.json").then(function (data) {
+  /* --- the live loop ------------------------------------------------------
+   *
+   * dpLive owns the scheduling. The hand-rolled loop this replaces
+   * rescheduled only `if (active)`, so a page opened between builds -- or
+   * left open when one finished -- never picked the next build up, and only
+   * a reload brought it back. It also retried at half the interval on
+   * failure, hitting a failing backend twice as hard (poly-c6x).
+   *
+   * Nothing here ever returns "stop": idling is the state this page has to
+   * survive, not a reason to give up.
+   */
+  var live = window.dpLive({
+    intervalMs: POLL_MS,
+    maxIntervalMs: IDLE_POLL_MS,
+    backoffStep: IDLE_STEP_MS,
+    url: function () { return "summary.json"; },
+    onData: function (data) {
       applySummary(data);
+      // While a run is live the page holds its fast cadence; between runs
+      // it drifts out to IDLE_POLL_MS, and the first poll that sees a run
+      // again pulls it straight back.
+      if (active) live.resetBackoff();
       loadChunks();
-      if (active) setTimeout(poll, POLL_MS);
-    }).catch(function () {
-      setTimeout(poll, POLL_MS / 2);
-    });
-  }
+    },
+  });
 
   document.addEventListener("DOMContentLoaded", function () {
     wire();
     render();
-    poll();
+    live.start(0);
   });
 })();

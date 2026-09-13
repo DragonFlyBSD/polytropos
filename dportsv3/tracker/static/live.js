@@ -35,6 +35,15 @@
         schedule();
         return;
       }
+      // Before onData, not after, so an onData that calls resetBackoff()
+      // decides the next interval. A surface that idles and then has to
+      // become responsive -- the run view between builds -- needs that;
+      // without it the loop sits at maxIntervalMs at exactly the moment a
+      // build starts (poly-c6x). Callers that never reset are unaffected:
+      // the interval still grows once per attempted tick.
+      if (backoffStep && interval < maxInterval) {
+        interval = Math.min(interval + backoffStep, maxInterval);
+      }
       try {
         var resp = await fetch(opts.url(), { cache: "no-store" });
         if (resp.ok) {
@@ -43,9 +52,6 @@
         }
       } catch (e) {
         // transient network blip — just try again next tick
-      }
-      if (backoffStep && interval < maxInterval) {
-        interval = Math.min(interval + backoffStep, maxInterval);
       }
       schedule();
     }
@@ -57,6 +63,10 @@
       resume: function () { paused = false; schedule(0); },
       isPaused: function () { return paused; },
       poke: function () { schedule(0); },
+      // Backoff is otherwise monotonic -- nothing lowers the interval
+      // again. Call this from onData when the thing being watched becomes
+      // interesting again (poly-c6x).
+      resetBackoff: function () { interval = opts.intervalMs || 3000; },
     };
     return handle;
   };

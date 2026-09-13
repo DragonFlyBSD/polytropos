@@ -204,6 +204,76 @@ def test_a_missing_chunk_stops_the_accumulation_rather_than_skipping_it() -> Non
     assert "break" in body
 
 
+# --- the loop keeps running ----------------------------------------------
+#
+# The page stopped updating and only a reload brought it back. The loop
+# rescheduled only while a run was active, so a page opened between builds
+# -- or left open when one finished -- never picked the next one up
+# (poly-c6x).
+
+
+def test_the_page_keeps_polling_when_no_run_is_active() -> None:
+    """Idling is the state this page has to survive, not a reason to stop.
+    dpLive reschedules unless onData says "stop", so it must not."""
+    js = RUN_JS.read_text()
+
+    assert "window.dpLive(" in js
+    assert 'return "stop"' not in js
+    # ...and the old conditional reschedule is gone with it.
+    assert "if (active) setTimeout(poll" not in js
+    assert "setTimeout(poll" not in js
+
+
+def test_a_failing_backend_is_not_polled_twice_as_hard() -> None:
+    """The catch path retried at half the interval, so the worse the
+    backend was doing the harder it got hit."""
+    js = RUN_JS.read_text()
+
+    assert "POLL_MS / 2" not in js
+
+
+def test_the_page_slows_down_between_runs_and_speeds_back_up() -> None:
+    """Backoff is monotonic, so something has to lower it again -- or the
+    loop sits at its slowest exactly when a build starts."""
+    js = RUN_JS.read_text()
+
+    assert "IDLE_POLL_MS" in js
+    assert "resetBackoff()" in js
+
+
+def test_the_poll_helper_lets_a_caller_lower_its_interval_again() -> None:
+    """live.js is shared by four surfaces, and its backoff only ever grew.
+    The reset has to land before onData runs, or a reset called from inside
+    onData is immediately overwritten by that same tick's increment."""
+    live = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+            / "static" / "live.js").read_text()
+
+    assert "resetBackoff:" in live
+    assert live.index("interval + backoffStep") < live.index("opts.onData(")
+
+
+def test_the_run_page_loads_the_poll_helper_before_its_client() -> None:
+    """run.js polls through window.dpLive and both are deferred, so tag
+    order is run order."""
+    html = (Path(__file__).resolve().parents[1] / "dportsv3" / "tracker"
+            / "templates" / "run.html").read_text()
+
+    assert "live.js" in html
+    assert html.index("live.js") < html.index("run.js\'")
+
+
+def test_a_broken_chunk_does_not_wedge_the_loader() -> None:
+    """`fetching` guards against overlapping loads. It was cleared only on
+    the success path, and the poll calls this fire-and-forget -- so one
+    throw silently froze the port list while the counters kept moving."""
+    js = RUN_JS.read_text()
+    start = js.index("function loadChunks(")
+    body = js[start:js.index("\n  }", start)]
+
+    assert ".finally(" in body
+    assert body.count("fetching = false") == 1
+
+
 # --- escaping ------------------------------------------------------------
 
 
