@@ -283,6 +283,21 @@ def fix_status(bundle: dict[str, Any]) -> FixStatus:
             return FixStatus("verified", "verified", "built")
         if v == VERIFICATION_FAILED:
             return FixStatus("verify_failed", "verify failed", "failed")
+        # A verify that is already under way is not the same thing as one
+        # nobody has asked for, and this branch used to return before the
+        # job state below was ever read -- so an occurrence being verified
+        # sat in "Needs verify" looking untouched for the several minutes
+        # it took (poly-x3pg.11).
+        #
+        # verify_state owns the reconciliation and its words; these two
+        # only have to agree with it, which is why they are its labels.
+        if (bundle.get("state") or bundle.get("job_state")) in _INFLIGHT_JOB_STATES:
+            return FixStatus("verifying", "verifying", "cyan")
+        if bundle.get("verify_request_status") == "pending":
+            # Written, and the runner has not turned it into a job. One
+            # tick normally -- forever if the runner is down, which is
+            # exactly when the queue must not look untouched.
+            return FixStatus("verify_queued", "verify queued", "cyan")
         return FixStatus("needs_review", "agent fixed — verify", "built")
 
     if r == RESOLUTION_OPERATOR_OWNED:
@@ -445,6 +460,15 @@ _WORKLIST_BUCKET: dict[str, str] = {
     "verified": "ready",
     "owned_verified": "ready",
     "needs_review": "verify",
+    # Both stay in the verify lane rather than going to None the way
+    # in_progress does. Hiding them would be defensible -- a job holds it
+    # and there is nothing to decide -- but build_issue_worklist drops a
+    # bucket-None issue entirely, so the port you just clicked Verify on
+    # would vanish from the queue AND from a filter search for it. Being
+    # unable to find what you just acted on is worse than a band label
+    # that is a shade too strong.
+    "verifying": "verify",
+    "verify_queued": "verify",
     "verify_failed": "decide",
     "agent_gave_up": "decide",
     "budget_out": "decide",
@@ -480,24 +504,26 @@ def worklist_bucket(bundle: dict[str, Any]) -> str | None:
 # bundle_actions for the buttons.
 
 #: One representative occurrence per distinct status the projection can
-#: produce. (resolution, verification_status, job state) -- the same three
-#: columns fix_status reads, and the only three it reads.
-_MATRIX_CASES: tuple[tuple[str | None, str | None, str | None], ...] = (
-    (RESOLUTION_AGENT_FIXED, VERIFIED, None),
-    (RESOLUTION_OPERATOR_OWNED, VERIFIED, None),
-    (RESOLUTION_AGENT_FIXED, None, None),
-    (RESOLUTION_AGENT_FIXED, VERIFICATION_FAILED, None),
-    (RESOLUTION_AGENT_GAVE_UP, None, None),
-    (RESOLUTION_AGENT_BUDGET, None, None),
-    (RESOLUTION_ESCALATED, None, None),
-    (RESOLUTION_TRIAGE_FAILED, None, None),
-    (RESOLUTION_OPERATOR_OWNED, None, None),
-    (None, None, "patching"),
-    (None, None, None),
-    (RESOLUTION_ACCEPTED, VERIFIED, None),
-    (RESOLUTION_MERGED, VERIFIED, None),
-    (RESOLUTION_REJECTED, None, None),
-    (RESOLUTION_DISCARDED, None, None),
+#: produce -- the same fields fix_status reads, and only those.
+_MATRIX_CASES: tuple[dict[str, str | None], ...] = (
+    {"resolution": RESOLUTION_AGENT_FIXED, "verification_status": VERIFIED},
+    {"resolution": RESOLUTION_OPERATOR_OWNED, "verification_status": VERIFIED},
+    {"resolution": RESOLUTION_AGENT_FIXED},
+    {"resolution": RESOLUTION_AGENT_FIXED, "verify_request_status": "pending"},
+    {"resolution": RESOLUTION_AGENT_FIXED, "state": "verifying_fix"},
+    {"resolution": RESOLUTION_AGENT_FIXED,
+     "verification_status": VERIFICATION_FAILED},
+    {"resolution": RESOLUTION_AGENT_GAVE_UP},
+    {"resolution": RESOLUTION_AGENT_BUDGET},
+    {"resolution": RESOLUTION_ESCALATED},
+    {"resolution": RESOLUTION_TRIAGE_FAILED},
+    {"resolution": RESOLUTION_OPERATOR_OWNED},
+    {"state": "patching"},
+    {},
+    {"resolution": RESOLUTION_ACCEPTED, "verification_status": VERIFIED},
+    {"resolution": RESOLUTION_MERGED, "verification_status": VERIFIED},
+    {"resolution": RESOLUTION_REJECTED},
+    {"resolution": RESOLUTION_DISCARDED},
 )
 
 #: Capability flag -> the word the operator sees on the button. Ordered the
@@ -535,15 +561,14 @@ def status_matrix() -> list[dict[str, Any]]:
     """
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for resolution, verification, job_state in _MATRIX_CASES:
+    for case in _MATRIX_CASES:
         bundle = {
-            "resolution": resolution,
-            "verification_status": verification,
-            "state": job_state,
+            "resolution": None, "verification_status": None, "state": None,
             # bundle_actions needs both to offer Take over, and every real
             # occurrence has them.
             "origin": "devel/example",
             "target": "@main",
+            **case,
         }
         status = fix_status(bundle)
         if status.key in seen:

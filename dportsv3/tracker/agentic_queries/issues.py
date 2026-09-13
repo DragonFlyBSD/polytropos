@@ -120,8 +120,20 @@ _OCCURRENCE_JOB_STATE = (
     "(SELECT j.state FROM jobs j WHERE j.bundle_id = b.bundle_id "
     " ORDER BY j.created_ts_utc DESC, j.job_id DESC LIMIT 1) AS job_state"
 )
+# The newest verify an operator asked for on this occurrence, so the queue
+# can tell "waiting on the runner" from "nobody asked". Only the status --
+# the job's own state is already here as job_state, and fix_status reads
+# both. Same one-indexed-lookup-per-row shape as the job state above
+# (poly-x3pg.11).
+_OCCURRENCE_VERIFY_REQUEST = (
+    "(SELECT vr.status FROM verify_requests vr "
+    " WHERE vr.bundle_id = b.bundle_id "
+    " ORDER BY vr.requested_at DESC, vr.id DESC LIMIT 1) "
+    "AS verify_request_status"
+)
 _OCCURRENCE_SELECT = (
-    f"SELECT b.*, r.build_run_id AS build_run_id, {_OCCURRENCE_JOB_STATE} "
+    f"SELECT b.*, r.build_run_id AS build_run_id, {_OCCURRENCE_JOB_STATE}, "
+    f"{_OCCURRENCE_VERIFY_REQUEST} "
     "FROM bundles b LEFT JOIN runs r ON r.run_id = b.run_id"
 )
 _OCCURRENCE_ORDER = " ORDER BY b.ts_utc DESC, b.bundle_id DESC"

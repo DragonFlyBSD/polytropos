@@ -347,3 +347,118 @@ def test_the_operator_only_destinations_are_hidden_from_a_reader(
     # ...and the shell says why the controls are missing rather than
     # leaving holes (M1).
     assert "anonymous" in body
+
+
+# --- a verify in flight looks different from one nobody asked for ---------
+#
+# fix_status's agent_fixed branch returned before it ever read the job
+# state, so an occurrence being verified sat in "Needs verify" looking
+# untouched for the several minutes the job took. The data was already on
+# the row -- _OCCURRENCE_JOB_STATE puts the newest job's state there -- it
+# was simply never consulted on this path (poly-x3pg.11).
+
+
+def test_an_untouched_fix_still_says_it_needs_verifying() -> None:
+    from dportsv3.tracker import fix_state
+
+    status = fix_state.fix_status(
+        {"resolution": "agent_fixed", "verification_status": None})
+
+    assert status.key == "needs_review"
+
+
+def test_a_running_verify_says_so() -> None:
+    from dportsv3.tracker import fix_state
+
+    bundle = {"resolution": "agent_fixed", "verification_status": None,
+              "job_state": "verifying_fix"}
+
+    assert fix_state.fix_status(bundle).key == "verifying"
+
+
+def test_a_verify_the_runner_has_not_picked_up_says_so_too() -> None:
+    """One tick normally, forever if the runner is down -- which is
+    exactly when the queue must not look untouched."""
+    from dportsv3.tracker import fix_state
+
+    bundle = {"resolution": "agent_fixed", "verification_status": None,
+              "verify_request_status": "pending"}
+
+    assert fix_state.fix_status(bundle).key == "verify_queued"
+
+
+def test_a_verify_in_flight_stays_findable_in_the_queue() -> None:
+    """Hiding it would be defensible -- a job holds it, nothing to decide
+    -- but build_issue_worklist drops a bucket-None issue entirely, so the
+    port you just clicked Verify on would vanish from the queue and from a
+    filter search for it."""
+    from dportsv3.tracker import fix_state
+
+    for state in ("verifying", "verify_queued"):
+        assert fix_state._WORKLIST_BUCKET[state] == "verify", state
+
+
+def test_a_finished_verify_beats_a_stale_job_row() -> None:
+    """The result posts back to the bundle; the job row is not what
+    decides, and a job left in an in-flight state must not mask it."""
+    from dportsv3.tracker import fix_state
+
+    passed = {"resolution": "agent_fixed", "verification_status": "verified",
+              "job_state": "verifying_fix"}
+    failed = {"resolution": "agent_fixed",
+              "verification_status": "verification_failed",
+              "job_state": "verifying_fix"}
+
+    assert fix_state.fix_status(passed).key == "verified"
+    assert fix_state.fix_status(failed).key == "verify_failed"
+
+
+def test_the_queue_carries_the_verify_request_it_needs(client) -> None:
+    """The status comes off the occurrence row, so the query has to put it
+    there -- one indexed lookup per row, like the job state beside it."""
+    from dportsv3.tracker.agentic_queries import issues as q
+
+    assert "verify_request_status" in q._OCCURRENCE_SELECT
+
+
+def test_the_worklist_reflects_a_verify_end_to_end(client, tmp_path) -> None:
+    """The whole point: the row changes when you ask for a verify, changes
+    again when it starts, and lands when it finishes."""
+    import sqlite3
+
+    def band_and_pill() -> tuple[str, str]:
+        body = client.get("/agentic?q=alpha").text
+        rail = body.split('class="repair-detail"')[0]
+        flat = re.sub(r"\s+", " ", rail)
+        m = re.search(
+            r'<div class="wl-row ([a-z]+)[^"]*"[^>]*>.*?'
+            r'wl-port[^>]*>(devel/alpha)<.*?class="wl-meta">(.*?)</div>', flat)
+        assert m, "row not found"
+        pills = [p.strip() for p in re.findall(r">([^<>]+)</span>", m.group(3))]
+        return m.group(1), " ".join(pills)
+
+    db = sqlite3.connect(str(client.app.state.db_path), isolation_level=None)
+    # devel/alpha's newest occurrence is agent_fixed + verified; walk a
+    # fresh unverified one instead.
+    db.execute("UPDATE bundles SET verification_status = NULL "
+               "WHERE bundle_id = 'b-i-ready-2'")
+    assert band_and_pill()[1].count("agent fixed") == 1
+
+    db.execute("INSERT INTO verify_requests(bundle_id, env, requested_by, "
+               "requested_at, status) VALUES ('b-i-ready-2', 'e', "
+               "'operator', 't', 'pending')")
+    assert "verify queued" in band_and_pill()[1]
+
+    db.execute("UPDATE verify_requests SET status = 'enqueued'")
+    db.execute("INSERT INTO jobs(job_id, bundle_id, state, created_ts_utc) "
+               "VALUES ('j-v', 'b-i-ready-2', 'verifying_fix', 't')")
+    assert "verifying" in band_and_pill()[1]
+
+    db.execute("UPDATE jobs SET state = 'done' WHERE job_id = 'j-v'")
+    db.execute("UPDATE bundles SET verification_status = 'verified' "
+               "WHERE bundle_id = 'b-i-ready-2'")
+    band, pills = band_and_pill()
+    db.close()
+
+    assert band == "ready"
+    assert "verified" in pills
