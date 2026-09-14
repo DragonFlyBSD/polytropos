@@ -10,7 +10,17 @@ from .builder import CreateOptions, EnvironmentBuilder, default_delta_root, defa
 from .config import load_config, require_root, validate_cache_root
 from .errors import CommandError, DevEnvError, UsageError
 from .fs import safe_remove_tree
-from .layout import FREEBSD_RELATIVE, PORTS_DIR, PORTS_MAIN_RELATIVE, PORTS_RELATIVE, TOOL_RELATIVE
+from .layout import (
+    FREEBSD_DIR,
+    FREEBSD_RELATIVE,
+    LOCK_DIR,
+    PORTS_DIR,
+    PORTS_MAIN_DIR,
+    PORTS_MAIN_RELATIVE,
+    PORTS_RELATIVE,
+    TOOL_BIN,
+    TOOL_RELATIVE,
+)
 from .log import error, info, run_log_context, to_user, warn
 from .mounts import mounts_under, ordered_mounts_under, unmount_under
 from .session import EnvironmentSession
@@ -327,8 +337,9 @@ def apply_and_build(
     for candidate in (origin, *(also or ())):
         if candidate and candidate not in build_origins:
             build_origins.append(candidate)
-    # Hoisted: _post_build_cleanup runs from a `finally` and would see
-    # these unbound if the try body refused before reaching the build.
+    # Hoisted: _post_build_cleanup runs from a `finally` and iterates
+    # build_origins, so it would see it unbound if the try body refused
+    # before reaching the build.
     build_args = " ".join(shlex.quote(o) for o in build_origins)
     reapply_args = " && reapply ".join(
         shlex.quote(o) for o in build_origins
@@ -394,22 +405,18 @@ def apply_and_build(
     # exit path — diff-apply failure, reapply failure, build success,
     # build failure.
     #
-    # Three stages, matching ``worker.reset_port``'s shape:
+    # Two stages, matching ``worker.reset_port``'s shape:
     #   1. ``make clean`` against the per-origin compose root — wipes
     #      the WRKDIR under ``$WRKDIRPREFIX/<origin>/`` along with
     #      ``.orig`` files / extracted-source edits dtest left behind.
     #      Runs first against the still-patched substrate (its in-tree
     #      Makefile is what the existing WRKDIR was authored against).
-    #   2. Substrate reset (load-bearing) — restore ports/<origin>/ to
-    #      HEAD. Three-step shape because ``git apply --3way`` indexed
-    #      the verify diff.
-    #   3. ``reapply`` against the now-reset substrate so
-    #      ``/work/artifacts/compose/<target>/<origin>/`` reflects HEAD
-    #      rather than the verify-applied state. Without this, the next
-    #      verify (or operator inspection of the env) starts against
-    #      stale compose output.
+    #   2. Re-compose the shared tree from the baseline checkout.
     #
-    # All three stages stay in this function rather than calling
+    # The substrate is not reset: since B1 the job owns its worktree
+    # and it is destroyed with the job.
+    #
+    # Both stages stay in this function rather than calling
     # ``worker.reset_port`` because apply-and-build is a separate
     # package from the generator: importing across the boundary
     # would couple dev-env to the agent loop unnecessarily. The
@@ -455,27 +462,39 @@ def apply_and_build(
         # worktree that is thrown away cannot leak onto any branch, which is
         # what test_verify_state_cannot_reach_the_base_branch pins.
 
-        # 2. Re-materialize the compose tree from the baseline
-        # substrate. Best-effort: a failure here means baseline HEAD
-        # itself doesn't compose cleanly — that was the state when
-        # verify started, so it isn't a regression we should mask as
-        # a cleanup failure.
-        reapply_cleanup = runner.run(
-            ["/bin/sh", "-c",
-             f"cd {PORTS_DIR} && reapply {reapply_args}",
-             "_"],
-            env=env, capture_output=True,
-        )
-        if reapply_cleanup.returncode != 0:
-            warn = (
-                f"\n[post-build reapply failed: "
-                f"rc={reapply_cleanup.returncode}; baseline HEAD may "
-                f"not compose cleanly — compose tree carries verify "
-                f"state]\n"
-                + (reapply_cleanup.stderr or "")[-512:]
+        # 2. Re-compose from the baseline checkout. Not via `reapply`:
+        # that helper composes --delta-root PORTS_DIR, the symlink
+        # pointing at this job's worktree, so it would re-derive the
+        # run's own state into the shared tree (poly-mdf7).
+        #
+        # Per-origin: `reapply a && b` stops at the first failure, so
+        # one origin that cannot compose used to skip the rest.
+        # Best-effort — failing here means the origin does not compose
+        # at baseline, which was already true when the run started.
+        for build_origin in build_origins:
+            compose_cleanup = runner.run(
+                ["/bin/sh", "-c",
+                 f"{TOOL_BIN} compose"
+                 f' --target "$DPORTS_TARGET"'
+                 f" --origin {shlex.quote(build_origin)}"
+                 f" --delta-root {PORTS_MAIN_DIR}"
+                 f" --freebsd-root {FREEBSD_DIR}"
+                 f' --lock-root "${{DPORTS_LOCK_ROOT:-{LOCK_DIR}}}"'
+                 f' --output "$DPORTS_COMPOSE_ROOT"'
+                 f' --oracle-profile "${{DPORTS_ORACLE_PROFILE:-off}}"',
+                 "_"],
+                env=env, capture_output=True,
             )
-            existing = result.get("stderr_tail") or ""
-            result["stderr_tail"] = (existing + warn)[-2000:]
+            if compose_cleanup.returncode != 0:
+                warn = (
+                    f"\n[post-build baseline compose failed for "
+                    f"{build_origin}: rc={compose_cleanup.returncode}; "
+                    f"{build_origin} does not compose at baseline, so "
+                    f"its compose tree still carries verify state]\n"
+                    + (compose_cleanup.stderr or "")[-512:]
+                )
+                existing = result.get("stderr_tail") or ""
+                result["stderr_tail"] = (existing + warn)[-2000:]
 
     try:
         # 1. Apply diff (optional). Run through the chroot
