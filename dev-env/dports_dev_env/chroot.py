@@ -56,7 +56,7 @@ class ChrootRunner:
 
 
 def command_exists(root_dir: Path, command: str) -> bool:
-    result = ChrootRunner(root_dir).run(["/bin/sh", "-c", 'command -v "$1" >/dev/null 2>&1', "_", command])
+    result = ChrootRunner(root_dir).run_shell('command -v "$1" >/dev/null 2>&1', command)
     return result.returncode == 0
 
 

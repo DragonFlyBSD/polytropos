@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 
 from .base import find_ready_provisioned_base
@@ -58,9 +57,10 @@ class EnvironmentSession:
         if not argv:
             raise UsageError("dev-env exec requires a command to run")
         env = chroot_env() | build_env_dict(state)
-        wrapped = ["/bin/sh", "-c", f'cd {shlex.quote(cwd)} && exec "$@"', "_", *argv]
         info(f"exec in env={state.name} cwd={cwd}: {' '.join(argv)}")
-        result = ChrootRunner(state.root_dir).run(wrapped, env=env)
+        result = ChrootRunner(state.root_dir).run_shell(
+            'cd "$1" && shift && exec "$@"', cwd, *argv, env=env,
+        )
         return result.returncode
 
     def ensure_root_mounted(self, env_dir: Path, state: EnvironmentState) -> None:

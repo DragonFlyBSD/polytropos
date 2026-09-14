@@ -93,6 +93,14 @@ def fake_env(tmp_path: Path, monkeypatch):
                 return self.outcomes.pop(0)
             return subprocess.CompletedProcess(argv, 0, "", "")
 
+        def run_shell(self, script, *args, env=None, check=False,
+                      capture_output=False):
+            # Same body as the real ChrootRunner.run_shell, so the argv
+            # these tests inspect is what the chroot would have seen.
+            return self.run(["/bin/sh", "-c", script, "_", *args],
+                            env=env, check=check,
+                            capture_output=capture_output)
+
     runner = _Runner(state.root_dir)
 
     def _make_runner(_root_dir):
@@ -148,10 +156,13 @@ def test_no_diff_happy_path_returns_zero(fake_env, monkeypatch) -> None:
     # baseline compose). No substrate reset: the worktree is thrown
     # away instead.
     assert len(fake_env.calls) == 4
-    reapply_argv = " ".join(fake_env.calls[0]["argv"])
+    reapply_script, reapply_args = _shell(fake_env.calls[0]["argv"])
+    dtest_script, dtest_args = _shell(fake_env.calls[1]["argv"])
+    assert 'reapply "$@"' in reapply_script
+    assert reapply_args == ["devel/foo"]
+    assert 'dtest "$@"' in dtest_script
+    assert dtest_args[-1] == "devel/foo"
     dtest_argv = " ".join(fake_env.calls[1]["argv"])
-    assert "reapply devel/foo" in reapply_argv
-    assert "dtest devel/foo" in dtest_argv
     # The verify build suppresses the dsynth failure hooks (sentinel
     # file + trap) so a failed verify doesn't upload a new bundle and
     # re-trigger triage for an origin the loop is already handling.
@@ -237,8 +248,11 @@ def test_diff_apply_failure_short_circuits(fake_env, monkeypatch, tmp_path) -> N
     # still runs in the finally.
     all_argv = [" ".join(c["argv"]) for c in fake_env.calls]
     assert any("git apply --3way" in a for a in all_argv)
-    assert not any("reapply devel/foo" in a for a in all_argv)
-    baseline = [a for a in all_argv if "compose" in a and "--origin devel/foo" in a]
+    assert not any('reapply "$@"' in a for a in all_argv)
+    baseline = [
+        c for c in _post_build_calls(fake_env.calls)
+        if "compose" in _shell(c)[0] and _shell(c)[1] == ["devel/foo"]
+    ]
     assert len(baseline) == 1  # only the cleanup-stage baseline compose
     assert not any("dtest devel/foo" in a for a in all_argv)
     # sha256 still recorded so the orchestrator can dedupe.
@@ -265,7 +279,7 @@ def test_reapply_failure_short_circuits_dsynth(fake_env, monkeypatch) -> None:
     assert result["ok"] is False
     # reapply failed → dtest skipped (cleanup still runs in finally).
     all_argv = [" ".join(c["argv"]) for c in fake_env.calls]
-    assert any("reapply devel/foo" in a for a in all_argv)
+    assert any('reapply "$@"' in a for a in all_argv)
     assert not any("dtest devel/foo" in a for a in all_argv)
 
 
@@ -315,6 +329,11 @@ def test_non_json_output_is_one_line_summary(fake_env, monkeypatch) -> None:
 
 
 # --- Q1 follow-up: post-build cleanup wipes substrate + WRKDIR -------------
+
+
+def _shell(argv: list[str]) -> tuple[str, list[str]]:
+    """Split a recorded ``/bin/sh -c SCRIPT _ ARGS...`` argv."""
+    return argv[2], list(argv[4:])
 
 
 def _post_build_calls(calls: list[dict]) -> list[list[str]]:
@@ -400,16 +419,18 @@ def test_cleanup_composes_from_baseline_not_the_worktree(
     diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n")
     apply_and_build(fake_env.env_name, "devel/foo", diff_path=str(diff))
 
-    shell_calls = [" ".join(c) for c in _post_build_calls(fake_env.calls)]
-    baseline = [c for c in shell_calls if "--origin devel/foo" in c]
+    calls = _post_build_calls(fake_env.calls)
+    baseline = [c for c in calls if "compose" in _shell(c)[0]]
     assert len(baseline) == 1
-    assert "--delta-root /work/ports-main" in baseline[0]
-    assert "--delta-root /work/DeltaPorts" not in baseline[0]
+    script, args = _shell(baseline[0])
+    assert args == ["devel/foo"]
+    assert "--delta-root /work/ports-main" in script
+    assert "--delta-root /work/DeltaPorts" not in script
     # Cleanup bypasses reapply; the build stage still uses it.
-    assert "reapply" not in baseline[0]
-    build_stage = [c for c in shell_calls if "reapply devel/foo" in c]
+    assert "reapply" not in script
+    build_stage = [c for c in calls if 'reapply "$@"' in _shell(c)[0]]
     assert len(build_stage) == 1
-    assert "cd /work/DeltaPorts" in build_stage[0]
+    assert "cd /work/DeltaPorts" in _shell(build_stage[0])[0]
 
 
 def test_cleanup_continues_past_a_sibling_that_cannot_compose(
@@ -441,10 +462,12 @@ def test_cleanup_continues_past_a_sibling_that_cannot_compose(
         diff_path=str(diff), also=["devel/foo-slave"],
     )
 
-    shell_calls = [" ".join(c) for c in _post_build_calls(fake_env.calls)]
+    composed = [
+        _shell(c)[1][0] for c in _post_build_calls(fake_env.calls)
+        if "compose" in _shell(c)[0]
+    ]
     # Both origins composed; the first failing did not skip the second.
-    assert any("--origin devel/foo " in c for c in shell_calls)
-    assert any("--origin devel/foo-slave" in c for c in shell_calls)
+    assert composed == ["devel/foo", "devel/foo-slave"]
     # Only the failing origin is named in the warning.
     tail = result.get("stderr_tail") or ""
     assert "post-build baseline compose failed for devel/foo:" in tail

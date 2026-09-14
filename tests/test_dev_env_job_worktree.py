@@ -186,6 +186,9 @@ def test_dirty_check_refuses_to_guess_when_git_cannot_answer(tmp_path, monkeypat
         def run(self, argv, **kw):
             return subprocess.CompletedProcess(argv, 128, "", "not a git repository")
 
+        def run_shell(self, script, *args, **kw):
+            return self.run(["/bin/sh", "-c", script, "_", *args], **kw)
+
     monkeypatch.setattr("dports_dev_env.chroot.ChrootRunner", _Runner)
 
     with pytest.raises(CommandError, match="could not determine whether"):

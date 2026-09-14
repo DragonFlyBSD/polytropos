@@ -326,7 +326,6 @@ def apply_and_build(
     """
     import hashlib
     import json
-    import shlex
 
     from .chroot import ChrootRunner, chroot_env
     from .helpers import build_env_dict
@@ -337,13 +336,6 @@ def apply_and_build(
     for candidate in (origin, *(also or ())):
         if candidate and candidate not in build_origins:
             build_origins.append(candidate)
-    # Hoisted: _post_build_cleanup runs from a `finally` and iterates
-    # build_origins, so it would see it unbound if the try body refused
-    # before reaching the build.
-    build_args = " ".join(shlex.quote(o) for o in build_origins)
-    reapply_args = " && reapply ".join(
-        shlex.quote(o) for o in build_origins
-    )
 
     require_root()
     config = load_config()
@@ -429,14 +421,13 @@ def apply_and_build(
         # stderr_tail but does not flip the result; runs first so the
         # in-tree Makefile reflects the patched state make clean was
         # authored against.
-        wrkdir_script = "; ".join(
-            'cd "$DPORTS_COMPOSE_ROOT/' + o + '" && '
-            'make PORTSDIR="$DPORTS_COMPOSE_ROOT" '
-            'WRKDIRPREFIX=/work/obj BATCH=yes clean'
-            for o in build_origins
-        )
-        wrkdir_cleanup = runner.run(
-            ["/bin/sh", "-c", wrkdir_script, "_"],
+        wrkdir_cleanup = runner.run_shell(
+            'for o in "$@"; do'
+            '  cd "$DPORTS_COMPOSE_ROOT/$o" &&'
+            '  make PORTSDIR="$DPORTS_COMPOSE_ROOT"'
+            '       WRKDIRPREFIX=/work/obj BATCH=yes clean;'
+            'done',
+            *build_origins,
             env=env, capture_output=True,
         )
         if wrkdir_cleanup.returncode != 0:
@@ -472,17 +463,16 @@ def apply_and_build(
         # Best-effort — failing here means the origin does not compose
         # at baseline, which was already true when the run started.
         for build_origin in build_origins:
-            compose_cleanup = runner.run(
-                ["/bin/sh", "-c",
-                 f"{TOOL_BIN} compose"
-                 f' --target "$DPORTS_TARGET"'
-                 f" --origin {shlex.quote(build_origin)}"
-                 f" --delta-root {PORTS_MAIN_DIR}"
-                 f" --freebsd-root {FREEBSD_DIR}"
-                 f' --lock-root "${{DPORTS_LOCK_ROOT:-{LOCK_DIR}}}"'
-                 f' --output "$DPORTS_COMPOSE_ROOT"'
-                 f' --oracle-profile "${{DPORTS_ORACLE_PROFILE:-off}}"',
-                 "_"],
+            compose_cleanup = runner.run_shell(
+                f"{TOOL_BIN} compose"
+                f' --target "$DPORTS_TARGET"'
+                f' --origin "$1"'
+                f" --delta-root {PORTS_MAIN_DIR}"
+                f" --freebsd-root {FREEBSD_DIR}"
+                f' --lock-root "${{DPORTS_LOCK_ROOT:-{LOCK_DIR}}}"'
+                f' --output "$DPORTS_COMPOSE_ROOT"'
+                f' --oracle-profile "${{DPORTS_ORACLE_PROFILE:-off}}"',
+                build_origin,
                 env=env, capture_output=True,
             )
             if compose_cleanup.returncode != 0:
@@ -514,10 +504,9 @@ def apply_and_build(
             staged_host.write_bytes(diff_bytes)
             diff_chroot_path = "/work/.apply-and-build.diff"
             try:
-                apply_proc = runner.run(
-                    ["/bin/sh", "-c",
-                     f"cd {PORTS_DIR} && git apply --3way "
-                     f"{shlex.quote(diff_chroot_path)}", "_"],
+                apply_proc = runner.run_shell(
+                    f'cd {PORTS_DIR} && git apply --3way "$1"',
+                    diff_chroot_path,
                     env=env, capture_output=True,
                 )
                 result["apply_exit"] = apply_proc.returncode
@@ -534,9 +523,9 @@ def apply_and_build(
 
         # 2. reapply ORIGIN — re-materialize DPorts from the (possibly-
         #    edited) DeltaPorts source.
-        reapply_proc = runner.run(
-            ["/bin/sh", "-c", f"cd {PORTS_DIR} && reapply "
-                              f"{reapply_args}", "_"],
+        reapply_proc = runner.run_shell(
+            f'cd {PORTS_DIR} && reapply "$@"',
+            *build_origins,
             env=env, capture_output=True,
         )
         result["reapply_exit"] = reapply_proc.returncode
@@ -570,12 +559,12 @@ def apply_and_build(
         # guard lives here in the verify primitive, NOT in the
         # dtest/dbuild helper, so an operator running dbuild by hand
         # still feeds the loop on a genuine failure.
-        build_proc = runner.run(
-            ["/bin/sh", "-c",
-             "flag=/work/.dports-agent-hooks-disabled; "
-             "trap 'rm -f \"$flag\"' EXIT; : > \"$flag\"; "
-             f"cd {PORTS_DIR} && dtest {build_args} "
-             f"> {shlex.quote(log_chroot)} 2>&1", "_"],
+        build_proc = runner.run_shell(
+            "flag=/work/.dports-agent-hooks-disabled; "
+            "trap 'rm -f \"$flag\"' EXIT; : > \"$flag\"; "
+            'log=$1; shift; '
+            f'cd {PORTS_DIR} && dtest "$@" > "$log" 2>&1',
+            log_chroot, *build_origins,
             env=env, capture_output=False,
         )
         result["dsynth_exit"] = build_proc.returncode
@@ -603,14 +592,12 @@ def _port_dirty_paths(root_dir: Path, origin: str) -> list[str]:
     the replay precisely *because* a dirty tree would make the verify verdict
     meaningless. Answering "clean" when we do not know inverts that check.
     """
-    import shlex as _shlex
-
     from .chroot import ChrootRunner
 
     rel = f"ports/{origin}"
-    p = ChrootRunner(root_dir).run(
-        ["/bin/sh", "-c",
-         f"cd {PORTS_DIR} && git status --porcelain -- {_shlex.quote(rel)}"],
+    p = ChrootRunner(root_dir).run_shell(
+        f'cd {PORTS_DIR} && git status --porcelain -- "$1"',
+        rel,
         capture_output=True,
     )
     if p.returncode != 0:
@@ -641,7 +628,6 @@ def cmd_reset_port(args: argparse.Namespace) -> int:
     due to drift, or between runs without restarting the env.
     """
     import json
-    import shlex as _shlex
 
     from .chroot import ChrootRunner, chroot_env
     from .helpers import build_env_dict
@@ -668,11 +654,11 @@ def cmd_reset_port(args: argparse.Namespace) -> int:
         dirty_before = []
 
     rel = f"ports/{args.origin}"
-    p = runner.run(
-        ["/bin/sh", "-c",
-         f"cd {PORTS_DIR} && "
-         f"git checkout HEAD -- {_shlex.quote(rel)} && "
-         f"git clean -fd -- {_shlex.quote(rel)}", "_"],
+    p = runner.run_shell(
+        f'cd {PORTS_DIR} && '
+        'git checkout HEAD -- "$1" && '
+        'git clean -fd -- "$1"',
+        rel,
         env=env, capture_output=True,
     )
     result = {
