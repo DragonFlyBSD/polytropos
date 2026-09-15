@@ -669,43 +669,40 @@ distill_log() {
 		return
 	fi
 
-	# High-signal patterns. Keep them fairly conservative to avoid dumping
-	# thousands of harmless "error:" hits.
+	# High-signal patterns. One list, both greps: the candidates section
+	# and the blocks section answered different questions when they were
+	# maintained separately, so a log whose only hit was "ERROR: " got
+	# candidates with no context at all (java/openjdk25, 2026-09-14).
+	# `file:line:col: error:` is the clang/gcc diagnostic shape. Bare
+	# "error:" is what the conservative list was avoiding; requiring the
+	# position prefix keeps prose out.
 	# Note: use grep -nE (extended-regex, line-number); rg isn't in
 	# dfly base. \s+ → [[:space:]]+ for POSIX ERE compatibility.
+
+	set -- \
+		-e 'fatal error:' \
+		-e '^[^[:space:]]+:[0-9]+:[0-9]+: error:' \
+		-e 'undefined reference' \
+		-e 'ld: error:' \
+		-e 'collect2: error' \
+		-e 'CMake Error' \
+		-e 'configure: error' \
+		-e 'meson\.build:.*ERROR' \
+		-e '^ninja: build stopped' \
+		-e 'error: failed to run custom build command for' \
+		-e 'ERROR: ' \
+		-e 'No such file or directory' \
+		-e '^===>[[:space:]]+Stopped[[:space:]]+in[[:space:]]+'
 
 	{
 		echo "== Summary =="
 		echo "logfile: ${logfile}"
 		echo
 		echo "== First error candidates (max 60 matches) =="
-		grep -nE -m 60 \
-			-e 'fatal error:' \
-			-e 'undefined reference' \
-			-e 'ld: error:' \
-			-e 'collect2: error' \
-			-e 'CMake Error' \
-			-e 'configure: error' \
-			-e 'meson\.build:.*ERROR' \
-			-e '^ninja: build stopped' \
-			-e 'error: failed to run custom build command for' \
-			-e 'ERROR: ' \
-			-e 'No such file or directory' \
-			"$logfile" || true
+		grep -nE -m 60 "$@" "$logfile" || true
 		echo
 		echo "== Error blocks (context +/-2, truncated later) =="
-		grep -nE -C 2 \
-			-e 'fatal error:' \
-			-e 'undefined reference' \
-			-e 'ld: error:' \
-			-e 'collect2: error' \
-			-e 'CMake Error' \
-			-e 'configure: error' \
-			-e 'meson\.build:.*ERROR' \
-			-e '^ninja: build stopped' \
-			-e 'error: failed to run custom build command for' \
-			-e '^===>[[:space:]]+Stopped[[:space:]]+in[[:space:]]+' \
-			"$logfile" || true
+		grep -nE -C 2 "$@" "$logfile" || true
 		echo
 		echo "== Tail (last 200 lines) =="
 		tail -n 200 "$logfile" || true
