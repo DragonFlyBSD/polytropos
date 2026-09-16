@@ -3987,10 +3987,11 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
         # `tail` is the key this tool returns; reading `text` printed
         # lines=0 on every call, success included, which made a working
         # read look identical to a missing log.
-        n = len((result.get("tail") or "").splitlines())
+        tail = result.get("tail") or ""
         fl = result.get("flavor") or ""
         return (f"origin={args.get('origin', '')}"
-                f"{'@' + fl if fl else ''} lines={n}{ok_tag}")
+                f"{'@' + fl if fl else ''} lines={len(tail.splitlines())} "
+                f"bytes={len(tail.encode())}{ok_tag}")
     # Fallback: show first arg key=value pair
     if args:
         k, v = next(iter(args.items()))

@@ -176,8 +176,15 @@ _TOOLS: list[dict] = [
           "/work/dsynth/logs. Call after a dsynth_build failure. dsynth "
           "writes one log per flavor; omit `flavor` to get the most "
           "recent one, and the result names the others in "
-          "available_flavors if you need a specific one.",
-          {"origin": _STR, "tail_lines": _INT, "flavor": _STR}, ["origin"]),
+          "available_flavors if you need a specific one. The result is "
+          "capped at max_bytes (default 32768, about 8k tokens) as well as "
+          "tail_lines, keeping the last whole lines; `truncated_by` says "
+          "which limit cut it. Raise max_bytes only for a specific block you "
+          "need whole, such as a check-plist error list, and size it from "
+          "requested_bytes. A large build's whole log is hundreds of "
+          "thousands of tokens, and every later turn re-sends it.",
+          {"origin": _STR, "tail_lines": _INT, "flavor": _STR,
+           "max_bytes": _INT}, ["origin"]),
     _tool("dops_reference",
           "Return a condensed quick-reference for the dops DSL (overlay.dops "
           "syntax: mk set/add/remove, mk replace-if, mk target set/append, "

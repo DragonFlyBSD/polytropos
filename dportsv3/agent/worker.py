@@ -3708,8 +3708,30 @@ def _dsynth_log_flavor(path: Path, origin: str) -> str:
     return name[len(stem) + 1:] if name.startswith(f"{stem}@") else ""
 
 
+def _last_lines_within(lines: list[str], max_bytes: int) -> tuple[list[str], bool]:
+    """The longest suffix of ``lines`` that joins to at most ``max_bytes``.
+
+    Whole lines only, so a cut never leaves half a compiler diagnostic at
+    the top. A single line longer than the whole budget keeps its tail
+    bytes rather than returning nothing.
+    """
+    used = 0
+    start = len(lines)
+    for i in range(len(lines) - 1, -1, -1):
+        cost = len(lines[i].encode()) + (1 if start < len(lines) else 0)
+        if used + cost > max_bytes:
+            break
+        used += cost
+        start = i
+    if start == 0:
+        return lines, False
+    if start == len(lines):
+        return [lines[-1].encode()[-max_bytes:].decode(errors="ignore")], True
+    return lines[start:], True
+
+
 def dsynth_log(env: str, origin: str, tail_lines: int = 200,
-               flavor: str = "") -> dict:
+               flavor: str = "", max_bytes: int = _MAX_STREAM_BYTES) -> dict:
     """Read the tail of dsynth's per-port build log.
 
     Call this when ``dsynth_build`` returned ``rebuild_ok=false``;
@@ -3719,6 +3741,12 @@ def dsynth_log(env: str, origin: str, tail_lines: int = 200,
     dsynth writes one log per flavor. Pass ``flavor`` to pick one;
     without it the most recently written is used and the rest are
     named in ``available_flavors`` so a second call can be exact.
+
+    Capped by bytes as well as lines (poly-9hjm). Lines are not the cost:
+    a build's lines can run to kilobytes, and a re-read sized from
+    ``total_lines`` returned megabytes. The byte cap is a default, not a
+    ceiling, because a large structured error block such as a check-plist
+    list is worth reading whole; ``requested_bytes`` sizes that read.
     """
     candidates = _dsynth_log_candidates(env, origin)
     if flavor:
@@ -3765,12 +3793,13 @@ def dsynth_log(env: str, origin: str, tail_lines: int = 200,
             "tail": "",
         }
     lines = text.splitlines()
-    if tail_lines > 0 and len(lines) > tail_lines:
-        truncated = True
-        kept = lines[-tail_lines:]
-    else:
-        truncated = False
-        kept = lines
+    kept = lines[-tail_lines:] if 0 < tail_lines < len(lines) else lines
+    truncated_by = "lines" if len(kept) < len(lines) else ""
+    requested_bytes = len("\n".join(kept).encode())
+    limit = max_bytes if max_bytes > 0 else _MAX_STREAM_BYTES
+    kept, byte_cut = _last_lines_within(kept, limit)
+    if byte_cut:
+        truncated_by = "bytes"
     return {
         "ok": True,
         "origin": origin,
@@ -3779,6 +3808,10 @@ def dsynth_log(env: str, origin: str, tail_lines: int = 200,
         "available_flavors": [_dsynth_log_flavor(p, origin)
                               for p in candidates],
         "tail": "\n".join(kept),
-        "truncated": truncated,
+        "truncated": bool(truncated_by),
+        "truncated_by": truncated_by,
         "total_lines": len(lines),
+        "total_bytes": len(text.encode()),
+        "requested_bytes": requested_bytes,
+        "max_bytes": limit,
     }
