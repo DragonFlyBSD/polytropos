@@ -166,6 +166,21 @@ def env_paths(env: str) -> EnvPaths:
     return EnvPaths(env_dir=Path(p1.stdout.strip()), writable=Path(p2.stdout.strip()))
 
 
+def note(env: str, text: str) -> dict:
+    """Record a conclusion for later (poly-hnk3).
+
+    Nothing is stored here: the text lives in the tool call, and calls
+    are never masked, so it stays in view for the whole attempt, and the
+    retry hand-over collects it from the tool log. Masking removes the
+    output a conclusion was drawn from, and the patch model keeps almost
+    none of its reasoning in the conversation (py-onnx: 0 of 138 turns),
+    so without a note the reason goes with the output.
+    """
+    if not (text or "").strip():
+        return {"ok": False, "error": "note: text is empty"}
+    return {"ok": True}
+
+
 def env_verify(env: str) -> dict:
     """Return the env's state dict; raise if not usable.
 

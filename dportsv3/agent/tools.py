@@ -185,6 +185,13 @@ _TOOLS: list[dict] = [
           "thousands of tokens, and every later turn re-sends it.",
           {"origin": _STR, "tail_lines": _INT, "flavor": _STR,
            "max_bytes": _INT}, ["origin"]),
+    _tool("note",
+          "Record a conclusion you will need later: why a build failed, what "
+          "an approach proved, what not to try again. One or two sentences. "
+          "Older tool output is omitted from the conversation as it grows, "
+          "but your notes are not, and they carry over to the next attempt. "
+          "Call it after reading why a build failed.",
+          {"text": _STR}, ["text"]),
     _tool("dops_reference",
           "Return a condensed quick-reference for the dops DSL (overlay.dops "
           "syntax: mk set/add/remove, mk replace-if, mk target set/append, "

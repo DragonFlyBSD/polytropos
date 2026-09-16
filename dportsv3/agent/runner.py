@@ -3992,6 +3992,10 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
         return (f"origin={args.get('origin', '')}"
                 f"{'@' + fl if fl else ''} lines={len(tail.splitlines())} "
                 f"bytes={len(tail.encode())}{ok_tag}")
+    if tool == "note":
+        # The agent's own conclusion; the log line is where an operator
+        # reads it, so show the sentence rather than 80 characters of it.
+        return f"{str(args.get('text') or '').strip()[:300]}{ok_tag}"
     # Fallback: show first arg key=value pair
     if args:
         k, v = next(iter(args.items()))

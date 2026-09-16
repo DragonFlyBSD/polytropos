@@ -187,13 +187,12 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
-        elif et == "context_elided":
+        elif et == "observations_masked":
             self.activity_log(
-                self.queue_root, "context_elided",
-                f"A{ev.get('attempt')}.T{ev.get('turn')} left "
-                f"{ev.get('dropped_exchanges')} old exchange(s) out: "
-                f"{ev.get('bytes_before')} -> {ev.get('bytes_after')} bytes "
-                f"(cap {ev.get('cap')})",
+                self.queue_root, "observations_masked",
+                f"A{ev.get('attempt')}.T{ev.get('turn')} masked "
+                f"{ev.get('masked_results')} old tool result(s): "
+                f"{ev.get('bytes_before')} -> {ev.get('bytes_after')} bytes",
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )

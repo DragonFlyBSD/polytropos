@@ -115,6 +115,11 @@ _PROOF_TOOLS = ("dsynth_build", "dsynth_test")
 #: rarely bites; when it does the message says so.
 _MAX_CARRIED_DIFF = 4000
 
+#: Notes carried into a retry, and the length of each. The tool asks for
+#: a sentence or two; these only bound a model that ignores that.
+_MAX_CARRIED_NOTES = 20
+_MAX_NOTE_CHARS = 500
+
 
 def _targets(tool_log: list[dict], tools: tuple[str, ...], limit: int) -> list[str]:
     """Distinct ``path``/``origin`` arguments the previous attempt passed.
@@ -172,6 +177,14 @@ _STOP_REASONS = {
     "token_budget": "it ran out of token budget",
     "text_only": "it finished and wrote a report, but the fix was not proven",
 }
+
+
+def _notes(tool_log: list[dict]) -> list[str]:
+    """What the agent recorded with ``note``, oldest first."""
+    return [str((ev.get("args") or {}).get("text") or "").strip()
+            for ev in tool_log
+            if ev.get("tool") == "note"
+            and str((ev.get("args") or {}).get("text") or "").strip()]
 
 
 def _last_proof_failure(tool_log: list[dict]) -> str:
@@ -235,6 +248,7 @@ def _failure_context_message(
     origin: str | None = None,
     tool_log: list[dict] | None = None,
     stop_reason: str | None = None,
+    notes: list[str] | None = None,
 ) -> dict:
     """Build the user message that opens a retry.
 
@@ -267,6 +281,19 @@ def _failure_context_message(
         parts.append(
             f"It stopped because {_STOP_REASONS.get(stop_reason, stop_reason)}.\n"
         )
+
+    if notes:
+        # The agent's own conclusions, from every attempt so far: tool
+        # output is masked as a conversation grows, and these are what
+        # it wrote down so the reasons would outlive that.
+        shown = notes[-_MAX_CARRIED_NOTES:]
+        parts.append("## Notes recorded in earlier attempts\n"
+                     + (f"(… {len(notes) - len(shown)} earlier notes not shown)\n"
+                        if len(notes) > len(shown) else "")
+                     + "".join(
+                         f"- {n[:_MAX_NOTE_CHARS]}"
+                         f"{'…' if len(n) > _MAX_NOTE_CHARS else ''}\n"
+                         for n in shown))
 
     read = _targets(tool_log, _READ_TOOLS, limit=20)
     searched = _searches(tool_log)
@@ -361,7 +388,8 @@ def run(
     is_success=None,
     session_dump=None,
     reasoning: str | None = None,
-    context_cap: int = 0,
+    context_keep_turns: int = 0,
+    context_mask_batch: int = 0,
 ) -> PatchResult:
     """Run the patch flow for one bundle, returning a structured PatchResult.
 
@@ -385,6 +413,7 @@ def run(
     # without bound.
     prev_tools: list[dict] = []
     prev_stop: str | None = None
+    notes: list[str] = []
     final_text = ""
     winning_proof: dict | None = None
     # Default for the needs-help return, which sits outside the attempt
@@ -426,6 +455,7 @@ def run(
                     origin=origin,
                     tool_log=prev_tools,
                     stop_reason=prev_stop,
+                    notes=notes,
                 )
             ]
 
@@ -525,7 +555,8 @@ def run(
                 attempt_idx=attempt_idx,
                 tool_whitelist=tool_whitelist,
                 reasoning=reasoning,
-                context_cap=context_cap,
+                context_keep_turns=context_keep_turns,
+                context_mask_batch=context_mask_batch,
             )
         except tool_loop.EnvironmentBlocked as blocked:
             # A tool reported something no further agent work can clear.
@@ -584,6 +615,7 @@ def run(
         final_text = prev_text
         prev_tools = this_attempt_tools
         prev_stop = seen.get("stop_reason")
+        notes += _notes(this_attempt_tools)
 
         # Optional full-session dump (gated by DP_HARNESS_DUMP_SESSION
         # at the callback's construction site). messages is the final

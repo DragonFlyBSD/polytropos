@@ -452,13 +452,19 @@ SETTINGS: list[Setting] = [
             "Empty falls back to the triage provider."),
     Setting("llm.patch.timeout", "int", 600, "Seconds per request."),
     Setting(
-        "llm.patch.context_cap", "int", 384 * 1024,
-        "Bound on the conversation the patch loop re-sends each turn, in\n"
-        "bytes (about 3.4 per token). Over it, the oldest whole tool\n"
-        "exchanges are left out of the request, cutting back to 60% of the\n"
-        "cap; the system prompt and the task always stay, and the session\n"
-        "dump keeps everything. The default suits a 128K-context model.\n"
-        "0 disables it.",
+        "llm.patch.context_keep_turns", "int", 10,
+        "How many recent turns keep their tool output in full. Older\n"
+        "output is replaced by a short placeholder; the calls themselves\n"
+        "stay, and the session dump keeps everything. 10 was the best\n"
+        "window for SWE-agent in the published comparison, but the best\n"
+        "value depends on the agent, so tune it. 0 disables masking.",
+    ),
+    Setting(
+        "llm.patch.context_mask_batch", "int", 32 * 1024,
+        "Bytes of old tool output to let accumulate before masking it.\n"
+        "Each mask changes the prompt from the first masked message on,\n"
+        "so the provider re-bills everything after it; masking in batches\n"
+        "keeps the cached prefix intact in between. 0 masks every turn.",
     ),
     Setting(
         "llm.patch.free_tier", "bool", False,

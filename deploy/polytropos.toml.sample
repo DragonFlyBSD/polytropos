@@ -338,13 +338,18 @@
 # Seconds per request.
 #timeout = 600
 
-# Bound on the conversation the patch loop re-sends each turn, in
-# bytes (about 3.4 per token). Over it, the oldest whole tool
-# exchanges are left out of the request, cutting back to 60% of the
-# cap; the system prompt and the task always stay, and the session
-# dump keeps everything. The default suits a 128K-context model.
-# 0 disables it.
-#context_cap = 393216
+# How many recent turns keep their tool output in full. Older
+# output is replaced by a short placeholder; the calls themselves
+# stay, and the session dump keeps everything. 10 was the best
+# window for SWE-agent in the published comparison, but the best
+# value depends on the agent, so tune it. 0 disables masking.
+#context_keep_turns = 10
+
+# Bytes of old tool output to let accumulate before masking it.
+# Each mask changes the prompt from the first masked message on,
+# so the provider re-bills everything after it; masking in batches
+# keeps the cached prefix intact in between. 0 masks every turn.
+#context_mask_batch = 32768
 
 # The patch model costs nothing, so drop the tier's token budget
 # and let the loop run to an answer. The budget bounds SPEND; on

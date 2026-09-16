@@ -467,6 +467,10 @@ In all cases, edit `/work/DeltaPorts/ports/<origin>/` and let
   per-port log, not in the tool's stdout_tail. Don't grep
   `/work/DPorts/.../*.log` — those files don't exist; dsynth's logs
   live under `/work/dsynth/logs/`.
+- Once you know why a build failed, **call `note(text)`** with the
+  cause in a sentence before changing anything. Tool output from
+  earlier turns is replaced by a short placeholder as the conversation
+  grows; your notes and your tool calls are not.
 - When listing a directory, use `list_dir(path)`. `get_file` only works
   on regular files (it will say "is a directory" if you pass a dir).
 - **Knowing when to stop:** once `dsynth_build` returned

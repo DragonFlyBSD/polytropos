@@ -29,21 +29,49 @@ log = logging.getLogger(__name__)
 # went green. Sized to cover the closing turns, not a fresh build cycle.
 GRACE_TOKENS_AFTER_REBUILD_OK = 100_000
 
-# Once the conversation outgrows ``context_cap`` it is cut back to this
-# fraction of the cap, not to just under it. Prompt caches match on a
-# prefix, so shaving a turn every turn would change the prefix every turn
-# and re-bill all of it. Cutting deep makes cuts rare.
-_CONTEXT_CUT_TO = 0.6
+# Never masked. dops_reference says "call ONCE only", so hiding it would
+# make that instruction impossible to follow; a note is the point.
+_UNMASKED_TOOLS = frozenset({"dops_reference", "note"})
 
-# Appended to the last message of the head once anything has been cut.
-# Fixed text, so the head stays byte-identical across later cuts.
-ELISION_NOTE = (
-    "\n\n---\n"
-    "Note from the harness: earlier tool exchanges from this attempt were "
-    "removed to keep the conversation within its size limit, so only the "
-    "most recent ones remain. If you need something you read before, read "
-    "it again rather than assuming it is still here."
-)
+# Results smaller than this are never masked. On py-onnx they were 46 of
+# 160 results but 4% of the bytes, and they are the short diagnostics
+# (a validate_dops error, a refused write) that are cheapest to keep.
+_MASK_MIN_BYTES = 512
+
+# Reads whose repetition after masking is worth counting. A repeated
+# dsynth_build or dsynth_log is how every build round looks anyway.
+_REPEAT_TRACKED = frozenset({"get_file", "grep", "list_dir"})
+
+# How to get a masked result back. Only reads may be repeated: repeating
+# dsynth_build rebuilds and repeating an edit applies it twice.
+_RESTORE_HINT = {
+    **dict.fromkeys(("get_file", "grep", "list_dir", "dsynth_log", "emit_diff",
+                     "get_effective_overlay", "validate_dops", "env_verify"),
+                    "Repeat the call if you need it again."),
+    "dsynth_build": "dsynth_log reads the build log again; do not rebuild for it.",
+    "edit_file": "get_file shows the file as it is now.",
+    "put_file": "get_file shows the file as it is now.",
+}
+
+
+def _placeholder(message: dict) -> str:
+    """What a masked tool result becomes. Deterministic, so the prefix
+    stays byte-identical from one request to the next."""
+    content = message.get("content") or ""
+    try:
+        original = json.loads(content)
+    except (TypeError, ValueError):
+        original = None
+    kept = {k: original[k] for k in ("ok", "rebuild_ok")
+            if isinstance(original, dict) and k in original}
+    name = message.get("name")
+    hint = _RESTORE_HINT.get(name)
+    return json.dumps({
+        **kept,
+        "omitted": (f"{len(content.encode())} bytes of {name} output omitted "
+                    f"to keep the conversation small."
+                    + (f" {hint}" if hint else "")),
+    })
 
 
 class EnvironmentBlocked(Exception):
@@ -68,69 +96,93 @@ class EnvironmentBlocked(Exception):
 class _ContextWindow:
     """What the model is sent each turn (poly-hnk3).
 
-    ``messages`` only grows: it is the attempt's record, and session_dump
-    persists it. The model is sent a view of it instead — the head the
-    attempt started with (system prompt, task, any retry hand-over), then
-    the newest whole exchanges that fit. An exchange is an assistant
-    message and the tool results answering it, so a call is never
-    separated from its result, and the newest exchange always stays.
+    Tool results older than the last ``keep_turns`` turns are replaced by
+    a short placeholder, unless they are already small; every assistant
+    message and tool call stays. That is observation masking, which
+    JetBrains measured on SWE-bench as effective as LLM summarization,
+    and cheaper (arXiv 2508.21433); it is what Anthropic's
+    clear_tool_uses does server-side.
 
-    fix_chat's policy, applied to structured messages: keep the head and
-    the tail, drop the repeated build cycles in between.
+    ``messages`` is never changed: it is the attempt's record, and
+    session_dump persists it. Masking is batched: nothing is masked until
+    ``batch`` bytes of old output are waiting, because each mask changes
+    the prompt from the first masked message on and re-bills everything
+    after it.
     """
 
-    def __init__(self, messages: list[dict], cap: int) -> None:
+    def __init__(self, messages: list[dict], keep_turns: int, batch: int) -> None:
         self.messages = messages
-        self.cap = cap
+        self.keep_turns = keep_turns
+        self.batch = batch
         self.head_len = len(messages)
-        self.start = self.head_len
-        self._sizes: list[int] = []
+        self._masked: dict[int, str] = {}
+        self._masked_reads: set[tuple[str, str]] = set()
 
-    def _size(self, i: int) -> int:
-        while len(self._sizes) <= i:
-            m = self.messages[len(self._sizes)]
-            self._sizes.append(len(json.dumps(m).encode()))
-        return self._sizes[i]
+    def _maskable(self) -> list[int]:
+        if self.keep_turns <= 0:
+            return []
+        turns = [i for i in range(self.head_len, len(self.messages))
+                 if self.messages[i].get("role") == "assistant"]
+        if len(turns) <= self.keep_turns:
+            return []
+        return [i for i in range(self.head_len, turns[-self.keep_turns])
+                if self.messages[i].get("role") == "tool"
+                and i not in self._masked
+                and self.messages[i].get("name") not in _UNMASKED_TOOLS
+                and len((self.messages[i].get("content") or "").encode())
+                >= _MASK_MIN_BYTES]
 
-    def _from(self, i: int) -> int:
-        return sum(self._size(j) for j in range(i, len(self.messages)))
+    def _view(self) -> list[dict]:
+        if not self._masked:
+            return self.messages
+        return [dict(m, content=self._masked[i]) if i in self._masked else m
+                for i, m in enumerate(self.messages)]
+
+    def _read_signature(self, i: int) -> tuple[str, str] | None:
+        """The (tool, arguments) of the read tool result ``i`` answered."""
+        name = self.messages[i].get("name")
+        if name not in _REPEAT_TRACKED:
+            return None
+        for j in range(i - 1, self.head_len - 1, -1):
+            for tc in self.messages[j].get("tool_calls") or []:
+                if tc.get("id") == self.messages[i].get("tool_call_id"):
+                    try:
+                        args = json.loads(tc["function"].get("arguments") or "{}")
+                    except (TypeError, ValueError):
+                        return None
+                    return name, json.dumps(args, sort_keys=True)
+        return None
 
     def request(self) -> tuple[list[dict], dict | None]:
-        """The messages to send this turn, and the cut made, if any."""
-        if self.cap <= 0:
-            return self.messages, None
-        head = sum(self._size(i) for i in range(self.head_len))
-        note = len(ELISION_NOTE.encode())
-        before = head + self._from(self.start) + (
-            note if self.start > self.head_len else 0)
-        cut = None
-        if before > self.cap:
-            starts = [i for i in range(self.start + 1, len(self.messages))
-                      if self.messages[i].get("role") == "assistant"]
-            if starts:
-                target = int(self.cap * _CONTEXT_CUT_TO)
-                new_start = next(
-                    (s for s in starts if head + note + self._from(s) <= target),
-                    starts[-1])
-                dropped = sum(
-                    1 for i in range(self.start, new_start)
-                    if self.messages[i].get("role") == "assistant")
-                self.start = new_start
-                cut = {
-                    "dropped_exchanges": dropped,
-                    "bytes_before": before,
-                    "bytes_after": head + note + self._from(new_start),
-                    "cap": self.cap,
-                }
-        if self.start == self.head_len:
-            return self.messages, cut
-        if self.head_len == 0:
-            return self.messages[self.start:], cut
-        last = dict(self.messages[self.head_len - 1])
-        if isinstance(last.get("content"), str):
-            last["content"] += ELISION_NOTE
-        return (self.messages[:self.head_len - 1] + [last]
-                + self.messages[self.start:]), cut
+        """The messages to send this turn, and what was just masked, if any."""
+        pending = self._maskable()
+        waiting = sum(len((self.messages[i].get("content") or "").encode())
+                      for i in pending)
+        masked = None
+        if pending and waiting >= self.batch:
+            before = len(json.dumps(self._view()).encode())
+            for i in pending:
+                self._masked[i] = _placeholder(self.messages[i])
+                sig = self._read_signature(i)
+                if sig is not None:
+                    self._masked_reads.add(sig)
+            masked = {
+                "masked_results": len(pending),
+                "bytes_before": before,
+                "bytes_after": len(json.dumps(self._view()).encode()),
+            }
+        return self._view(), masked
+
+    def repeats_masked_read(self, name: str, arguments: dict | None) -> bool:
+        """Whether this call re-asks for a read whose output was masked.
+
+        Forgets it once asked: the new result is in full view again.
+        """
+        sig = (name, json.dumps(arguments or {}, sort_keys=True))
+        if sig in self._masked_reads:
+            self._masked_reads.discard(sig)
+            return True
+        return False
 
 
 def _assistant_message_from(response: Response) -> dict:
@@ -175,7 +227,8 @@ def run(
     attempt_idx: int = 1,
     tool_whitelist: set[str] | frozenset[str] | None = None,
     reasoning: str | None = None,
-    context_cap: int = 0,
+    context_keep_turns: int = 0,
+    context_mask_batch: int = 0,
 ) -> tuple[Response, Usage, bool]:
     """Drive the LLM through tool calls until it returns text-only.
 
@@ -198,9 +251,9 @@ def run(
     Safety caps:
     - ``max_turns``: stop after this many LLM round-trips even if the
       model keeps calling tools. Default 12.
-    - ``context_cap``: bytes of conversation re-sent per turn. Over it,
-      the oldest whole tool exchanges are left out of the request (see
-      ``_ContextWindow``); ``messages`` keeps them. 0 disables.
+    - ``context_keep_turns``: tool results older than this many turns are
+      masked in the request, in batches of ``context_mask_batch`` bytes
+      (see ``_ContextWindow``); ``messages`` keeps them. 0 disables.
     - ``max_tokens``: stop when cumulative usage reaches this many
       tokens. 0 (the default) disables the check — the caller is
       expected to pass the remaining attempt-level budget when one
@@ -212,7 +265,7 @@ def run(
     tool_schemas = tools.schemas(only=tool_whitelist)
     final: Response | None = None
     rebuild_ok_seen = False
-    window = _ContextWindow(messages, context_cap)
+    window = _ContextWindow(messages, context_keep_turns, context_mask_batch)
 
     def _stop(reason: str, turn: int) -> None:
         """Emit why the loop ended. Callers use this to tell a real
@@ -243,22 +296,20 @@ def run(
             _stop("token_budget", turn)
             return (final if final is not None else Response(text="")), total, rebuild_ok_seen
 
-        request, cut = window.request()
-        if cut is not None:
-            # A get_file the model repeats is answered "unchanged, scroll
-            # back" when its bytes are still in the conversation. Some of
-            # them no longer are.
+        request, masked = window.request()
+        if masked is not None:
+            # get_file answers a repeated read "unchanged, scroll back" while
+            # the bytes are still in the conversation. Some no longer are.
             worker.reset_attempt_caches()
             log.info(
-                "tool_loop: turn %d left %d old exchange(s) out of the "
-                "request (%d -> %d bytes, cap %d)",
-                turn, cut["dropped_exchanges"], cut["bytes_before"],
-                cut["bytes_after"], cut["cap"],
+                "tool_loop: turn %d masked %d old tool result(s) (%d -> %d bytes)",
+                turn, masked["masked_results"], masked["bytes_before"],
+                masked["bytes_after"],
             )
             if on_event is not None:
                 try:
-                    on_event({"type": "context_elided", "attempt": attempt_idx,
-                              "turn": turn, **cut})
+                    on_event({"type": "observations_masked",
+                              "attempt": attempt_idx, "turn": turn, **masked})
                 except Exception:
                     pass  # callback must never break the loop
 
@@ -341,6 +392,14 @@ def run(
         messages.append(_assistant_message_from(response))
 
         for call in response.tool_calls:
+            if (on_event is not None
+                    and window.repeats_masked_read(call.name, call.arguments)):
+                try:
+                    on_event({"type": "repeat_after_mask", "attempt": attempt_idx,
+                              "turn": turn, "tool": call.name,
+                              "args": call.arguments or {}})
+                except Exception:
+                    pass  # callback must never break the loop
             t0 = time.monotonic()
             # Defense-in-depth: even though we filtered the schemas
             # the model receives, refuse non-whitelisted tools if the

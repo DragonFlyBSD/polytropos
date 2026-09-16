@@ -21,7 +21,8 @@ def run(
     origin: str | None = None,
     session_dump=None,
     reasoning: str | None = None,
-    context_cap: int | None = None,
+    context_keep_turns: int | None = None,
+    context_mask_batch: int | None = None,
 ) -> PatchResult:
     """Run the patch agent for one bundle. Returns the PatchResult.
 
@@ -46,9 +47,12 @@ def run(
         # tests pass their own (poly-lvw).
         from dportsv3 import settings  # noqa: PLC0415 — import cycle
         max_tool_turns = int(settings.get("runner.max_tool_turns"))
-    if context_cap is None:
+    if context_keep_turns is None or context_mask_batch is None:
         from dportsv3 import settings  # noqa: PLC0415 — import cycle
-        context_cap = int(settings.get("llm.patch.context_cap"))
+        if context_keep_turns is None:
+            context_keep_turns = int(settings.get("llm.patch.context_keep_turns"))
+        if context_mask_batch is None:
+            context_mask_batch = int(settings.get("llm.patch.context_mask_batch"))
 
     return attempt_loop.run(
         payload,
@@ -66,5 +70,6 @@ def run(
         tool_whitelist=tools.patch_tool_names(),
         session_dump=session_dump,
         reasoning=reasoning,
-        context_cap=context_cap,
+        context_keep_turns=context_keep_turns,
+        context_mask_batch=context_mask_batch,
     )
