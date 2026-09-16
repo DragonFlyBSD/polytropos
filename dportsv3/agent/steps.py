@@ -187,6 +187,16 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
+        elif et == "context_elided":
+            self.activity_log(
+                self.queue_root, "context_elided",
+                f"A{ev.get('attempt')}.T{ev.get('turn')} left "
+                f"{ev.get('dropped_exchanges')} old exchange(s) out: "
+                f"{ev.get('bytes_before')} -> {ev.get('bytes_after')} bytes "
+                f"(cap {ev.get('cap')})",
+                job_id=self.job_id,
+                extra={k: v for k, v in ev.items() if k != "type"},
+            )
         elif et == "llm_turn":
             # Per-LLM-round telemetry. The "prompt" share usually
             # dominates because conversation history compounds with

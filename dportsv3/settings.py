@@ -452,6 +452,15 @@ SETTINGS: list[Setting] = [
             "Empty falls back to the triage provider."),
     Setting("llm.patch.timeout", "int", 600, "Seconds per request."),
     Setting(
+        "llm.patch.context_cap", "int", 384 * 1024,
+        "Bound on the conversation the patch loop re-sends each turn, in\n"
+        "bytes (about 3.4 per token). Over it, the oldest whole tool\n"
+        "exchanges are left out of the request, cutting back to 60% of the\n"
+        "cap; the system prompt and the task always stay, and the session\n"
+        "dump keeps everything. The default suits a 128K-context model.\n"
+        "0 disables it.",
+    ),
+    Setting(
         "llm.patch.free_tier", "bool", False,
         "The patch model costs nothing, so drop the tier's token budget\n"
         "and let the loop run to an answer. The budget bounds SPEND; on\n"

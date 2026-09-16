@@ -361,6 +361,7 @@ def run(
     is_success=None,
     session_dump=None,
     reasoning: str | None = None,
+    context_cap: int = 0,
 ) -> PatchResult:
     """Run the patch flow for one bundle, returning a structured PatchResult.
 
@@ -524,6 +525,7 @@ def run(
                 attempt_idx=attempt_idx,
                 tool_whitelist=tool_whitelist,
                 reasoning=reasoning,
+                context_cap=context_cap,
             )
         except tool_loop.EnvironmentBlocked as blocked:
             # A tool reported something no further agent work can clear.

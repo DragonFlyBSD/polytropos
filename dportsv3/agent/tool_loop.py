@@ -17,7 +17,7 @@ import json
 import logging
 import time
 
-from . import llm, tools
+from . import llm, tools, worker
 from .llm import Response, Usage
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,22 @@ log = logging.getLogger(__name__)
 # Log`` blocks without busting the attempt budget the moment the build
 # went green. Sized to cover the closing turns, not a fresh build cycle.
 GRACE_TOKENS_AFTER_REBUILD_OK = 100_000
+
+# Once the conversation outgrows ``context_cap`` it is cut back to this
+# fraction of the cap, not to just under it. Prompt caches match on a
+# prefix, so shaving a turn every turn would change the prefix every turn
+# and re-bill all of it. Cutting deep makes cuts rare.
+_CONTEXT_CUT_TO = 0.6
+
+# Appended to the last message of the head once anything has been cut.
+# Fixed text, so the head stays byte-identical across later cuts.
+ELISION_NOTE = (
+    "\n\n---\n"
+    "Note from the harness: earlier tool exchanges from this attempt were "
+    "removed to keep the conversation within its size limit, so only the "
+    "most recent ones remain. If you need something you read before, read "
+    "it again rather than assuming it is still here."
+)
 
 
 class EnvironmentBlocked(Exception):
@@ -47,6 +63,74 @@ class EnvironmentBlocked(Exception):
         # Spent before the condition fired. Without this the caller
         # loses the attempt's accounting and the audit under-reports.
         self.usage = usage
+
+
+class _ContextWindow:
+    """What the model is sent each turn (poly-hnk3).
+
+    ``messages`` only grows: it is the attempt's record, and session_dump
+    persists it. The model is sent a view of it instead — the head the
+    attempt started with (system prompt, task, any retry hand-over), then
+    the newest whole exchanges that fit. An exchange is an assistant
+    message and the tool results answering it, so a call is never
+    separated from its result, and the newest exchange always stays.
+
+    fix_chat's policy, applied to structured messages: keep the head and
+    the tail, drop the repeated build cycles in between.
+    """
+
+    def __init__(self, messages: list[dict], cap: int) -> None:
+        self.messages = messages
+        self.cap = cap
+        self.head_len = len(messages)
+        self.start = self.head_len
+        self._sizes: list[int] = []
+
+    def _size(self, i: int) -> int:
+        while len(self._sizes) <= i:
+            m = self.messages[len(self._sizes)]
+            self._sizes.append(len(json.dumps(m).encode()))
+        return self._sizes[i]
+
+    def _from(self, i: int) -> int:
+        return sum(self._size(j) for j in range(i, len(self.messages)))
+
+    def request(self) -> tuple[list[dict], dict | None]:
+        """The messages to send this turn, and the cut made, if any."""
+        if self.cap <= 0:
+            return self.messages, None
+        head = sum(self._size(i) for i in range(self.head_len))
+        note = len(ELISION_NOTE.encode())
+        before = head + self._from(self.start) + (
+            note if self.start > self.head_len else 0)
+        cut = None
+        if before > self.cap:
+            starts = [i for i in range(self.start + 1, len(self.messages))
+                      if self.messages[i].get("role") == "assistant"]
+            if starts:
+                target = int(self.cap * _CONTEXT_CUT_TO)
+                new_start = next(
+                    (s for s in starts if head + note + self._from(s) <= target),
+                    starts[-1])
+                dropped = sum(
+                    1 for i in range(self.start, new_start)
+                    if self.messages[i].get("role") == "assistant")
+                self.start = new_start
+                cut = {
+                    "dropped_exchanges": dropped,
+                    "bytes_before": before,
+                    "bytes_after": head + note + self._from(new_start),
+                    "cap": self.cap,
+                }
+        if self.start == self.head_len:
+            return self.messages, cut
+        if self.head_len == 0:
+            return self.messages[self.start:], cut
+        last = dict(self.messages[self.head_len - 1])
+        if isinstance(last.get("content"), str):
+            last["content"] += ELISION_NOTE
+        return (self.messages[:self.head_len - 1] + [last]
+                + self.messages[self.start:]), cut
 
 
 def _assistant_message_from(response: Response) -> dict:
@@ -91,6 +175,7 @@ def run(
     attempt_idx: int = 1,
     tool_whitelist: set[str] | frozenset[str] | None = None,
     reasoning: str | None = None,
+    context_cap: int = 0,
 ) -> tuple[Response, Usage, bool]:
     """Drive the LLM through tool calls until it returns text-only.
 
@@ -110,9 +195,12 @@ def run(
     it as one; a ``loop_stop`` event carries the reason so they can
     tell (poly-qkp).
 
-    Two safety caps:
+    Safety caps:
     - ``max_turns``: stop after this many LLM round-trips even if the
       model keeps calling tools. Default 12.
+    - ``context_cap``: bytes of conversation re-sent per turn. Over it,
+      the oldest whole tool exchanges are left out of the request (see
+      ``_ContextWindow``); ``messages`` keeps them. 0 disables.
     - ``max_tokens``: stop when cumulative usage reaches this many
       tokens. 0 (the default) disables the check — the caller is
       expected to pass the remaining attempt-level budget when one
@@ -124,6 +212,7 @@ def run(
     tool_schemas = tools.schemas(only=tool_whitelist)
     final: Response | None = None
     rebuild_ok_seen = False
+    window = _ContextWindow(messages, context_cap)
 
     def _stop(reason: str, turn: int) -> None:
         """Emit why the loop ended. Callers use this to tell a real
@@ -154,8 +243,27 @@ def run(
             _stop("token_budget", turn)
             return (final if final is not None else Response(text="")), total, rebuild_ok_seen
 
+        request, cut = window.request()
+        if cut is not None:
+            # A get_file the model repeats is answered "unchanged, scroll
+            # back" when its bytes are still in the conversation. Some of
+            # them no longer are.
+            worker.reset_attempt_caches()
+            log.info(
+                "tool_loop: turn %d left %d old exchange(s) out of the "
+                "request (%d -> %d bytes, cap %d)",
+                turn, cut["dropped_exchanges"], cut["bytes_before"],
+                cut["bytes_after"], cut["cap"],
+            )
+            if on_event is not None:
+                try:
+                    on_event({"type": "context_elided", "attempt": attempt_idx,
+                              "turn": turn, **cut})
+                except Exception:
+                    pass  # callback must never break the loop
+
         response = llm.complete(
-            messages,
+            request,
             model=model,
             tools=tool_schemas,
             api_base=api_base,
