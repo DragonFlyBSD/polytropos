@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polytropos &mdash; FreeBSD&rsquo;s ports, made DragonFly&rsquo;s</title>
+<meta name="description" content="FreeBSD's ports, made DragonFly's. Agents find what broke, write the fix, and prove it builds. People decide what ships.">
+<link rel="canonical" href="https://dragonflybsd.github.io/polytropos/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Polytropos">
+<meta property="og:description" content="FreeBSD's ports, made DragonFly's. Agents find what broke, write the fix, and prove it builds. People decide what ships.">
+<meta property="og:image" content="https://dragonflybsd.github.io/polytropos/assets/poster.jpg">
+<meta property="og:url" content="https://dragonflybsd.github.io/polytropos/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=IBM+Plex+Sans:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400&family=EB+Garamond:ital@1&display=swap">
+<style>:root { color-scheme: dark; } img { max-width: 100%; }</style>
+<style>
+  :root {
+    --ground: #060a12;
+    --ground-2: #0a101c;
+    --star: #d8e2f2;
+    --dim: #8b98ad;
+    --amber: #f0a44a;
+    --ember: #e04a20;
+    --line: #1c2536;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ground);
+    color: var(--star);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 300;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover, a:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #sky { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hero-inner {
+    position: relative;
+    text-align: center;
+    padding: 4rem 1.5rem;
+    max-width: 62rem;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.32em;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  .rule {
+    width: min(34rem, 70%);
+    height: 1px;
+    margin: 1.6rem auto;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--amber) 55%, transparent), transparent);
+  }
+  h1 {
+    font-family: Marcellus, Optima, "Times New Roman", serif;
+    font-weight: 400;
+    font-size: clamp(2.6rem, 8.5vw, 7rem);
+    letter-spacing: 0.18em;
+    text-indent: 0.18em; /* balance the tracking */
+    line-height: 1.1;
+    text-wrap: balance;
+    color: var(--star);
+  }
+  .epithet {
+    font-family: "EB Garamond", Georgia, serif;
+    font-style: italic;
+    font-size: clamp(1rem, 2.2vw, 1.35rem);
+    color: var(--dim);
+    margin-top: 0.4rem;
+  }
+  .thesis {
+    margin: 2.2rem auto 0;
+    max-width: 34rem;
+    font-size: 1.06rem;
+    color: var(--star);
+  }
+  .thesis b { font-weight: 500; color: var(--amber); }
+  .actions {
+    margin-top: 2.6rem;
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.82rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 0.85rem 1.6rem;
+    border: 1px solid var(--line);
+    color: var(--star);
+    background: rgba(10, 16, 28, 0.6);
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn:hover { border-color: var(--amber); text-decoration: none; }
+  .btn.primary { border-color: var(--amber); color: var(--amber); }
+  .scrollcue {
+    position: absolute;
+    bottom: 2rem; left: 50%;
+    transform: translateX(-50%);
+    color: var(--dim);
+    font-size: 1.2rem;
+    animation: bob 2.6s ease-in-out infinite;
+  }
+  @keyframes bob { 50% { transform: translateX(-50%) translateY(7px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .scrollcue { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 6.5rem 1.5rem; }
+  .wrap { max-width: 66rem; margin: 0 auto; }
+  .narrow { max-width: 42rem; }
+  h2 {
+    font-family: Marcellus, Optima, serif;
+    font-weight: 400;
+    font-size: clamp(1.5rem, 3.4vw, 2.2rem);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-wrap: balance;
+    margin-bottom: 1.2rem;
+  }
+  .kicker {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.3em;
+    color: var(--amber);
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 1rem;
+  }
+
+  /* film */
+  .film { background: #000; padding: 5rem 0; }
+  .film .frame {
+    max-width: 66rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+  video {
+    width: 100%;
+    display: block;
+    background: #000;
+  }
+  .film .credit {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    color: var(--dim);
+    text-transform: uppercase;
+    text-align: center;
+    margin-top: 1.2rem;
+  }
+
+  /* acts */
+  .acts { display: grid; gap: 5rem; }
+  .act {
+    display: grid;
+    grid-template-columns: minmax(9rem, 16rem) 1fr;
+    gap: 2.5rem;
+    align-items: baseline;
+    border-top: 1px solid var(--line);
+    padding-top: 2.6rem;
+  }
+  .act .num {
+    font-family: Marcellus, serif;
+    font-size: 1rem;
+    letter-spacing: 0.3em;
+    color: var(--dim);
+  }
+  .figure {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(2.4rem, 6vw, 4.4rem);
+    line-height: 1.05;
+    color: var(--star);
+    display: block;
+    margin: 0.4rem 0 0.9rem;
+  }
+  .figure.amber { color: var(--amber); }
+  .figure.ember { color: var(--ember); }
+  .act h3 {
+    font-weight: 500;
+    font-size: 1.02rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .act p { max-width: 36rem; color: var(--star); }
+  .act p .q { color: var(--dim); }
+  @media (max-width: 640px) {
+    .act { grid-template-columns: 1fr; gap: 0.8rem; }
+  }
+
+  /* console */
+  .console { background: var(--ground-2); }
+  .shots { display: grid; gap: 3.5rem; margin-top: 3rem; }
+  .shot img {
+    width: 100%;
+    display: block;
+    border: 1px solid var(--line);
+  }
+  .shot figcaption {
+    font-size: 0.92rem;
+    color: var(--dim);
+    margin-top: 0.8rem;
+    max-width: 46rem;
+  }
+  .shot figcaption b { color: var(--star); font-weight: 500; }
+
+  /* interlude */
+  .interlude { padding: 5rem 1.5rem; text-align: center; }
+  .homer {
+    font-family: "EB Garamond", Georgia, serif;
+    font-style: italic;
+    font-size: clamp(1.15rem, 2.6vw, 1.6rem);
+    color: var(--dim);
+    max-width: 34rem;
+    margin: 0 auto;
+    text-wrap: balance;
+  }
+
+  /* run it */
+  .run pre {
+    background: var(--ground-2);
+    border: 1px solid var(--line);
+    padding: 1.5rem 1.8rem;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.84rem;
+    line-height: 1.95;
+    color: var(--star);
+  }
+  .run pre .c { color: var(--dim); }
+
+  /* scroll reveal */
+  .reveal { opacity: 0; transform: translateY(14px);
+    transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+  }
+
+  /* footer */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 3.5rem 1.5rem 4.5rem;
+  }
+  .fine {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    color: var(--dim);
+    text-transform: uppercase;
+    line-height: 2.1;
+  }
+  .footlinks { margin-top: 1.4rem; display: flex; gap: 2rem; flex-wrap: wrap; }
+  .footlinks a {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+  }
+</style>
+</head>
+<body>
+<div class="hero">
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div class="hero-inner">
+    <span class="eyebrow">DragonFlyBSD &middot; ports tooling</span>
+    <div class="rule"></div>
+    <h1>POLYTROPOS</h1>
+    <p class="epithet">&pi;&omicron;&lambda;ύ&tau;&rho;&omicron;&pi;&omicron;&sigmaf; &mdash; much-turned, of many ways</p>
+    <div class="rule"></div>
+    <p class="thesis">FreeBSD&rsquo;s ports, made DragonFly&rsquo;s.
+      Agents find what broke, write the fix, and prove it builds.
+      <b>People decide what ships.</b></p>
+    <div class="actions">
+      <a class="btn primary" href="#film">Watch the film</a>
+      <a class="btn" href="https://github.com/DragonFlyBSD/polytropos">Source on GitHub</a>
+    </div>
+  </div>
+  <div class="scrollcue" aria-hidden="true">&darr;</div>
+</div>
+
+<section class="film" id="film">
+  <div class="frame">
+    <video controls preload="metadata" poster="assets/poster.jpg">
+      <source src="https://leaf.dragonflybsd.org/~tuxillo/archive/polytropos_v7_delivery.mp4" type="video/mp4">
+    </video>
+    <p class="credit">40 seconds &middot; every figure measured from the source trees</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">The story, in four turns</span>
+    <div class="acts">
+      <div class="act reveal">
+        <div>
+          <span class="num">I</span>
+          <span class="figure">46,190</span>
+        </div>
+        <div>
+          <h3>Upstream never stops</h3>
+          <p>The FreeBSD Ports Collection carried 46,190 commits in the past
+            year &mdash; 126 a day, across 34,779 ports. It is one of the largest
+            software catalogues in the world, and it moves every single day.</p>
+        </div>
+      </div>
+      <div class="act reveal">
+        <div>
+          <span class="num">II</span>
+          <span class="figure ember">5,029</span>
+        </div>
+        <div>
+          <h3>Not every change survives the trip</h3>
+          <p>DragonFly BSD is not FreeBSD. Keeping the catalogue building means
+            carrying 5,029 explicit overlays &mdash; the exact places where the two
+            systems differ &mdash; maintained until now by hand,
+            <span class="q">by a handful of people, against seven hundred upstream committers.</span></p>
+        </div>
+      </div>
+      <div class="act reveal">
+        <div>
+          <span class="num">III</span>
+          <span class="figure amber">0</span>
+        </div>
+        <div>
+          <h3>Ships without a human decision</h3>
+          <p>Polytropos composes the trees, builds the result, and repairs what
+            breaks. Agents triage failures, write patches, and verify them with
+            green rebuilds. Every fix arrives as a proposal with its proof
+            attached &mdash; and an operator approves what ships. Nothing lands on
+            its own.</p>
+        </div>
+      </div>
+      <div class="act reveal">
+        <div>
+          <span class="num">IV</span>
+          <span class="figure">126<span style="font-size:0.4em; color:var(--dim);">/day</span></span>
+        </div>
+        <div>
+          <h3>The pace it has to keep</h3>
+          <p>Upstream moves 126 times a day, and the answer is a steady
+            stream of fixes instead of heroic catch-up: DragonFly users get
+            the software FreeBSD users have, at the versions they have it,
+            without thinking about it.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="interlude">
+  <p class="homer reveal">Homer&rsquo;s first word for Odysseus &mdash;
+    the man of many turns, resourceful when the way is blocked.</p>
+</section>
+
+<section class="console">
+  <div class="wrap">
+    <span class="kicker">The operations console</span>
+    <h2>Agents propose. You approve.</h2>
+    <p class="narrow" style="color: var(--dim);">One surface shows the whole
+      pipeline &mdash; from build failures through triage to delivery &mdash; and every
+      repair arrives with its diff, its reasoning, and its rebuild proof.</p>
+    <div class="shots">
+      <figure class="shot reveal">
+        <img src="assets/shot-1.jpg" alt="Pipeline view of the Polytropos operations console, showing build failures flowing through triage, automated work, and operator review to delivery." loading="lazy">
+        <figcaption><b>The pipeline.</b> Failures flow from build runs through
+          agent triage and repair toward delivery &mdash; and the queue that needs a
+          human is always one glance away.</figcaption>
+      </figure>
+      <figure class="shot reveal">
+        <img src="assets/shot-2.jpg" alt="Repair view showing a proposed patch with the agent's conclusion and a verification panel reading VERIFIED, green rebuild." loading="lazy">
+        <figcaption><b>The repair.</b> The proposed patch, what the agent
+          concluded, and the verification record &mdash; state, rebuild proof, green
+          verify build &mdash; on one page.</figcaption>
+      </figure>
+      <figure class="shot reveal">
+        <img src="assets/shot-3.jpg" alt="Detail of the operator action bar: Verify, Accept and Reject buttons, with a toast reading: Accepted, delivery created: DragonFlyBSD/DeltaPorts number 4472." loading="lazy">
+        <figcaption><b>The decision.</b> Verify, Accept, or Reject. One click,
+          and the delivery opens downstream. <span style="color: var(--dim);">Interface
+          shown with schema-valid sample data.</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="run">
+  <div class="wrap">
+    <span class="kicker">Run it yourself</span>
+    <h2>The demo needs no chroot</h2>
+    <p class="narrow reveal" style="color: var(--dim); margin-bottom: 2rem;">The
+      repository ships a local demo that drives the real tracker &mdash; real
+      reconcile loop, real state machine, real UI &mdash; with only the DragonFly
+      build itself substituted. The suite ships green: 2,085 tests.</p>
+    <pre class="reveal"><code><span class="c"># install</span>
+git clone https://github.com/DragonFlyBSD/polytropos
+cd polytropos
+uv venv .venv &amp;&amp; uv pip install --python .venv -e ".[tracker,agent,dev]"
+
+<span class="c"># seed the demo and open the tracker</span>
+.venv/bin/python demo/seed_demo.py --db /tmp/dports-demo/state.db
+.venv/bin/python -m dportsv3 tracker serve --db /tmp/dports-demo/state.db --port 8899</code></pre>
+    <p class="reveal" style="color: var(--dim); font-size: 0.92rem; margin-top: 1.4rem;">Full
+      operator setup, the three input trees, and the design records live in
+      <a href="https://github.com/DragonFlyBSD/polytropos">the repository</a>&rsquo;s
+      <span style="font-family:'IBM Plex Mono',monospace;">docs/</span>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p class="fine">All figures measured from the source trees &middot; September 2026<br>
+      freebsd-ports origin/main, one year to 2026-09-05 &middot; overlay.dops count in DeltaPorts &middot; UI shown with sample data</p>
+    <div class="footlinks">
+      <a href="https://github.com/DragonFlyBSD/polytropos">DragonFlyBSD/polytropos</a>
+      <a href="https://github.com/DragonFlyBSD/deltaports">DragonFlyBSD/deltaports</a>
+      <a href="https://www.dragonflybsd.org">dragonflybsd.org</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const cv = document.getElementById("sky");
+  const ctx = cv.getContext("2d");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let W, H, pts = [];
+  const N = 620;
+
+  function resize() {
+    W = cv.width = cv.clientWidth * devicePixelRatio;
+    H = cv.height = cv.clientHeight * devicePixelRatio;
+  }
+  function seed() {
+    pts = [];
+    for (let i = 0; i < N; i++) {
+      pts.push({
+        x: Math.random() * W, y: Math.random() * H,
+        z: 0.4 + Math.random() * 0.9,              // depth
+        tw: Math.random() * Math.PI * 2,
+        ts: 0.4 + Math.random() * 1.6,
+        state: 0,                                   // 0 alive, 1 ember, 2 healing
+        t0: 0,
+      });
+    }
+  }
+  // the ambient story: a point gutters out red; a while later an amber
+  // wave crosses the sky and heals everything it touches
+  let waveX = -1e9, lastWave = -14, lastEmber = 0;
+
+  function frame(tms) {
+    const t = tms / 1000;
+    ctx.clearRect(0, 0, W, H);
+
+    if (t - lastEmber > 2.2 && pts.length) {
+      const p = pts[(Math.random() * pts.length) | 0];
+      if (p.state === 0) { p.state = 1; p.t0 = t; lastEmber = t; }
+    }
+    if (t - lastWave > 16) { waveX = -0.12 * W; lastWave = t; }
+    if (waveX > -1e8) waveX += W * 0.0035;
+    if (waveX > 0 && waveX < W * 1.1) {
+      const gr = ctx.createLinearGradient(waveX - 90 * devicePixelRatio, 0, waveX, 0);
+      gr.addColorStop(0, "rgba(240,164,74,0)");
+      gr.addColorStop(1, "rgba(240,164,74,0.05)");
+      ctx.fillStyle = gr;
+      ctx.fillRect(waveX - 90 * devicePixelRatio, 0, 90 * devicePixelRatio, H);
+    }
+
+    for (const p of pts) {
+      p.x += 0.018 * p.z * devicePixelRatio;
+      if (p.x > W + 4) p.x -= W + 8;
+      const tw = 0.72 + 0.28 * Math.sin(t * p.ts + p.tw);
+      let r = 0.9 * p.z * devicePixelRatio, a = 0.75 * tw * p.z, col = "216,226,242";
+      if (p.state === 1) {
+        const d = t - p.t0;
+        col = "224,74,32";
+        a = d < 0.4 ? 1.0 : 0.55 * tw;
+        r *= d < 0.4 ? 1.9 : 1.15;
+        if (waveX > p.x && waveX - p.x < W * 0.06) { p.state = 2; p.t0 = t; }
+      } else if (p.state === 2) {
+        const d = t - p.t0;
+        if (d < 0.9) { col = "240,164,74"; a = 1.0; r *= 1.9 - d; }
+        else p.state = 0;
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(r, 0.5), 0, 7);
+      ctx.fillStyle = `rgba(${col},${a.toFixed(3)})`;
+      ctx.fill();
+    }
+    if (!reduced) requestAnimationFrame(frame);
+  }
+  addEventListener("resize", () => { resize(); seed(); }, { passive: true });
+  resize(); seed();
+  requestAnimationFrame(frame);
+
+  const io = new IntersectionObserver((es) => {
+    for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { threshold: 0.15 });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+})();
+</script>
+
+</body>
+</html>
