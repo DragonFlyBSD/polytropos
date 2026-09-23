@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from dportsv3.tracker import (
+    dsynth_tail,
     fix_state,
     render,
 )
@@ -130,6 +131,21 @@ def register(app, ctx):
         # The same window the page renders, or the 3s swap would replace
         # five cards with the whole stream (poly-qqx9.5).
         cards = render.group_activity_into_cards(window) if rows else []
+        # The running build's last lines, on the row producing them. Read
+        # fresh each poll rather than appended, because the swap replaces
+        # the card wholesale -- a 32 KiB seek-read is cheaper than making
+        # the client merge (poly-qqx9.8).
+        if cards and (job or {}).get("dev_env"):
+            running = render.running_tailable_tool(cards)
+            if running is not None:
+                tail = dsynth_tail.read_tail(
+                    job["dev_env"], job.get("origin") or "",
+                    flavor=job.get("flavor") or "",
+                    offset=-1, max_lines=40,
+                )
+                tail["href"] = f"/api/jobs/{job_id}/dsynth-tail"
+                tail["max_bytes"] = dsynth_tail.MAX_CHUNK_BYTES
+                render.attach_tool_tail(cards, tail)
         cards_html = (
             cards_tmpl.render(cards=render.window_cards(cards))
             if rows else ""
@@ -151,6 +167,42 @@ def register(app, ctx):
             "job_state": (job or {}).get("state"),
             "count": len(rows),
         }
+
+    @app.get("/api/jobs/{job_id}/dsynth-tail")
+    def api_job_dsynth_tail(
+        job_id: str,
+        offset: int = Query(default=-1, ge=-1),
+        max_lines: int = Query(default=0, ge=0, le=5000),
+    ) -> dict[str, Any]:
+        """The running build's log, by byte offset.
+
+        ``offset=-1`` (the default) means "the newest screenful"; send
+        back the ``offset`` this returns to get only what arrived since.
+        Byte-capped, and it says when it skipped -- poly-9hjm put that cap
+        on the worker's reader after one unbounded read cost 690k tokens,
+        and it belongs here for the same reason.
+
+        Co-location is not baked in: the contract is (path, offset) ->
+        (text, next offset, eof), which the builder-side relay under
+        poly-fij.7 can answer as easily as this file read can.
+        """
+        with _conn() as conn:
+            job = get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+        env = job.get("dev_env")
+        if not env:
+            return {
+                "ok": False,
+                "error": ("this job has no recorded dev_env, so there is no "
+                          "environment to resolve its build log under"),
+                "path": "", "offset": 0, "text": "", "eof": True,
+                "total_bytes": 0, "skipped": 0, "mtime": None, "lines": 0,
+            }
+        return dsynth_tail.read_tail(
+            env, job.get("origin") or "", flavor=job.get("flavor") or "",
+            offset=offset, max_lines=max_lines,
+        )
 
     @app.get("/api/runner-status")
     def api_runner_status() -> dict[str, Any]:

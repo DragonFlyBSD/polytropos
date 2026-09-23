@@ -2565,3 +2565,19 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   text-align: right; font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* The build's own output, inside the tool row running it. */
+.turn-stream .tool-tail {
+  margin: 0; max-height: 150px; overflow: auto; padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  color: var(--code-fg); background: var(--code-bg);
+  font: 12px/1.5 var(--mono); white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.turn-stream .tool-tailbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 5px 10px; border-top: 1px solid var(--line);
+  background: var(--surface-2); color: var(--muted); font: 12px var(--mono);
+}
+.turn-stream .tool-tailbar .spacer { flex: 1 1 auto; }
+.turn-stream .tool-tailbar b { color: var(--text); font-variant-numeric: tabular-nums; }

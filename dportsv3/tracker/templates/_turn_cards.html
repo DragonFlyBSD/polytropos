@@ -69,6 +69,24 @@
             {%- if t.running %}running{% else %}{{ dur_ms(t.duration_ms) }}{% endif -%}
           </span>
         </div>
+        {% if t.tail %}
+        {# The build's own output, inside the row running it. No separate
+           pane: a tail only exists while this one tool runs, and the row
+           collapses to its duration and rc when it finishes. #}
+        {% if t.tail.ok %}
+        <pre class="tool-tail" data-mtime="{{ t.tail.mtime }}">{{ t.tail.text }}</pre>
+        <div class="tool-tailbar">
+          <span>last line <b class="tail-ago">—</b> ago</span>
+          <span class="muted">{{ t.tail.lines }} line{{ 's' if t.tail.lines != 1 else '' }} ·
+            newest {{ (t.tail.max_bytes or 32768) // 1024 }} KiB of
+            {{ '{:,}'.format(t.tail.total_bytes) }} bytes</span>
+          <span class="spacer"></span>
+          <a href="{{ t.tail.href }}">open the whole log →</a>
+        </div>
+        {% else %}
+        <div class="tool-tailbar"><span class="muted">{{ t.tail.error }}</span></div>
+        {% endif %}
+        {% endif %}
       </div>
       {% endif %}
       {% endfor %}

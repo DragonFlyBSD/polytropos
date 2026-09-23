@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from dportsv3 import settings
 from dportsv3.tracker import (
     delivery_sync,
+    dsynth_tail,
     fix_state,
     issue_state,
     preflight_status,
@@ -210,6 +211,11 @@ def _confirm_for(conn: Any):
         )
 
     return confirm_for
+
+
+#: How many lines of a running build the tool row shows. A screenful:
+#: the row is a status line with context, not a terminal.
+_TAIL_LINES = 40
 
 
 def _query_for(base: dict[str, Any]):
@@ -1440,6 +1446,22 @@ def register(app, ctx):
         )
         job_is_active = job.get("state") in ACTIVE_WORK_STATE_VALUES
         activity_cards = render.group_activity_into_cards(activity)
+        # A running dsynth build's last lines, hung on the tool row
+        # producing them. dev_env is on the job row since poly-qqx9.12;
+        # without it there is no env to resolve the log under, and the
+        # row simply has no tail rather than a wrong one.
+        if job.get("dev_env"):
+            running = render.running_tailable_tool(activity_cards)
+            if running is not None:
+                tail = dsynth_tail.read_tail(
+                    job["dev_env"], job.get("origin") or "",
+                    flavor=job.get("flavor") or "",
+                    offset=-1, max_lines=_TAIL_LINES,
+                )
+                tail["href"] = str(request.url_for(
+                    "api_job_dsynth_tail", job_id=job_id))
+                tail["max_bytes"] = dsynth_tail.MAX_CHUNK_BYTES
+                render.attach_tool_tail(activity_cards, tail)
         return templates.TemplateResponse(
             request,
             "agentic_job.html",

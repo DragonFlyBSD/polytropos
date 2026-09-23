@@ -56,6 +56,7 @@
             if (d.open) open[d.dataset.key] = true;
           });
         cardsEl.innerHTML = data.cards_html;
+        startTailClock();
         Array.prototype.forEach.call(
           cardsEl.querySelectorAll("details[data-key]"), function (d) {
             if (open[d.dataset.key]) d.open = true;
@@ -233,3 +234,24 @@ startElapsedClock();
     }
   });
 })();
+
+// --- "last line N ago" on a running build's tail ---
+// The live badge reports the poll; this reports the JOB. A build that
+// has printed nothing for four minutes looks identical to a healthy one
+// without it (poly-qqx9.8).
+function startTailClock() {
+  if (window._dpTailTimer) clearInterval(window._dpTailTimer);
+  function tick() {
+    document.querySelectorAll(".tool-tail[data-mtime]").forEach(function (el) {
+      var badge = el.parentNode.querySelector(".tail-ago");
+      var mtime = parseFloat(el.dataset.mtime);
+      if (!badge || isNaN(mtime)) return;
+      var s = Math.max(0, Math.round(Date.now() / 1000 - mtime));
+      badge.textContent = s < 60 ? s + "s"
+        : Math.floor(s / 60) + "m" + (s % 60 < 10 ? "0" : "") + (s % 60) + "s";
+    });
+  }
+  tick();
+  window._dpTailTimer = setInterval(tick, 1000);
+}
+startTailClock();

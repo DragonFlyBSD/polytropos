@@ -416,3 +416,37 @@ def window_cards(
         if card.get("kind") == "turn":
             seen += 1
     return pinned + out
+
+
+#: Tools whose output is worth tailing while they run. Everything else
+#: returns in milliseconds and has nothing to say in the meantime.
+TAILABLE_TOOLS = frozenset({"dsynth_build", "dsynth_test"})
+
+
+def running_tailable_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The long-running tool whose log is worth showing, if one is going.
+
+    Only the newest turn can hold a running call -- the loop dispatches
+    serially -- and only dsynth takes long enough for a tail to mean
+    anything.
+    """
+    newest = next((c for c in cards if c.get("kind") == "turn"), None)
+    for tool in (newest or {}).get("tools") or []:
+        if tool.get("running") and tool.get("name") in TAILABLE_TOOLS:
+            return tool
+    return None
+
+
+def attach_tool_tail(
+    cards: list[dict[str, Any]], tail: dict[str, Any] | None,
+) -> None:
+    """Hang a build's last lines on the tool row that is producing them.
+
+    In the row, not in a pane: a tail only exists while one tool runs,
+    and when the tool finishes the row collapses to its duration and rc
+    (poly-qqx9.8). Mutates the card so the template still depends on
+    nothing but ``cards``.
+    """
+    tool = running_tailable_tool(cards)
+    if tool is not None and tail:
+        tool["tail"] = tail
