@@ -468,7 +468,8 @@ def resolve_artifact_path(
 
     Two backends:
     - 'blob': content-addressed under ``<artifact_root>/objects/sha256/aa/bb/<full>``
-    - 'fs':   absolute ``fs_path`` recorded at upsert time
+    - 'fs':   absolute ``fs_path`` recorded at upsert time, served as
+              recorded -- see the 'fs' branch
     """
     backend = ref.get("backend")
     if backend == "blob":
@@ -479,6 +480,13 @@ def resolve_artifact_path(
         # function, so the served path cannot drift from the stored one.
         return blob_path(artifact_root / "blobstore", sha)
     if backend == "fs":
+        # NOT confined, unlike the store's resolver, which runs
+        # contained_fs_path over the same column. Nothing can write an 'fs'
+        # row any more -- put_fs_ref and its endpoint are gone (poly-zjtx)
+        # -- so every row reaching here was written by the hook before it
+        # moved to put-blob. Confining this one as well first needs five
+        # test fixtures that place artifacts outside the artifact_root
+        # they configure, which is poly-szg2.
         fs_path = ref.get("fs_path")
         if not fs_path:
             return None

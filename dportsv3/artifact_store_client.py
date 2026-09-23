@@ -92,17 +92,6 @@ def cmd_put_blob(args):
     print(json.dumps(resp, indent=2))
 
 
-def cmd_put_fs(args):
-    payload = {
-        "bundle_id": args.bundle_id,
-        "relpath": args.relpath,
-        "fs_path": args.fs_path,
-        "kind": args.kind,
-    }
-    resp = request_json("POST", f"{args.url}/v1/artifacts/put-fs", payload)
-    print(json.dumps(resp, indent=2))
-
-
 def cmd_job_transition(args):
     detail = {
         "type": args.type,
@@ -155,13 +144,6 @@ def main():
     p_blob.add_argument("--stdin", action="store_true")
     p_blob.add_argument("--kind", default="")
     p_blob.set_defaults(func=cmd_put_blob)
-
-    p_fs = sub.add_parser("put-fs")
-    p_fs.add_argument("--bundle-id", required=True)
-    p_fs.add_argument("--relpath", required=True)
-    p_fs.add_argument("--fs-path", required=True)
-    p_fs.add_argument("--kind", default="")
-    p_fs.set_defaults(func=cmd_put_fs)
 
     p_job = sub.add_parser("job-transition")
     p_job.add_argument("--job-id", required=True)

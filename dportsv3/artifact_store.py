@@ -46,6 +46,40 @@ def blob_path(root: Path, sha: str) -> Path:
     return root / "objects" / "sha256" / sha[0:2] / sha[2:4] / sha
 
 
+def contained_fs_path(logs_root: Path, fs_path: str | None) -> Path | None:
+    """An 'fs'-backend artifact's file, or None when it escapes the tree.
+
+    The 'fs' backend records an absolute path instead of content, and
+    nothing writes one any more: hook_pkg_failure sends the full log as a
+    blob because a recorded path is unresolvable from another host, and
+    unresolvable even on one host when the hook runs inside a chroot.
+    Rows written before that change are still in deployed databases, so
+    the READ path stays -- confined.
+
+    Unconfined it was an arbitrary file read for anyone who could reach
+    the port: put-fs recorded any path that existed, /v1/artifacts/get
+    returned its bytes, and neither route has any authentication
+    (poly-zjtx). The write endpoint is gone; this is what stops the rows
+    it already wrote from serving a credential file.
+
+    The boundary is the LOGS root, not the evidence root: a legitimate
+    legacy row names a dsynth log beside the evidence tree rather than
+    inside it.
+
+    This guards the /v1 read only. ``render.resolve_artifact_path`` serves
+    the same column to the browser routes and does not confine it yet
+    (poly-szg2, which carries why).
+    """
+    if not fs_path:
+        return None
+    resolved = Path(fs_path).resolve()
+    try:
+        resolved.relative_to(Path(logs_root).resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
 def _coerce_build_run_id(raw: Any) -> int | None:
     """The tracker build-run ordinal from a hook payload, or None.
 
@@ -412,28 +446,6 @@ class ArtifactStore:
 
         return {"sha256": sha, "size": len(data)}
 
-    def put_fs_ref(self, bundle_id: str, relpath: str, fs_path: str, kind: str | None) -> dict[str, Any]:
-        path = Path(fs_path)
-        size = path.stat().st_size if path.exists() else None
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            self.conn.execute(
-                """INSERT INTO artifact_refs (bundle_id, relpath, backend, sha256, fs_path, kind, size, created_at)
-                   VALUES (?, ?, 'fs', NULL, ?, ?, ?, ?)
-                   ON CONFLICT(bundle_id, relpath) DO UPDATE SET
-                     backend='fs', sha256=NULL, fs_path=excluded.fs_path,
-                     kind=excluded.kind, size=excluded.size, created_at=excluded.created_at""",
-                (bundle_id, relpath, fs_path, kind, size, now),
-            )
-            emit_event(self.conn, "artifact_put", {
-                "bundle_id": bundle_id,
-                "artifact": relpath,
-                "backend": "fs",
-            })
-            self.conn.commit()
-
-        return {"size": size}
-
     def get_artifact(self, bundle_id: str, relpath: str) -> tuple[str, Path] | None:
         row = self.conn.execute(
             """SELECT backend, sha256, fs_path FROM artifact_refs
@@ -445,7 +457,11 @@ class ArtifactStore:
         if row["backend"] == "blob":
             obj_path = blob_path(self.blob_root, row["sha256"])
             return "blob", obj_path
-        return "fs", Path(row["fs_path"])
+        # An 'fs' row naming a path outside the logs root is not
+        # servable, so the caller 404s instead of returning bytes that
+        # were never this bundle's.
+        contained = contained_fs_path(self.logs_root, row["fs_path"])
+        return ("fs", contained) if contained is not None else None
 
     def upsert_user_context(self, run_id: str, origin: str, context_text: str) -> int:
         """Set or update the operator's hint text for one (run_id, origin).

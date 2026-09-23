@@ -152,35 +152,86 @@ def test_resolve_artifact_path_rejects_short_sha(client: TestClient, evidence_ro
 
 
 # --------------------------------------------------------------------------
-# put-fs
+# fs-backend refs: the write path is gone, the read path is confined
+# (poly-zjtx)
 # --------------------------------------------------------------------------
 
-def test_put_fs_records_a_pointer(client: TestClient, tmp_path: Path) -> None:
-    target = tmp_path / "full.log.gz"
-    target.write_bytes(gzip.compress(b"log body"))
+def test_put_fs_is_gone(client: TestClient) -> None:
+    """It recorded any path that existed and /v1/artifacts/get returned
+    the bytes, with no authentication on either route -- an arbitrary file
+    read of anything the tracker account can open, which on a deployed
+    host includes the delivery token and the chat key. Nothing in the loop
+    wrote fs refs: the hook sends the full log as a blob."""
     resp = client.post("/v1/artifacts/put-fs", json={
         "bundle_id": "b1", "relpath": "logs/full.log.gz",
-        "fs_path": str(target), "kind": "gzip",
+        "fs_path": "/etc/hosts",
     })
+    assert resp.status_code == 404
+
+
+def _legacy_fs_ref(evidence_root: Path, relpath: str, fs_path: Path) -> None:
+    """Write the row put-fs used to write, straight into the db.
+
+    A deployed database still holds these from before the hook moved to
+    put-blob, so the read path has to keep working -- and stay confined.
+    """
+    conn = sqlite3.connect(str(evidence_root / "state.db"))
+    conn.execute(
+        "INSERT INTO artifact_refs (bundle_id, relpath, backend, fs_path, "
+        "created_at) VALUES ('b1', ?, 'fs', ?, '2026-01-01T00:00:00+00:00')",
+        (relpath, str(fs_path)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _get(client: TestClient, relpath: str = "logs/full.log"):
+    return client.get("/v1/artifacts/get",
+                      params={"bundle_id": "b1", "relpath": relpath})
+
+
+def test_a_legacy_fs_ref_inside_the_logs_root_still_serves(
+    client: TestClient, evidence_root: Path, tmp_path: Path,
+) -> None:
+    log = tmp_path / "logs" / "devel___llvm19.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(b"the build log")
+    _legacy_fs_ref(evidence_root, "logs/full.log", log)
+
+    resp = _get(client)
     assert resp.status_code == 200
-    assert resp.json()["size"] == target.stat().st_size
+    assert resp.content == b"the build log"
 
 
-def test_put_fs_requires_all_three_fields(client: TestClient) -> None:
-    resp = client.post("/v1/artifacts/put-fs", json={"bundle_id": "b1", "relpath": "x"})
-    assert resp.status_code == 400
+def test_an_fs_ref_outside_the_logs_root_is_refused(
+    client: TestClient, evidence_root: Path, tmp_path: Path,
+) -> None:
+    """The credential's position: readable by this account, outside the
+    tree the store serves."""
+    secret = tmp_path / "delivery.token"
+    secret.write_bytes(b"FORGE-TOKEN")
+    _legacy_fs_ref(evidence_root, "logs/full.log", secret)
+
+    resp = _get(client)
+    assert resp.status_code == 404
+    assert b"FORGE-TOKEN" not in resp.content
 
 
-def test_put_fs_rejects_a_path_the_store_cannot_open(client: TestClient) -> None:
-    """A caller on another host, or inside a chroot, names a path that
-    means nothing here. That used to be recorded as a row with size NULL
-    that 404s forever."""
-    resp = client.post("/v1/artifacts/put-fs", json={
-        "bundle_id": "b1", "relpath": "logs/full.log.gz",
-        "fs_path": "/work/dsynth/logs/evidence/full-logs/b1.full.log.gz",
-    })
-    assert resp.status_code == 400
-    assert "not readable by the store" in resp.json()["error"]
+def test_a_symlink_out_of_the_logs_root_is_refused(
+    client: TestClient, evidence_root: Path, tmp_path: Path,
+) -> None:
+    """Containment after realpath, not before: the row names a path inside
+    the tree that resolves outside it."""
+    secret = tmp_path / "delivery.token"
+    secret.write_bytes(b"FORGE-TOKEN")
+    link = tmp_path / "logs" / "full.log"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(secret)
+    _legacy_fs_ref(evidence_root, "logs/full.log", link)
+
+    resp = _get(client)
+    assert resp.status_code == 404
+    assert b"FORGE-TOKEN" not in resp.content
 
 
 # --------------------------------------------------------------------------
