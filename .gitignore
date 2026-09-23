@@ -30,3 +30,4 @@ config/delivery.token
 # (.beads/.gitignore covers embeddeddolt/). The issue data itself is kept in
 # git as .beads/issues.jsonl, auto-exported — see .beads/config.yaml.
 .beads/backup/
+.beads.gate.lock
