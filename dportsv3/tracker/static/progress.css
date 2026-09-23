@@ -2581,3 +2581,50 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 }
 .turn-stream .tool-tailbar .spacer { flex: 1 1 auto; }
 .turn-stream .tool-tailbar b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ── Working tree: what the agent changed ─────────────────────────────
+ * A band below the turn cards. Placement was decided by comparison: a
+ * sticky rail costs ~330px permanently for something read
+ * intermittently, and the diff wants the width (poly-qqx9.7).
+ */
+.wt-band { margin: 16px 0 0; }
+.wt-head { font-size: 15px; margin: 0 0 8px; }
+.wt-head .muted { font: 12px var(--mono); font-weight: normal; }
+.wt-add { color: var(--green); }
+.wt-del { color: var(--red); }
+.wt { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+      gap: 12px; align-items: start; }
+.wt-list { display: flex; flex-direction: column; gap: 4px; }
+.wt-file {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px; align-items: baseline; text-align: left; cursor: pointer;
+  padding: 7px 9px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 3px;
+  font: 12px var(--mono); color: var(--muted);
+}
+.wt-file:hover { border-color: var(--line-hot); }
+.wt-file[aria-selected="true"] {
+  background: var(--surface-3); border-color: var(--cyan-line);
+}
+.wt-file .wt-st { font-weight: 700; }
+.wt-file .st-A { color: var(--green); }
+.wt-file .st-M { color: var(--amber); }
+.wt-file .st-D { color: var(--red); }
+.wt-path { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; color: var(--text); direction: rtl;
+           text-align: left; }
+.wt-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wt-sub { grid-column: 2 / -1; color: var(--faint); }
+.wt-sub .dot.run { display: inline-block; width: 6px; height: 6px;
+                   margin-right: 5px; border-radius: 50%;
+                   background: var(--cyan); }
+.wt-diff { border: 1px solid var(--line); border-radius: 3px;
+           background: var(--surface); overflow: hidden; }
+.wt-diff-head { display: flex; gap: 10px; align-items: baseline;
+                padding: 7px 10px; background: var(--head);
+                border-bottom: 1px solid var(--line);
+                font: 12px var(--mono); color: var(--muted); }
+.wt-diff-head .right { margin-left: auto; color: var(--faint); }
+.wt-diff-pane .diff-view { max-height: 460px; overflow: auto; }
+.wt-note { margin: 8px 0 0; font-size: 12px; }
+@media (max-width: 760px) { .wt { grid-template-columns: minmax(0, 1fr); } }

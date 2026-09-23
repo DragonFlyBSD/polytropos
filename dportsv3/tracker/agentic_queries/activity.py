@@ -191,6 +191,41 @@ def attempt_turn_totals(
     ]
 
 
+#: Tools whose call means "this attempt changed that file". The same set
+#: attempt_loop uses to decide what a retry is told it already did.
+WRITE_TOOLS = ("put_file", "edit_file", "apply_intent", "install_patches",
+               "genpatch", "make_patch", "write_file", "apply_patch")
+
+
+def write_tool_calls(
+    conn: sqlite3.Connection, job_id: str,
+) -> list[dict[str, Any]]:
+    """Every write-tool call this job made, oldest first, with its args.
+
+    The attempt a file first appeared in is the first attempt whose
+    write-tool row names that path -- which is a query, not a schema
+    change, now that poly-qqx9.13 stores the arguments as fields
+    (poly-qqx9.7).
+    """
+    placeholders = ",".join("?" * len(WRITE_TOOLS))
+    rows = conn.execute(
+        f"SELECT stage, extra_json FROM activity_log "
+        f"WHERE job_id = ? AND stage IN ({placeholders}) "
+        f"ORDER BY id ASC",
+        (job_id, *(f"tool:{t}" for t in WRITE_TOOLS)),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = _decode_extra_json({"extra_json": row[1]})
+        extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+        out.append({
+            "tool": str(row[0])[5:],
+            "attempt": extra.get("attempt"),
+            "args": extra.get("args") or {},
+        })
+    return out
+
+
 def latest_activity_extra(
     conn: sqlite3.Connection, job_id: str, stage: str,
 ) -> dict[str, Any]:

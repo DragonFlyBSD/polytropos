@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from dportsv3 import settings
 from dportsv3.tracker import (
+    worktree_source,
     delivery_sync,
     dsynth_tail,
     fix_state,
@@ -18,6 +19,8 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    WRITE_TOOLS,
+    write_tool_calls,
     token_usage_by_bundle,
     attempt_boundaries,
     attempt_tool_totals,
@@ -216,6 +219,46 @@ def _confirm_for(conn: Any):
 #: How many lines of a running build the tool row shows. A screenful:
 #: the row is a status line with context, not a terminal.
 _TAIL_LINES = 40
+
+
+def _working_tree_for(conn, job, job_id, cards, artifact_root):
+    """The agent's changed files, from whichever source this job has.
+
+    A running job's overlay is read live; a finished one's comes from the
+    rescued diff the run already filed. The live read wins when it has
+    anything to say, because the artifact is a snapshot of the end and a
+    running job has moved on from it (poly-qqx9.7).
+    """
+    raw = ""
+    live = False
+    if job.get("dev_env"):
+        raw = worktree_source.from_workspace(
+            job["dev_env"], job.get("origin") or "")
+        live = bool(raw)
+    if not raw and job.get("bundle_id"):
+        relpath = worktree_source.rescued_relpath(job_id)
+        ref = get_artifact_ref(conn, job["bundle_id"], relpath)
+        raw = worktree_source.from_artifacts(artifact_root, ref, relpath)
+    if not raw:
+        return None
+
+    # The file a write tool is working on right now, so the list can mark
+    # it. Only the newest turn can hold a running call.
+    live_path = None
+    newest = next((c for c in cards if c.get("kind") == "turn"), None)
+    for tool in (newest or {}).get("tools") or []:
+        if tool.get("running") and tool.get("name") in WRITE_TOOLS:
+            args = tool.get("args") or {}
+            live_path = next(
+                (v for v in args.values() if isinstance(v, str)), None)
+            break
+
+    tree = render.working_tree(
+        raw, write_tool_calls(conn, job_id), live_path=live_path)
+    for entry in tree["files"]:
+        entry["html"] = render.render_diff(entry.pop("raw"))
+    tree["live"] = live
+    return tree
 
 
 def _query_for(base: dict[str, Any]):
@@ -1402,6 +1445,12 @@ def register(app, ctx):
                 )
                 if job is not None and job.get("origin") else {}
             )
+            activity_cards = render.group_activity_into_cards(activity)
+            tree = (
+                _working_tree_for(conn, job, job_id, activity_cards,
+                                  app.state.artifact_root)
+                if job is not None else None
+            )
             # Step 9: when a job ends in 'escalated', operators
             # currently have to bounce out to /agentic/manual to read
             # the handoff. Inline it: pull the most recent bundle for
@@ -1445,7 +1494,6 @@ def register(app, ctx):
             ACTIVE_WORK_STATE_VALUES,
         )
         job_is_active = job.get("state") in ACTIVE_WORK_STATE_VALUES
-        activity_cards = render.group_activity_into_cards(activity)
         # A running dsynth build's last lines, hung on the tool row
         # producing them. dev_env is on the job row since poly-qqx9.12;
         # without it there is no env to resolve the log under, and the
@@ -1471,6 +1519,7 @@ def register(app, ctx):
                 "activity": activity,
                 "activity_cards": render.window_cards(activity_cards),
                 "strip": strip,
+                "tree": tree,
                 "now": render.now_bar(
                     activity_cards, attempt_extra, decision_extra),
                 "total_turns": job_turns,

@@ -24,6 +24,8 @@ from dportsv3.tracker.agentic_queries.activity import (
     attempt_tool_totals,
     attempt_turn_totals,
     latest_activity_extra,
+    WRITE_TOOLS,
+    write_tool_calls,
     events_since,
 )
 from dportsv3.tracker.agentic_queries.chat import (
@@ -129,6 +131,8 @@ __all__ = [
     "attempt_tool_totals",
     "attempt_turn_totals",
     "latest_activity_extra",
+    "WRITE_TOOLS",
+    "write_tool_calls",
     "events_since",
     "get_active_env",
     "set_active_env",

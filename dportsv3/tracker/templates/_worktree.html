@@ -1,0 +1,53 @@
+{# What the agent changed: file list left, diff right, in a band below
+   the turn cards (poly-qqx9.7). Placement was decided in specimen 07
+   against a sticky rail, an inline-only variant and a drawer -- the band
+   won because the diff gets full width and a rail's permanent ~330px tax
+   buys something you look at intermittently. #}
+{% if tree and not tree.empty %}
+<section class="wt-band" id="worktree">
+  <h2 class="wt-head">Working tree
+    <span class="muted">{{ tree.n_files }} file{{ 's' if tree.n_files != 1 else '' }} changed ·
+      <span class="wt-add">+{{ tree.added }}</span>
+      <span class="wt-del">−{{ tree.removed }}</span>
+      {%- if tree.live %} · live{% else %} · as the job left it{% endif -%}
+    </span>
+  </h2>
+  <div class="wt">
+    <div class="wt-list" role="tablist" aria-label="Changed files">
+      {% for f in tree.files %}
+      <button type="button" class="wt-file" role="tab"
+              aria-selected="{{ 'true' if loop.first else 'false' }}"
+              aria-controls="wt-diff-{{ loop.index }}"
+              data-file="{{ loop.index }}">
+        <span class="wt-st st-{{ f.status }}">{{ f.status }}</span>
+        <span class="wt-path">{{ f.path }}</span>
+        <span class="wt-num"><span class="wt-add">+{{ f.added }}</span>
+          <span class="wt-del">−{{ f.removed }}</span></span>
+        <span class="wt-sub">
+          {%- if f.live %}<i class="dot run"></i>writing now · {% endif -%}
+          {%- if f.attempt is not none %}first written in attempt {{ f.attempt }}
+          {%- else %}attempt not recorded{% endif -%}
+        </span>
+      </button>
+      {% endfor %}
+    </div>
+    <div class="wt-diff">
+      {% for f in tree.files %}
+      <div class="wt-diff-pane" id="wt-diff-{{ loop.index }}" role="tabpanel"
+           {% if not loop.first %}hidden{% endif %}>
+        <div class="wt-diff-head"><code>{{ f.path }}</code>
+          <span class="right">{{ {'A': 'added', 'M': 'modified', 'D': 'deleted'}.get(f.status, f.status) }}
+            {%- if f.attempt is not none %} · attempt {{ f.attempt }}{% endif -%}
+          </span>
+        </div>
+        {{ f.html | safe }}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% if tree.truncated %}
+  <p class="wt-note muted">The diff was capped before it reached here;
+    the file list is complete, the last file's body may not be.</p>
+  {% endif %}
+</section>
+{% endif %}

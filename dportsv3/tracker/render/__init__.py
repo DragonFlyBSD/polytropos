@@ -26,6 +26,7 @@ from .activity import (
 )
 from .nowbar import now_bar
 from .attempts import attempt_strip
+from .worktree import working_tree
 from .compare import (
     compare_artifacts,
     default_relpath,
@@ -43,5 +44,5 @@ __all__ = [
     "parse_session_records", "SESSION_ATTEMPT_RE",
     "group_activity_into_cards", "window_cards", "count_turns",
     "TURN_WINDOW", "now_bar", "attempt_strip",
-    "attach_tool_tail", "running_tailable_tool",
+    "attach_tool_tail", "running_tailable_tool", "working_tree",
 ]

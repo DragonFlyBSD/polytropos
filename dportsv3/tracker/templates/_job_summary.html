@@ -15,6 +15,15 @@
            had to stop colliding (poly-qqx9.3). #}
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Port retry budget</th><td>{{ attempt_summary.recent_failures }}/{{ attempt_summary.max_attempts }} failed jobs for this port in the last {{ attempt_summary.window_hours }}h{% if attempt_summary.last_attempt_at %} (last {{ attempt_summary.last_attempt_at }}){% endif %}</td></tr>
         {% endif %}
+        {# jobs.bundle_id has been in the schema and joined the other way
+           for the cockpit's Jobs table, while this page printed a
+           directory as text and offered no way through to the
+           occurrence or its artifacts (poly-qqx9.7). #}
+        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Occurrence</th><td>
+          {%- if job.bundle_id -%}
+          <a href="{{ request.url_for('agentic_bundle_detail', bundle_id=job.bundle_id) }}">{{ job.bundle_id }}</a>
+          {%- else -%}—{%- endif -%}
+        </td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Bundle dir</th><td>{{ job.bundle_dir or '—' }}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Path</th><td>{{ job.path or '—' }}</td></tr>
         {% if job.last_error %}

@@ -255,3 +255,21 @@ function startTailClock() {
   window._dpTailTimer = setInterval(tick, 1000);
 }
 startTailClock();
+
+// --- Working tree: pick a file, see its diff ---
+// Tabs, not a page of stacked diffs: the band is below the cards and a
+// four-file job would otherwise push everything else off the screen.
+(function () {
+  var list = document.querySelector(".wt-list");
+  if (!list) return;
+  list.addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".wt-file");
+    if (!btn) return;
+    list.querySelectorAll(".wt-file").forEach(function (b) {
+      b.setAttribute("aria-selected", b === btn ? "true" : "false");
+    });
+    document.querySelectorAll(".wt-diff-pane").forEach(function (pane) {
+      pane.hidden = pane.id !== btn.getAttribute("aria-controls");
+    });
+  });
+})();
