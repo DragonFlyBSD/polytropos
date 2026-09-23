@@ -56,4 +56,12 @@ def from_workspace(env: str, origin: str) -> str:
         return ""
     if not isinstance(out, dict) or not out.get("ok"):
         return ""
-    return str(out.get("diff") or "")
+    diff = str(out.get("diff") or "")
+    # It has to BE a diff. An ok result whose body is anything else --
+    # a wrapper that answered the wrong question, a relocated env
+    # printing a path -- would otherwise count as "the live read
+    # worked", and the rescued artifact behind it would never be
+    # reached. The band would then be empty on a job that had changes
+    # recorded, which is the one failure this fallback exists to
+    # prevent.
+    return diff if "diff --git " in diff else ""

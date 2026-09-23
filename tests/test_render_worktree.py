@@ -223,3 +223,33 @@ def test_the_job_links_through_to_its_occurrence(tmp_path):
         body = client.get("/agentic/jobs/j7").text
     assert "Occurrence" in body
     assert "/agentic/bundles/b7" in body
+
+
+def test_a_live_read_that_is_not_a_diff_falls_through(monkeypatch):
+    """An ok result whose body is not a diff must not count as "the live
+    read worked" — the rescued artifact behind it would never be reached
+    and the band would be empty on a job that had changes recorded."""
+    from dportsv3.tracker import worktree_source  # noqa: PLC0415
+    from dportsv3.agent import worker  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        worker, "emit_diff",
+        lambda *a, **k: {"ok": True, "diff": "/some/env/path\n"})
+    assert worktree_source.from_workspace("e", "devel/foo") == ""
+
+    monkeypatch.setattr(
+        worker, "emit_diff", lambda *a, **k: {"ok": True, "diff": DIFF})
+    assert worktree_source.from_workspace("e", "devel/foo") == DIFF
+
+
+def test_a_workspace_that_cannot_be_read_is_not_an_error(monkeypatch):
+    """The env can be gone, and under poly-fij the runner is on another
+    host. A page that cannot show a diff shows no band."""
+    from dportsv3.tracker import worktree_source  # noqa: PLC0415
+    from dportsv3.agent import worker  # noqa: PLC0415
+
+    def boom(*a, **k):
+        raise RuntimeError("dev-env path failed")
+
+    monkeypatch.setattr(worker, "emit_diff", boom)
+    assert worktree_source.from_workspace("e", "devel/foo") == ""
