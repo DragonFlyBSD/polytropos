@@ -196,3 +196,61 @@ def test_tool_loop_does_not_exhaust_when_prompt_is_cached(monkeypatch) -> None:
 
     assert dispatched == ["env_verify"]  # not cut before dispatch
     assert [e for e in events if e.get("type") == "token_budget_exhausted"] == []
+
+
+def test_tool_start_precedes_dispatch_and_pairs_with_the_completion(monkeypatch) -> None:
+    """poly-qqx9.2: the loop announces a tool before running it.
+
+    dsynth_build and dsynth_test run 40+ minutes; without this event the
+    activity log says nothing for the whole of the most expensive thing the
+    loop does. The pair is matched on call_id.
+    """
+    from dportsv3.agent import llm, tool_loop, tools
+
+    turns = {"n": 0}
+
+    def fake_complete(*args, **kwargs):
+        turns["n"] += 1
+        if turns["n"] == 1:
+            return llm.Response(
+                text="",
+                tool_calls=[llm.ToolCall(id="tc-9", name="env_verify",
+                                         arguments={"path": "x"})],
+                usage=llm.Usage(prompt_tokens=10, completion_tokens=5,
+                                total_tokens=15),
+            )
+        return llm.Response(
+            text="done", tool_calls=[],
+            usage=llm.Usage(prompt_tokens=10, completion_tokens=5,
+                            total_tokens=15),
+        )
+
+    order: list[str] = []
+
+    def fake_dispatch(name, arguments, *, env):
+        order.append("dispatch")
+        return {"ok": True}
+
+    events: list[dict] = []
+
+    def record(ev):
+        if ev.get("type") in ("tool_start", "tool_call"):
+            order.append(ev["type"])
+        events.append(ev)
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    monkeypatch.setattr(tools, "dispatch", fake_dispatch)
+
+    tool_loop.run(
+        [{"role": "user", "content": "x"}],
+        model="test-model",
+        env="test-env",
+        on_event=record,
+    )
+
+    assert order == ["tool_start", "dispatch", "tool_call"]
+    start = [e for e in events if e["type"] == "tool_start"][0]
+    done = [e for e in events if e["type"] == "tool_call"][0]
+    assert start["tool"] == "env_verify"
+    assert start["call_id"] == done["call_id"] == "tc-9"
+    assert start["turn"] == done["turn"]

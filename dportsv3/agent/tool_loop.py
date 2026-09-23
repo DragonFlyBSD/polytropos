@@ -401,6 +401,23 @@ def run(
                 except Exception:
                     pass  # callback must never break the loop
             t0 = time.monotonic()
+            # The completion event below is emitted when the tool RETURNS.
+            # dsynth_build and dsynth_test run 40+ minutes, so a reader had
+            # no way to tell a working runner from a wedged one for the most
+            # expensive thing the loop does (poly-qqx9.2). `call_id` pairs
+            # this row with its completion; the pair is what gives a phase
+            # a start and an end rather than only a duration.
+            if on_event is not None:
+                try:
+                    on_event({
+                        "type": "tool_start",
+                        "attempt": attempt_idx,
+                        "turn": turn,
+                        "tool": call.name,
+                        "call_id": call.id,
+                    })
+                except Exception:
+                    pass  # callback must never break the loop
             # Defense-in-depth: even though we filtered the schemas
             # the model receives, refuse non-whitelisted tools if the
             # model hallucinates one (or the schema filter has a bug).
@@ -451,6 +468,7 @@ def run(
                         "attempt": attempt_idx,
                         "turn": turn,
                         "tool": call.name,
+                        "call_id": call.id,
                         "args": call.arguments or {},
                         "result": result if isinstance(result, dict) else {"value": result},
                         "duration_ms": duration_ms,

@@ -146,6 +146,23 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
+        elif et == "tool_start":
+            # One row when the tool is DISPATCHED. Without it the page
+            # cannot say what is running, and a 44-minute dsynth test is
+            # indistinguishable from a stalled runner (poly-qqx9.2). The
+            # completion row below carries the same call_id, so a reader
+            # pairs them rather than guessing by adjacency.
+            self.activity_log(
+                self.queue_root, "tool_start",
+                f"{ev.get('tool')} started",
+                job_id=self.job_id,
+                extra={
+                    "attempt": ev.get("attempt"),
+                    "turn": ev.get("turn"),
+                    "tool": ev.get("tool"),
+                    "call_id": ev.get("call_id"),
+                },
+            )
         elif et == "tool_call":
             args = ev.get("args") or {}
             res = ev.get("result") or {}
@@ -155,6 +172,9 @@ class PatchEventDispatcher:
                 "attempt": ev.get("attempt"),
                 "turn": ev.get("turn"),
                 "ok": ok,
+                # Pairs this row with its tool_start, so a phase has both
+                # edges instead of only a duration.
+                "call_id": ev.get("call_id"),
             }
             # On failure, pin stderr_tail + stdout_tail + rc into
             # the activity row's extra_json so /api/activity surfaces

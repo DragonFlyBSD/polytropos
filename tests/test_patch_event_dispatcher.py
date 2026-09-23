@@ -197,3 +197,41 @@ def test_trace_separated_across_instances():
     d1({"type": "attempt_start", "attempt": 1})
     assert d1.trace_events != []
     assert d2.trace_events == []
+
+
+# --- tool_start (poly-qqx9.2) ------------------------------------------------
+
+
+def test_tool_start_logs_its_own_row_with_the_pairing_id():
+    """A tool is visible when it is dispatched, not only when it returns."""
+    d = _make_dispatcher()
+    d({"type": "tool_start", "attempt": 2, "turn": 7,
+       "tool": "dsynth_test", "call_id": "call-abc"})
+    stages = [e[0] for e in d._log.entries]
+    assert stages == ["tool_start"]
+    stage, message, extra = d._log.entries[0]
+    assert "dsynth_test" in message
+    assert extra == {"attempt": 2, "turn": 7, "tool": "dsynth_test",
+                     "call_id": "call-abc"}
+
+
+def test_tool_start_and_completion_share_a_call_id():
+    """The pair is matched by call_id, not by adjacency."""
+    d = _make_dispatcher()
+    d({"type": "tool_start", "attempt": 1, "turn": 3,
+       "tool": "dsynth_build", "call_id": "call-1"})
+    d({"type": "tool_call", "attempt": 1, "turn": 3, "tool": "dsynth_build",
+       "call_id": "call-1", "args": {"origin": "devel/foo"},
+       "result": {"ok": True}, "duration_ms": 2480000})
+    start, done = d._log.entries
+    assert start[0] == "tool_start"
+    assert done[0] == "tool:dsynth_build"
+    assert start[2]["call_id"] == done[2]["call_id"] == "call-1"
+
+
+def test_tool_start_is_kept_in_the_trace():
+    """tool_trace.jsonl is the post-hoc record; the new event belongs in it."""
+    d = _make_dispatcher()
+    d({"type": "tool_start", "attempt": 1, "turn": 1,
+       "tool": "grep", "call_id": "c1"})
+    assert [e["type"] for e in d.trace_events] == ["tool_start"]
