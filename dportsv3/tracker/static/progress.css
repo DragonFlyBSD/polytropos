@@ -907,6 +907,19 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   max-height: none;
 }
 
+/* The rolling cap ate this job's history (poly-a162). Stated, not
+   implied: an absent section reads as "nothing happened", which is the
+   one thing it does not mean. */
+.activity-pruned-note {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-card);
+  border-left: 3px solid var(--amber-border);
+  border-radius: 3px;
+}
+
 .empty-state {
   color: var(--text-dim);
   padding: 24px;

@@ -29,11 +29,16 @@
     </p>
 
     {% if cards %}
+    {% if pruning and pruning.pruned %}
+      {% with full = false %}{% include "_activity_pruned.html" %}{% endwith %}
+    {% endif %}
     <div class="turn-stream">
       {% include "_turn_cards.html" %}
     </div>
 
     {% include "_raw_events.html" %}
+    {% elif pruning and pruning.pruned %}
+      {% with full = true %}{% include "_activity_pruned.html" %}{% endwith %}
     {% else %}
     <div class="empty-state">No activity recorded for this job.</div>
     {% endif %}

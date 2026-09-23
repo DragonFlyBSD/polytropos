@@ -2,6 +2,7 @@
        the job's first turn is a card with no row behind it, and hiding
        it would be exactly the optimistic silence this surface avoids
        (poly-qqx9.11). #}
+    {% set pruned = pruning and pruning.pruned %}
     {% if activity_cards %}
     <h2 id="activity">Activity
       <span id="activity-count" style="font-size:12px;color:var(--text-dim);font-weight:normal;">
@@ -16,6 +17,9 @@
        else — the older turns and the sortable raw table — is one route
        away, because at 442 events in one attempt a full stream is the
        mess the cards replaced (poly-qqx9.5). #}
+    {% if pruned %}
+      {% with full = false %}{% include "_activity_pruned.html" %}{% endwith %}
+    {% endif %}
     <div id="turn-cards" class="turn-stream">
       {% with cards = activity_cards %}{% include "_turn_cards.html" %}{% endwith %}
     </div>
@@ -29,6 +33,8 @@
     </p>
     {% endif %}
 
+    {% elif pruned %}
+      {% with full = true %}{% include "_activity_pruned.html" %}{% endwith %}
     {% else %}
     <div class="empty-state">No activity recorded for this job.</div>
     {% endif %}

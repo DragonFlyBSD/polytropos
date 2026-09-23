@@ -300,6 +300,45 @@ def events_since(
     return out
 
 
+def activity_pruning(conn: Any, job_id: str) -> dict[str, Any]:
+    """Whether the rolling cap has eaten any of this job's activity.
+
+    activity_log is trimmed to a GLOBAL row cap -- runner.activity_log_max,
+    a DELETE in runner.py -- so a job's history does not age out on its own
+    schedule: a chatty neighbour evicts it. Measured on a live builder, the
+    5000-row window held 3 distinct jobs out of 1,452 (poly-a162).
+
+    Two durable sources make the question answerable rather than a guess.
+    ``jobs`` and ``job_events`` are never pruned, so a job whose first
+    transition predates the oldest activity row the table still holds has
+    lost activity to the cap.
+
+    SAYS "SOME OR ALL", NEVER "SOME". Whether a job emitted any activity is
+    not knowable once the rows are gone, and a verify or confirm job may
+    legitimately have emitted none. The claim that holds either way is that
+    anything it did record from before the horizon is gone.
+
+    Fails CLOSED: with an empty activity_log there is no horizon to compare
+    against, so ``pruned`` stays False rather than announcing pruning on a
+    fresh install.
+
+    Returns ``{oldest_retained, job_started, rows, pruned}``.
+    """
+    oldest = conn.execute("SELECT MIN(ts) FROM activity_log").fetchone()[0]
+    started = conn.execute(
+        "SELECT MIN(ts) FROM job_events WHERE job_id = ?", (job_id,)
+    ).fetchone()[0]
+    rows = conn.execute(
+        "SELECT COUNT(*) FROM activity_log WHERE job_id = ?", (job_id,)
+    ).fetchone()[0]
+    return {
+        "oldest_retained": oldest,
+        "job_started": started,
+        "rows": int(rows or 0),
+        "pruned": bool(oldest and started and str(started) < str(oldest)),
+    }
+
+
 # ---------------------------------------------------------------------
 # Step 28a: origin skip flags
 # ---------------------------------------------------------------------

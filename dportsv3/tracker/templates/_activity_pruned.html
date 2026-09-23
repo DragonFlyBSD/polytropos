@@ -1,0 +1,40 @@
+{# The rolling cap ate this job's history (poly-a162).
+
+   activity_log is trimmed to a GLOBAL row cap, so a job's activity does
+   not age out on its own schedule -- a chatty neighbour evicts it. On a
+   live builder the 5000-row window held 3 distinct jobs out of 1,452, so
+   this is the ordinary case for any job that is not current.
+
+   "No activity recorded for this job" was false for every one of them.
+
+   Two wordings, one set of facts, because the states differ: with nothing
+   left the section is replaced, and with some rows left the survivors
+   look like the whole story -- which is worse, since the attempt strip
+   then counts a subset and reads as complete.
+
+   Says "any activity it recorded", never "its activity": whether a verify
+   or confirm job emitted any is unknowable once the rows are gone.
+
+   Call with `full = true` when no cards survive.
+#}
+{% if full %}
+<div class="empty-state" id="activity-pruned">
+  <strong>Activity has aged out.</strong>
+  The log keeps the most recent {{ activity_cap }} rows across
+  <em>all</em> jobs, and the oldest it still holds is from
+  <span title="{{ pruning.oldest_retained }}">{{ pruning.oldest_retained | relative_age }}</span>,
+  while this job started
+  <span title="{{ pruning.job_started }}">{{ pruning.job_started | relative_age }}</span>.
+  Any activity it recorded is gone. The lifecycle transitions are durable
+  and were not pruned.
+</div>
+{% else %}
+<p class="activity-pruned-note" id="activity-partly-pruned">
+  Earlier turns have aged out — the log keeps the last {{ activity_cap }}
+  rows across all jobs, its oldest is from
+  <span title="{{ pruning.oldest_retained }}">{{ pruning.oldest_retained | relative_age }}</span>,
+  and this job started
+  <span title="{{ pruning.job_started }}">{{ pruning.job_started | relative_age }}</span>.
+  What follows is what survives, and the attempt strip counts only those.
+</p>
+{% endif %}

@@ -32,6 +32,7 @@ from dportsv3.tracker.agentic_queries import (
     count_llm_turns_for_job,
     active_job_for_port,
     activity_for_job,
+    activity_pruning,
     agentic_status,
     bundles_for_run,
     discard_manual_request,
@@ -1410,6 +1411,12 @@ def register(app, ctx):
                 job_events_for_job(conn, job_id, limit=limit)
                 if job is not None else []
             )
+            # Has the rolling cap eaten this job's activity? Asked from the
+            # two durable sources, because the page said "No activity
+            # recorded for this job" for a job that recorded plenty and
+            # then had it deleted (poly-a162).
+            pruning = (activity_pruning(conn, job_id)
+                       if job is not None else {})
             attempt_summary = (
                 port_attempt_summary(
                     conn,
@@ -1544,6 +1551,8 @@ def register(app, ctx):
                 "total_turns": job_turns,
                 "turn_window": render.TURN_WINDOW,
                 "transitions": transitions,
+                "pruning": pruning,
+                "activity_cap": int(settings.get("runner.activity_log_max")),
                 "attempt_summary": attempt_summary,
                 "token_usage": token_usage,
                 "max_activity_id": max_id,
@@ -1585,6 +1594,10 @@ def register(app, ctx):
                         if job is not None else [])
             job_turns = (count_llm_turns_for_job(conn, job_id)
                          if job is not None else 0)
+            # Inside the block: the transcript builds its context after the
+            # connection closes, so this cannot be a call in the dict.
+            pruning = (activity_pruning(conn, job_id)
+                       if job is not None else {})
         if job is None:
             raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
         cards = render.group_activity_into_cards(activity)
@@ -1598,6 +1611,8 @@ def register(app, ctx):
                 "activity": activity,
                 "total_turns": job_turns,
                 "shown_turns": render.count_turns(cards),
+                "pruning": pruning,
+                "activity_cap": int(settings.get("runner.activity_log_max")),
                 "n_rows": len(activity),
                 "limit": limit,
                 "limit_options": [200, 500, 2000, 5000],
