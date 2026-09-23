@@ -73,14 +73,22 @@ def seeded(tmp_path):
             (_now(), stage, msg, dur, json.dumps(extra) if extra else None),
         )
 
-    # A terminal job whose one attempt exceeds the 40-row fold threshold,
-    # for the card-stream rendering contract on a terminal job.
+    # A terminal job with a bundle, so the prior-attempts band -- and the
+    # per-port spend beside it -- has something to list.
+    conn.execute(
+        """INSERT INTO bundles
+           (bundle_id, run_id, origin, flavor, ts_utc, result, path,
+            last_seen_at, target)
+           VALUES ('bd-bar-1', 'run-1', 'devel/bar', '', ?, 'failed',
+                   '/var/log/dsynth/bd-bar-1', ?, '@2026Q2')""",
+        (now, now),
+    )
     conn.execute(
         """INSERT INTO jobs
            (job_id, state, type, origin, flavor, bundle_dir,
-            created_ts_utc, path, last_seen_at, target)
+            created_ts_utc, path, last_seen_at, target, bundle_id)
            VALUES ('job-done', 'done', 'patch', 'devel/bar', '', '',
-                   ?, '', ?, '@2026Q2')""",
+                   ?, '', ?, '@2026Q2', 'bd-bar-1')""",
         (now, now),
     )
     big = [("attempt_start", "attempt 1/3", {"attempt": 1}, None)]
@@ -353,3 +361,25 @@ def test_a_job_with_no_attempts_gets_no_strip(client):
     is worse than none."""
     body = client.get("/agentic/jobs/job-other").text
     assert 'id="attempt-strip"' not in body
+
+
+def test_the_prior_attempts_band_shows_what_each_bundle_cost(client):
+    """"What has this port cost me across four jobs" could not be asked:
+    the band listed siblings with no spend beside them (poly-qqx9.9)."""
+    body = client.get("/agentic/jobs/job-done").text
+    assert "This port, all jobs" in body
+    assert "billable tokens across" in body
+    assert "Billable is the real" in body
+
+
+def test_the_strip_carries_each_attempt_s_cost(client):
+    body = client.get("/agentic/jobs/job-done").text
+    assert 'class="wf-cost"' in body
+
+
+def test_the_token_card_names_the_largest_turn_without_opening(client):
+    """Finding it is what the sortable token column was for (poly-9hjm),
+    and that table is a route away now."""
+    body = client.get("/agentic/jobs/job-done").text
+    summary = body[body.index("<summary>Token usage"):]
+    assert "largest" in summary[:summary.index("</summary>")]

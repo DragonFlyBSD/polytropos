@@ -17,6 +17,7 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    token_usage_by_bundle,
     attempt_boundaries,
     attempt_tool_totals,
     attempt_turn_totals,
@@ -1379,6 +1380,22 @@ def register(app, ctx):
                 )
                 if job is not None and job.get("origin") else []
             )
+            # What this port has cost across every job for it, and which
+            # of the sibling attempts spent it. The band listed the
+            # bundles with no spend beside them, so "what has this port
+            # cost me across four jobs" could not be asked (poly-qqx9.9).
+            port_usage = (
+                token_usage_for_port(
+                    conn, origin=job.get("origin"), target=job.get("target"),
+                )
+                if job is not None and job.get("origin") else None
+            )
+            port_by_bundle = (
+                token_usage_by_bundle(
+                    conn, origin=job.get("origin"), target=job.get("target"),
+                )
+                if job is not None and job.get("origin") else {}
+            )
             # Step 9: when a job ends in 'escalated', operators
             # currently have to bounce out to /agentic/manual to read
             # the handoff. Inline it: pull the most recent bundle for
@@ -1444,6 +1461,8 @@ def register(app, ctx):
                 "limit_options": [50, 200, 500, 2000, 5000],
                 "stage_filter": sf,
                 "prior_attempts": prior_attempts,
+                "port_usage": port_usage,
+                "port_by_bundle": port_by_bundle,
                 "handoff": handoff,
                 "job_is_active": job_is_active,
             },

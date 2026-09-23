@@ -7,7 +7,9 @@
 {% if prior_attempts %}
 <details class="section-collapse" id="prior-attempts">
   <summary>Prior attempts for this origin
-    <span class="muted">({{ prior_attempts | length }} of last 10)</span>
+    <span class="muted">({{ prior_attempts | length }} of last 10{% if port_usage and port_usage.has_data %} ·
+      {{ '{:,}'.format(port_usage.billable_tokens) }} billable tokens across
+      {{ port_usage.jobs }} job{{ 's' if port_usage.jobs != 1 else '' }}{% endif %})</span>
   </summary>
 <div class="table-scroll-x">
 <table class="tracker-table" style="font-size:12px;margin-top:8px;">
@@ -17,6 +19,10 @@
       <th scope="col">When</th>
       <th scope="col">Result</th>
       <th scope="col">Status</th>
+      {# What this port has cost, bundle by bundle. Nothing added these up
+         before, so "what has this port cost me across four jobs" could
+         not be asked (poly-qqx9.9). #}
+      <th scope="col" class="num" title="billable (uncached) tokens -- the real cost. The total re-counts the cached prefix every turn.">Billable</th>
       <th scope="col">Run</th>
     </tr>
   </thead>
@@ -37,6 +43,12 @@
       <td>
         {{ status_pill(b) }}
       </td>
+      <td class="num">
+        {%- set spend = port_by_bundle.get(b.bundle_id) if port_by_bundle else None -%}
+        {%- if spend %}{{ '{:,}'.format(spend.billable_tokens) }}
+          <span class="muted">· {{ spend.llm_turns }} turns</span>
+        {%- else %}—{% endif -%}
+      </td>
       <td>
         {% if b.run_id %}
           <a href="{{ request.url_for('agentic_run_detail', run_id=b.run_id) }}">{{ b.run_id }}</a>
@@ -45,6 +57,22 @@
     </tr>
     {% endfor %}
   </tbody>
+  {% if port_usage and port_usage.has_data %}
+  <tfoot>
+    <tr>
+      <th scope="row" colspan="3" style="text-align:left;">This port, all jobs</th>
+      <td class="muted">{{ port_usage.llm_turns }} turns</td>
+      <td class="num"><strong>{{ '{:,}'.format(port_usage.billable_tokens) }}</strong></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td colspan="6" class="muted" style="font-size:12px;">
+        Total re-counts the cached prefix every turn. Billable is the real
+        cost — {{ '{:,}'.format(port_usage.total_tokens) }} total here.
+      </td>
+    </tr>
+  </tfoot>
+  {% endif %}
 </table>
 </div>
 </details>

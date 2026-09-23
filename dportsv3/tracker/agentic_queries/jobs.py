@@ -156,6 +156,57 @@ def active_job_for_port(
     return _maybe(conn.execute(sql, params).fetchone())
 
 
+def token_usage_by_bundle(
+    conn: sqlite3.Connection,
+    origin: str,
+    target: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Per-bundle spend for one port, keyed by bundle_id.
+
+    token_usage_for_port already answers "what has this port cost" as one
+    number. What nothing answered is which of the sibling attempts spent
+    it: the prior-attempts band listed the bundles with no spend beside
+    them (poly-qqx9.9).
+
+    Billable is derived the same way token_usage_for_port derives it --
+    uncached prompt + completion -- so a row here and the port total
+    above it are the same quantity. The total re-counts the cached prefix
+    every turn and runs up to 21x higher (poly-9t9); the two are returned
+    apart and never added.
+    """
+    clauses = ["j.origin = ?", "al.stage LIKE ?"]
+    params: list[Any] = [origin, "%llm_turn"]
+    if target is not None:
+        clauses.append("j.target = ?")
+        params.append(target)
+    rows = conn.execute(
+        "SELECT j.bundle_id AS bundle_id, j.job_id AS job_id, "
+        "       COUNT(*) AS turns, "
+        "       SUM(COALESCE(json_extract(al.extra_json, '$.prompt_tokens'), 0)) AS prompt, "
+        "       SUM(COALESCE(json_extract(al.extra_json, '$.cached_tokens'), 0)) AS cached, "
+        "       SUM(COALESCE(json_extract(al.extra_json, '$.completion_tokens'), 0)) AS completion, "
+        "       SUM(COALESCE(json_extract(al.extra_json, '$.total_tokens'), 0)) AS total "
+        "FROM activity_log AS al JOIN jobs AS j ON j.job_id = al.job_id "
+        "WHERE " + " AND ".join(clauses) +
+        " GROUP BY j.bundle_id, j.job_id",
+        params,
+    ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for bundle_id, _job_id, turns, prompt, cached, completion, total in rows:
+        if not bundle_id:
+            continue
+        b = out.setdefault(str(bundle_id), {
+            "billable_tokens": 0, "total_tokens": 0,
+            "llm_turns": 0, "jobs": 0,
+        })
+        b["billable_tokens"] += (max(0, int(prompt or 0) - int(cached or 0))
+                                 + int(completion or 0))
+        b["total_tokens"] += int(total or 0)
+        b["llm_turns"] += int(turns or 0)
+        b["jobs"] += 1
+    return out
+
+
 def token_usage_for_job(
     conn: sqlite3.Connection, job_id: str,
 ) -> dict[str, Any]:

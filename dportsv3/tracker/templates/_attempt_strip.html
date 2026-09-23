@@ -20,15 +20,26 @@
       </button>
       {% endfor %}
     </div>
+    {# Per-attempt cost, beside the attempt it belongs to. Billable, and
+       summed over the whole attempt rather than the fetched window
+       (poly-qqx9.9). #}
+    <div class="wf-cost">
+      {%- if a.n_turns %}{{ '{:,}'.format(a.billable) }}
+        <span>{{ a.n_turns }} turn{{ 's' if a.n_turns != 1 else '' }}</span>
+      {%- else %}<span>no turns</span>{% endif -%}
+    </div>
   </div>
   {% endfor %}
   <div class="wf-axis">
     <div></div>
+    <div class="wf-ticks-wrap">
     <div class="wf-ticks">
       <span>0</span>
       <span>{{ dur_ms((strip.scale_ms / 2)|int) }}</span>
       <span>{{ dur_ms(strip.scale_ms) }}</span>
     </div>
+    </div>
+    <div class="wf-cost-head">billable</div>
   </div>
   <div class="wf-legend">
     <span><i class="sw llm"></i>model turns + overhead (not timed: the
