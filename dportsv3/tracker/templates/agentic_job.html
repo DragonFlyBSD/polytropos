@@ -84,7 +84,10 @@
     {# The slot survives the live swap; the bar inside it is replaced. #}
     <div id="now-bar-slot">{% include "_now_bar.html" %}</div>
 
-    {% include "_attempt_strip.html" %}
+    {# Same slot pattern as the bar: the strip inside is replaced on every
+       poll, because a running attempt's remainder grows with the wall
+       clock and not with activity rows (poly-qqx9.16). #}
+    <div id="attempt-strip-slot">{% include "_attempt_strip.html" %}</div>
 
     {% include "_job_summary.html" %}
 

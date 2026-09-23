@@ -20,6 +20,7 @@
   var tbody = document.getElementById("activity-tbody");
   var cardsEl = document.getElementById("turn-cards");
   var barSlot = document.getElementById("now-bar-slot");
+  var stripSlot = document.getElementById("attempt-strip-slot");
   var lastUpdateEl = indicator.querySelector(".last-update");
   var statusText = indicator.querySelector(".status-text");
   var pauseLink = document.getElementById("pause-toggle");
@@ -45,6 +46,12 @@
       if (data.nowbar_html !== undefined && barSlot) {
         barSlot.innerHTML = data.nowbar_html;
         startElapsedClock();
+      }
+      // Sent on every poll, not only when rows arrive: a running attempt's
+      // track grows with the wall clock. Nothing in it is page state the
+      // operator can change, so a straight swap is safe.
+      if (data.strip_html !== undefined && stripSlot) {
+        stripSlot.innerHTML = data.strip_html;
       }
       if (data.cards_html && cardsEl) {
         // Swap the whole stream. Which <details> the operator had open is

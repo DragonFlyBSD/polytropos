@@ -369,6 +369,35 @@ def test_the_job_page_renders_an_attempt_strip(client):
     assert 'class="wf-track"' in body
 
 
+def test_the_live_fragment_carries_the_strip_on_every_poll(client):
+    """Unlike the bar, this one is sent even when nothing is new: a running
+    attempt's remainder grows with the wall clock, so gating it on rows
+    leaves it frozen for the whole of a long build (poly-qqx9.16)."""
+    first = client.get(
+        "/api/jobs/job-done/activity-fragment?since_id=0").json()
+    assert 'class="wf-track"' in first["strip_html"]
+
+    quiet = client.get(
+        f"/api/jobs/job-done/activity-fragment?since_id={first['since_id']}"
+    ).json()
+    assert quiet["changed"] is False
+    assert "nowbar_html" not in quiet, "the bar is still omitted when quiet"
+    assert 'class="wf-track"' in quiet["strip_html"], "the strip is not"
+
+
+def test_the_strip_body_is_empty_for_a_job_with_no_attempts(client):
+    """Empties the slot rather than leaving a stale chart behind."""
+    body = client.get(
+        "/api/jobs/job-other/activity-fragment?since_id=0").json()
+    assert body["strip_html"].strip() == ""
+
+
+def test_the_page_wraps_the_strip_in_a_swappable_slot(client):
+    body = client.get("/agentic/jobs/job-done").text
+    assert 'id="attempt-strip-slot"' in body
+    assert 'id="attempt-strip"' in body
+
+
 def test_a_job_with_no_attempts_gets_no_strip(client):
     """job-q2-foo-style jobs write no attempt boundaries; an empty chart
     is worse than none."""

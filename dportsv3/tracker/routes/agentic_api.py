@@ -14,6 +14,9 @@ from dportsv3.tracker import (
 )
 from dportsv3.tracker.agentic_queries import (
     queue_operator_note,
+    attempt_boundaries,
+    attempt_tool_totals,
+    attempt_turn_totals,
     latest_activity_extra,
     activity_for_job,
     agentic_status,
@@ -112,6 +115,7 @@ def register(app, ctx):
         row_tmpl = templates.env.get_template("_activity_row.html")
         cards_tmpl = templates.env.get_template("_turn_cards.html")
         bar_tmpl = templates.env.get_template("_now_bar.html")
+        strip_tmpl = templates.env.get_template("_attempt_strip.html")
         with _conn() as conn:
             rows = activity_for_job(
                 conn, job_id, limit=200, since_id=since_id,
@@ -132,6 +136,21 @@ def register(app, ctx):
                 latest_activity_extra(conn, job_id, "decision")
                 if rows else {}
             )
+            # NOT gated on `rows`, unlike everything else here. A running
+            # attempt's remainder is its `run` segment, and
+            # total_ms = max(elapsed_ms, measured) -- so the track grows
+            # with the WALL CLOCK. Gated on new rows it would sit frozen
+            # for the whole of a long build, which is the bug in a smaller
+            # window (poly-qqx9.16). Three GROUP BYs over one job through
+            # idx_activity_log_job, on a table capped at
+            # runner.activity_log_max rows.
+            strip = (
+                render.attempt_strip(
+                    attempt_boundaries(conn, job_id),
+                    attempt_tool_totals(conn, job_id),
+                    attempt_turn_totals(conn, job_id),
+                )
+                if job is not None else {"attempts": [], "scale_ms": 0})
         html = "".join(row_tmpl.render(a=row) for row in rows)
         # The same window the page renders, or the 3s swap would replace
         # five cards with the whole stream (poly-qqx9.5).
@@ -183,6 +202,10 @@ def register(app, ctx):
         if rows:
             payload["nowbar_html"] = bar_tmpl.render(
                 now=render.now_bar(cards, attempt_extra, decision_extra))
+        # The one body sent on EVERY poll, for the wall-clock reason above.
+        # It renders empty for a job type with no attempts, which correctly
+        # empties the slot rather than leaving a stale chart.
+        payload["strip_html"] = strip_tmpl.render(strip=strip)
         return payload
 
     @app.get("/api/jobs/{job_id}/dsynth-tail")
