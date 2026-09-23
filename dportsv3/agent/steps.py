@@ -65,6 +65,73 @@ def _attempt_spend(ev: dict) -> str:
     return f"billable={billable} total={ev.get('tokens')}"
 
 
+#: Per-value and whole-dict caps for tool arguments on an activity row.
+#: A put_file carries the file body in ``content`` and an edit_file carries
+#: both sides of the edit; unredacted, one write would put a whole source
+#: file into extra_json. The row exists so the UI can render a call as
+#: fields — name, path, flags — not so it can reconstruct the bytes, which
+#: is what analysis/tool_trace.jsonl is for.
+#: Characters of the model's own text kept on an llm_turn row. The card
+#: leads with this sentence; the rest of the turn is in the session dump
+#: and the trace. Long enough for a claim and its reason, short enough
+#: that 400 turns do not become a second copy of the conversation.
+_TEXT_EXCERPT_CAP = 300
+_ARG_VALUE_CAP = 160
+_ARGS_TOTAL_CAP = 1200
+
+
+def _excerpt(text: str | None, cap: int = _TEXT_EXCERPT_CAP) -> str:
+    """One line of the model's text, capped, for storage on a row."""
+    collapsed = " ".join(str(text or "").split())
+    if len(collapsed) <= cap:
+        return collapsed
+    return collapsed[:cap].rstrip() + "…"
+
+
+def _llm_turn_extra(ev: dict) -> dict:
+    """Every field of an llm_turn event but the type, with the text capped."""
+    extra = {k: v for k, v in ev.items() if k != "type"}
+    if "text" in extra:
+        extra["text"] = _excerpt(extra["text"])
+    return extra
+
+
+def _redact_tool_args(args: dict) -> dict:
+    """Tool arguments, capped for storage on an activity row.
+
+    Long strings keep their head and declare their real length, so a path
+    survives intact while a file body becomes a measurement. Values are
+    taken in order until the whole-dict budget is spent; anything past it
+    is named in ``_dropped`` rather than silently missing.
+    """
+    out: dict = {}
+    budget = _ARGS_TOTAL_CAP
+    dropped: list[str] = []
+    for key, value in (args or {}).items():
+        if isinstance(value, str):
+            kept = (
+                value if len(value) <= _ARG_VALUE_CAP
+                else f"{value[:_ARG_VALUE_CAP]}… ({len(value)} chars)"
+            )
+        elif isinstance(value, (int, float, bool)) or value is None:
+            kept = value
+        else:
+            text = str(value)
+            kept = (
+                text if len(text) <= _ARG_VALUE_CAP
+                else f"{text[:_ARG_VALUE_CAP]}… ({len(text)} chars)"
+            )
+        cost = len(str(kept)) + len(str(key))
+        if cost > budget:
+            dropped.append(str(key))
+            continue
+        budget -= cost
+        out[key] = kept
+    if dropped:
+        out["_dropped"] = dropped
+    return out
+
+
 @dataclass
 class PatchEventDispatcher:
     """Named callable that routes ``harness_patch.run`` events.
@@ -161,6 +228,7 @@ class PatchEventDispatcher:
                     "turn": ev.get("turn"),
                     "tool": ev.get("tool"),
                     "call_id": ev.get("call_id"),
+                    "args": _redact_tool_args(ev.get("args") or {}),
                 },
             )
         elif et == "tool_call":
@@ -175,6 +243,10 @@ class PatchEventDispatcher:
                 # Pairs this row with its tool_start, so a phase has both
                 # edges instead of only a duration.
                 "call_id": ev.get("call_id"),
+                # The summary line below is one capped line of prose. These
+                # are the same call as FIELDS, which is what a UI needs to
+                # render `write_file <path> · 118ms` without parsing English.
+                "args": _redact_tool_args(args),
             }
             # On failure, pin stderr_tail + stdout_tail + rc into
             # the activity row's extra_json so /api/activity surfaces
@@ -242,7 +314,7 @@ class PatchEventDispatcher:
                 f"cum_billable={cum_billable} "
                 f"→ {tools_str}",
                 job_id=self.job_id,
-                extra={k: v for k, v in ev.items() if k != "type"},
+                extra=_llm_turn_extra(ev),
             )
 
 
@@ -389,7 +461,7 @@ class TriageStep:
                 f"total={ev.get('total_tokens')} "
                 f"cum_billable={ev.get('cumulative_billable_tokens')}",
                 job_id=ctx.job_id,
-                extra={k: v for k, v in ev.items() if k != "type"},
+                extra=_llm_turn_extra(ev),
             )
 
         start = time.time()

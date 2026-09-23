@@ -212,7 +212,7 @@ def test_tool_start_logs_its_own_row_with_the_pairing_id():
     stage, message, extra = d._log.entries[0]
     assert "dsynth_test" in message
     assert extra == {"attempt": 2, "turn": 7, "tool": "dsynth_test",
-                     "call_id": "call-abc"}
+                     "call_id": "call-abc", "args": {}}
 
 
 def test_tool_start_and_completion_share_a_call_id():
@@ -235,3 +235,83 @@ def test_tool_start_is_kept_in_the_trace():
     d({"type": "tool_start", "attempt": 1, "turn": 1,
        "tool": "grep", "call_id": "c1"})
     assert [e["type"] for e in d.trace_events] == ["tool_start"]
+
+
+# --- tool args on the row (poly-qqx9.13) -------------------------------------
+
+
+def test_tool_call_row_carries_args_as_fields():
+    d = _make_dispatcher()
+    d({"type": "tool_call", "attempt": 1, "turn": 2, "tool": "write_file",
+       "call_id": "c1", "args": {"path": "files/patch-CMakeLists.txt"},
+       "result": {"ok": True}, "duration_ms": 118})
+    _stage, _msg, extra = d._log.entries[0]
+    assert extra["args"] == {"path": "files/patch-CMakeLists.txt"}
+
+
+def test_a_file_body_never_lands_in_the_row():
+    """put_file's `content` is the whole file; the row stores a measurement."""
+    body = "x" * 50000
+    d = _make_dispatcher()
+    d({"type": "tool_call", "attempt": 1, "turn": 2, "tool": "put_file",
+       "call_id": "c1",
+       "args": {"path": "ports/devel/llvm19/overlay.dops", "content": body},
+       "result": {"ok": True}, "duration_ms": 12})
+    _stage, _msg, extra = d._log.entries[0]
+    args = extra["args"]
+    assert args["path"] == "ports/devel/llvm19/overlay.dops"
+    assert body not in str(args)
+    assert "50000 chars" in args["content"]
+    assert len(str(args)) < 2000
+
+
+def test_args_beyond_the_dict_budget_are_named_not_silently_missing():
+    d = _make_dispatcher()
+    args = {f"k{i}": "y" * 150 for i in range(20)}
+    d({"type": "tool_call", "attempt": 1, "turn": 1, "tool": "edit_file",
+       "call_id": "c1", "args": args, "result": {"ok": True},
+       "duration_ms": 1})
+    _stage, _msg, extra = d._log.entries[0]
+    assert extra["args"]["_dropped"]
+    assert len(str(extra["args"])) < 2500
+
+
+def test_tool_start_carries_the_same_redacted_args():
+    d = _make_dispatcher()
+    d({"type": "tool_start", "attempt": 3, "turn": 7, "tool": "dsynth_test",
+       "call_id": "c9", "args": {"origin": "devel/llvm19", "flavor": "default"}})
+    _stage, _msg, extra = d._log.entries[0]
+    assert extra["args"] == {"origin": "devel/llvm19", "flavor": "default"}
+
+
+# --- the model's own sentence on the row (poly-qqx9.13) ----------------------
+
+
+def test_llm_turn_row_carries_a_capped_excerpt_of_the_text():
+    d = _make_dispatcher()
+    d({"type": "llm_turn", "attempt": 3, "turn": 7,
+       "prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12,
+       "tools_requested": ["grep"],
+       "text": "Hunk #2 rejected — the upstream file moved under the patch.\n\n"
+               "Re-reading CMakeLists.txt around the tablegen block."})
+    _stage, _msg, extra = d._log.entries[0]
+    assert extra["text"].startswith("Hunk #2 rejected")
+    # newlines collapsed, so the card gets one readable line
+    assert "\n" not in extra["text"]
+
+
+def test_a_long_turn_does_not_copy_the_conversation_onto_the_row():
+    d = _make_dispatcher()
+    d({"type": "llm_turn", "attempt": 1, "turn": 1, "tools_requested": [],
+       "text": "word " * 5000})
+    _stage, _msg, extra = d._log.entries[0]
+    assert len(extra["text"]) <= 301
+    assert extra["text"].endswith("…")
+
+
+def test_an_llm_turn_without_text_is_unchanged():
+    """Every job that already ran has no text; that must not look broken."""
+    d = _make_dispatcher()
+    d({"type": "llm_turn", "attempt": 1, "turn": 1, "tools_requested": []})
+    _stage, _msg, extra = d._log.entries[0]
+    assert "text" not in extra

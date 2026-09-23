@@ -345,6 +345,11 @@ def run(
                     "cached_tokens": response.usage.cached_tokens,
                     "billable_tokens": response.usage.billable_tokens,
                     "tools_requested": tools_requested,
+                    # What the model actually said this turn. The activity
+                    # row stores a capped excerpt of it; the full value is
+                    # kept in analysis/tool_trace.jsonl, which is the record
+                    # a human reconstructs the run from (poly-qqx9.13).
+                    "text": response.text or "",
                     "text_only": not response.tool_calls,
                     "cumulative_total_tokens": total.total_tokens,
                     "cumulative_billable_tokens": total.billable_tokens,
@@ -415,6 +420,7 @@ def run(
                         "turn": turn,
                         "tool": call.name,
                         "call_id": call.id,
+                        "args": call.arguments or {},
                     })
                 except Exception:
                     pass  # callback must never break the loop

@@ -132,6 +132,9 @@ def run(
                     "type": "llm_turn",
                     "phase": "triage",
                     "turn": turn,
+                    # Capped onto the activity row by the triage handler;
+                    # see tool_loop for why the event carries it whole.
+                    "text": response_text or "",
                     "snippet_round": snippet_round,
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
