@@ -142,6 +142,36 @@ def resolve_env(job: dict | None) -> str | None:
     return r.env
 
 
+def take_operator_notes(job_id: str):
+    """A callable the loop asks for operator notes on each turn.
+
+    Returns a function of (attempt, turn) so tool_loop never sees the
+    state DB: it asks "is there anything for me", and gets back rows that
+    are already marked delivered with the attempt and turn they landed in
+    (poly-qqx9.11).
+
+    Claiming before returning is deliberate. A crash between the claim
+    and the model call loses the note; the other order delivers it twice,
+    and a note costs tokens every time it is delivered.
+    """
+    def _take(attempt: int, turn: int) -> list[dict]:
+        if _state_db_conn is None or not job_id:
+            return []
+        from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
+            take_pending_operator_notes,
+        )
+        try:
+            with _state_db_lock:
+                return take_pending_operator_notes(
+                    _state_db_conn, job_id, attempt=attempt, turn=turn)
+        except Exception as exc:
+            print(f"Warning: could not read operator notes: {exc}",
+                  file=sys.stderr)
+            return []
+
+    return _take
+
+
 def _record_job_env(job: dict | None, env: str | None) -> None:
     """Persist the env this job resolved to, onto the job row.
 

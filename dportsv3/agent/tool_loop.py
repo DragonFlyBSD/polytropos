@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 
 from . import llm, tools, worker
 from .llm import Response, Usage
@@ -223,6 +224,7 @@ def run(
     timeout: int = 120,
     max_turns: int = 12,
     max_tokens: int = 0,
+    operator_notes: Callable[[int, int], list[dict]] | None = None,
     on_event=None,
     attempt_idx: int = 1,
     tool_whitelist: set[str] | frozenset[str] | None = None,
@@ -508,6 +510,49 @@ def run(
                     except Exception:
                         pass
                 raise EnvironmentBlocked(reason, call.name, total)
+
+        # Something the operator knows that the agent does not, delivered
+        # on the turn the loop is about to compose (poly-qqx9.11). THE
+        # SEAM IS HERE, not at the attempt boundary: during a 44-minute
+        # dsynth_test the agent is sitting inside a turn waiting on the
+        # tool, and the next turn is composed the moment it returns. At
+        # the boundary the same note can be forty minutes late, which is
+        # most of its value gone.
+        #
+        # It goes in as its own message, not folded into a tool result.
+        # The description called the tool-result payload the carrier, and
+        # the timing is what mattered there; putting operator text inside
+        # what the model has been told is a tool's own output would blur
+        # exactly the provenance a note needs to keep.
+        if operator_notes is not None:
+            try:
+                notes = list(operator_notes(attempt_idx, turn) or [])
+            except Exception:
+                notes = []  # a callback must never break the loop
+            for note in notes:
+                body = str(note.get("text") or "").strip()
+                if not body:
+                    continue
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Note from the operator watching this job:\n\n"
+                        f"{body}\n\n"
+                        "Take it into account from here. It is not a tool "
+                        "result and not part of the build output."
+                    ),
+                })
+                if on_event is not None:
+                    try:
+                        on_event({
+                            "type": "operator_note",
+                            "attempt": attempt_idx,
+                            "turn": turn,
+                            "note_id": note.get("id"),
+                            "text": body,
+                        })
+                    except Exception:
+                        pass
     log.warning(
         "tool_loop: hit max_turns=%d without a text-only response", max_turns
     )

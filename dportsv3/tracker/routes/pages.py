@@ -19,6 +19,9 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    MAX_NOTE_CHARS,
+    operator_notes_for_job,
+    pending_note_count,
     WRITE_TOOLS,
     write_tool_calls,
     token_usage_by_bundle,
@@ -1445,7 +1448,14 @@ def register(app, ctx):
                 )
                 if job is not None and job.get("origin") else {}
             )
-            activity_cards = render.group_activity_into_cards(activity)
+            activity_cards = render.merge_note_cards(
+                render.group_activity_into_cards(activity),
+                operator_notes_for_job(conn, job_id) if job is not None else [],
+            )
+            pending_notes = (pending_note_count(conn, job_id)
+                             if job is not None else 0)
+            now = render.now_bar(
+                activity_cards, attempt_extra, decision_extra)
             tree = (
                 _working_tree_for(conn, job, job_id, activity_cards,
                                   app.state.artifact_root)
@@ -1520,8 +1530,17 @@ def register(app, ctx):
                 "activity_cards": render.window_cards(activity_cards),
                 "strip": strip,
                 "tree": tree,
-                "now": render.now_bar(
-                    activity_cards, attempt_extra, decision_extra),
+                "pending_notes": pending_notes,
+                # What a queued note is waiting for, by name: "dsynth_test
+                # still running" is the difference between a wait an
+                # operator understands and one that looks like a hang.
+                "waiting_on": (
+                    f"{now['tool']['name']} still running — the note lands "
+                    "on the turn composed when it returns"
+                    if now and now.get("tool") else None
+                ),
+                "note_max_chars": MAX_NOTE_CHARS,
+                "now": now,
                 "total_turns": job_turns,
                 "turn_window": render.TURN_WINDOW,
                 "transitions": transitions,

@@ -1,4 +1,8 @@
-    {% if activity %}
+    {# Keyed on the CARDS, not on the activity rows: a note queued before
+       the job's first turn is a card with no row behind it, and hiding
+       it would be exactly the optimistic silence this surface avoids
+       (poly-qqx9.11). #}
+    {% if activity_cards %}
     <h2 id="activity">Activity
       <span id="activity-count" style="font-size:12px;color:var(--text-dim);font-weight:normal;">
         {%- if total_turns > turn_window -%}
@@ -16,12 +20,14 @@
       {% with cards = activity_cards %}{% include "_turn_cards.html" %}{% endwith %}
     </div>
 
+    {% if activity %}
     <p class="transcript-link">
       <a href="{{ request.url_for('agentic_job_transcript', job_id=job.job_id) }}">
         {%- if total_turns > turn_window -%}
           Full transcript — all {{ total_turns }} turns
         {%- else -%}Full transcript{%- endif %} →</a>
     </p>
+    {% endif %}
 
     {% else %}
     <div class="empty-state">No activity recorded for this job.</div>

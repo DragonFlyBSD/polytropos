@@ -17,6 +17,8 @@ from .sessions import (
     SESSION_ATTEMPT_RE,
 )
 from .activity import (
+    merge_note_cards,
+    note_cards,
     attach_tool_tail,
     running_tailable_tool,
     count_turns,
@@ -45,4 +47,5 @@ __all__ = [
     "group_activity_into_cards", "window_cards", "count_turns",
     "TURN_WINDOW", "now_bar", "attempt_strip",
     "attach_tool_tail", "running_tailable_tool", "working_tree",
+    "merge_note_cards", "note_cards",
 ]

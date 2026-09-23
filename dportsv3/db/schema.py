@@ -215,6 +215,31 @@ CREATE TABLE IF NOT EXISTS activity_log (
     extra_json TEXT
 );
 
+-- Something the operator knows that the agent does not, delivered on the
+-- job's next turn. The only chat the tracker had was post-hoc, on the
+-- occurrence page, and the only control on a running job was to kill it:
+-- an operator who spotted a wrong line of attack early could spend that
+-- knowledge only by throwing away the attempt budget and the workspace
+-- (poly-qqx9.11).
+--
+-- Stored, not held in flight: poly-pf4a is open precisely because the fix
+-- chat was never persisted, and a note is part of why the job did what it
+-- did next. A delivered note keeps the attempt and turn it landed in, so
+-- a later reader can place it.
+CREATE TABLE IF NOT EXISTS operator_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    author TEXT,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    delivered_attempt INTEGER,
+    delivered_turn INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_operator_notes_job
+    ON operator_notes(job_id, id);
+
 CREATE TABLE IF NOT EXISTS runner_status (
     id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     status TEXT NOT NULL DEFAULT 'unknown',

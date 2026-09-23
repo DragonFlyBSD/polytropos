@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
+from urllib.parse import parse_qs
 
 from dportsv3.tracker import (
     dsynth_tail,
@@ -11,6 +13,7 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    queue_operator_note,
     latest_activity_extra,
     activity_for_job,
     agentic_status,
@@ -34,6 +37,8 @@ from dportsv3.tracker.agentic_queries import (
     set_active_env,
 )
 from dportsv3.tracker.routes._common import (
+    RedirectResponse,
+    Request,
     can_operate,
     forbid_anonymous,
     HTTPException,
@@ -324,6 +329,67 @@ def register(app, ctx):
         if row is None:
             raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
         return row
+
+    @app.post("/api/jobs/{job_id}/notes")
+    async def api_queue_operator_note(request: Request, job_id: str) -> Any:
+        """Queue something the operator knows for the job's next turn.
+
+        The only control a running job had was Abandon -- watch or kill --
+        so knowing early that a line of attack was wrong could only be
+        spent by throwing away the attempt budget and the workspace
+        (poly-qqx9.11). This is delivered inside the current attempt, on
+        the turn composed when the running tool returns.
+
+        Stored, not held: poly-pf4a is open precisely because the fix
+        chat was never persisted.
+        """
+        forbid_anonymous("Sending a note to a running job")
+        # Parsed here rather than through request.form(), which pulls in
+        # python-multipart for a single textarea. The plain HTML form
+        # posts urlencoded and keeps working without JavaScript; a fetch
+        # caller can send JSON.
+        body = await request.body()
+        raw = body.decode("utf-8", errors="replace")
+        if "application/json" in str(request.headers.get("content-type", "")):
+            try:
+                text = str((json.loads(raw) or {}).get("text") or "")
+            except ValueError:
+                text = ""
+        else:
+            text = " ".join(parse_qs(raw).get("text", [""]))
+        with _conn() as conn:
+            job = get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+        from dportsv3.agent.lifecycle import (  # noqa: PLC0415
+            ACTIVE_WORK_STATE_VALUES,
+        )
+        if job.get("state") not in ACTIVE_WORK_STATE_VALUES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Job {job_id} is {job.get('state')}, so there is no next "
+                    "turn to deliver a note on."
+                ),
+            )
+        write_conn = sqlite3.connect(
+            str(app.state.db_path), check_same_thread=False)
+        write_conn.row_factory = sqlite3.Row
+        try:
+            note = queue_operator_note(
+                write_conn, job_id, text, author="operator")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            write_conn.close()
+        accept = str(getattr(request, "headers", {}).get("accept", ""))
+        if "application/json" in accept:
+            return {"ok": True, "note": note}
+        return RedirectResponse(
+            url=str(request.url_for("agentic_job_detail", job_id=job_id))
+            + "#note-composer",
+            status_code=303,
+        )
 
     @app.post("/api/jobs/{job_id}/abandon")
     def api_job_abandon(job_id: str) -> dict[str, Any]:

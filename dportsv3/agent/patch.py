@@ -23,6 +23,7 @@ def run(
     reasoning: str | None = None,
     context_keep_turns: int | None = None,
     context_mask_batch: int | None = None,
+    operator_notes=None,
 ) -> PatchResult:
     """Run the patch agent for one bundle. Returns the PatchResult.
 
@@ -72,4 +73,5 @@ def run(
         reasoning=reasoning,
         context_keep_turns=context_keep_turns,
         context_mask_batch=context_mask_batch,
+        operator_notes=operator_notes,
     )

@@ -450,3 +450,61 @@ def attach_tool_tail(
     tool = running_tailable_tool(cards)
     if tool is not None and tail:
         tool["tail"] = tail
+
+
+def note_cards(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Operator notes as cards, in the same stream as everything else.
+
+    A queued note is shown the moment it is written -- no optimistic
+    silence -- and window_cards pins it above the window until it is
+    delivered, because a note that scrolls out before the agent has read
+    it is the failure this surface exists to prevent. Once delivered it
+    keeps the attempt and turn it landed in and stays in the transcript
+    for good (poly-qqx9.11).
+    """
+    cards = []
+    for note in notes or []:
+        delivered = bool(note.get("delivered_at"))
+        cards.append({
+            "kind": "note",
+            "key": f"n-{note.get('id')}",
+            "state": "say" if delivered else "queued",
+            "delivered": delivered,
+            "id": note.get("id") or 0,
+            "text": note.get("text") or "",
+            "author": note.get("author"),
+            "ts": note.get("delivered_at") or note.get("created_at"),
+            "created_at": note.get("created_at"),
+            "attempt": note.get("delivered_attempt"),
+            "turn": note.get("delivered_turn"),
+        })
+    return cards
+
+
+def merge_note_cards(
+    cards: list[dict[str, Any]], notes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Put each note where it belongs in the newest-first stream.
+
+    A delivered note sits immediately above the turn it landed in -- it
+    was read as that turn was composed, so that is where a later reader
+    needs to find it. A queued one goes to the top, where window_cards
+    will keep it.
+    """
+    delivered, queued = [], []
+    for card in note_cards(notes):
+        (delivered if card["delivered"] else queued).append(card)
+
+    out: list[dict[str, Any]] = list(queued)
+    for card in cards:
+        if card.get("kind") == "turn":
+            for note in delivered:
+                if (note.get("attempt") == card.get("attempt")
+                        and note.get("turn") == card.get("turn")):
+                    out.append(note)
+        out.append(card)
+    # A note whose turn is not in this window still belongs in the
+    # stream; drop it at the end rather than losing it.
+    placed = {id(n) for n in out}
+    out.extend(n for n in delivered if id(n) not in placed)
+    return out

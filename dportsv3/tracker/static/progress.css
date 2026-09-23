@@ -2628,3 +2628,34 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 .wt-diff-pane .diff-view { max-height: 460px; overflow: auto; }
 .wt-note { margin: 8px 0 0; font-size: 12px; }
 @media (max-width: 760px) { .wt { grid-template-columns: minmax(0, 1fr); } }
+
+/* Operator notes in the stream: the agent was told something. */
+.turn-stream .turn-card.note.state-say { border-left-color: var(--violet); }
+.turn-stream .turn-card.note.state-queued {
+  border-left-color: var(--violet); border-style: dashed;
+  border-left-style: solid; background: var(--violet-soft);
+}
+.turn-stream .turn-glyph.state-say,
+.turn-stream .turn-glyph.state-queued {
+  color: var(--violet); background: var(--violet-soft);
+  border-color: var(--violet-line);
+}
+.turn-stream .state-say > .turn-body .turn-verdict,
+.turn-stream .state-queued > .turn-body .turn-verdict { color: var(--violet); }
+
+/* The note composer, docked at the foot of the job page. */
+.note-composer { margin: 18px 0 0; padding: 12px;
+                 background: var(--surface); border: 1px solid var(--line);
+                 border-radius: 4px; }
+.nc-head { font-size: 15px; margin: 0 0 8px; }
+.nc-head .muted { font: 12px var(--mono); font-weight: normal; }
+.note-composer textarea {
+  width: 100%; padding: 8px 10px; background: var(--bg);
+  border: 1px solid var(--line-hot); border-radius: 3px;
+  color: var(--text); font: 13px var(--sans); resize: vertical;
+}
+.note-composer textarea:focus-visible { outline: 2px solid var(--cyan);
+                                        outline-offset: 1px; }
+.nc-actions { display: flex; align-items: center; gap: 12px;
+              flex-wrap: wrap; margin-top: 8px; }
+.nc-actions .muted { font-size: 12px; }

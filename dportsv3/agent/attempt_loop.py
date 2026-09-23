@@ -390,6 +390,7 @@ def run(
     reasoning: str | None = None,
     context_keep_turns: int = 0,
     context_mask_batch: int = 0,
+    operator_notes=None,
 ) -> PatchResult:
     """Run the patch flow for one bundle, returning a structured PatchResult.
 
@@ -557,6 +558,7 @@ def run(
                 reasoning=reasoning,
                 context_keep_turns=context_keep_turns,
                 context_mask_batch=context_mask_batch,
+                operator_notes=operator_notes,
             )
         except tool_loop.EnvironmentBlocked as blocked:
             # A tool reported something no further agent work can clear.

@@ -95,6 +95,28 @@
   </div>
 </article>
 
+{% elif c.kind == 'note' %}
+{# Something the operator told the agent. Queued says what it is waiting
+   for; delivered is stamped with the turn it landed in and stays in the
+   transcript for good (poly-qqx9.11). #}
+<article class="turn-card note state-{{ c.state }}" data-key="{{ c.key }}">
+  <span class="turn-glyph state-{{ c.state }}">{{ verdict_glyph('say') }}</span>
+  <div class="turn-body">
+    <div class="turn-header">
+      <span class="turn-id">operator note</span>
+      <span class="turn-verdict">
+        {%- if c.delivered %}delivered · A{{ c.attempt }}.T{{ c.turn }}
+        {%- else %}queued · next turn{% endif -%}
+      </span>
+      <span class="turn-meta">{{ short_ts(c.ts) }}</span>
+    </div>
+    <p class="turn-text">{{ c.text }}</p>
+    {% if not c.delivered %}
+    <p class="turn-note">{{ waiting_on or 'waiting for the current tool to return' }}</p>
+    {% endif %}
+  </div>
+</article>
+
 {% elif c.kind == 'boundary' %}
 <article class="turn-card boundary state-{{ c.state }}" data-key="{{ c.key }}">
   <span class="turn-glyph state-{{ c.state }}">{{ verdict_glyph(c.state) }}</span>

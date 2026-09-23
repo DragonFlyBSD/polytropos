@@ -15,6 +15,13 @@ from dportsv3.tracker.agentic_queries.overview import (
     runner_status,
     distinct_targets,
 )
+from dportsv3.tracker.agentic_queries.notes import (
+    MAX_NOTE_CHARS,
+    operator_notes_for_job,
+    pending_note_count,
+    queue_operator_note,
+    take_pending_operator_notes,
+)
 from dportsv3.tracker.agentic_queries.activity import (
     recent_activity_for_bundle,
     recent_activity,
@@ -126,6 +133,11 @@ __all__ = [
     "recent_activity_for_bundle",
     "recent_activity",
     "activity_for_job",
+    "MAX_NOTE_CHARS",
+    "operator_notes_for_job",
+    "pending_note_count",
+    "queue_operator_note",
+    "take_pending_operator_notes",
     "count_llm_turns_for_job",
     "attempt_boundaries",
     "attempt_tool_totals",

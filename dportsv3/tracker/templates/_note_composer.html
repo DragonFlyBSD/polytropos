@@ -1,0 +1,26 @@
+{# Tell the running agent something. Docked at the foot of the job page;
+   disabled with a reason when the job is terminal, because that case is
+   the occurrence page's post-hoc chat (poly-qqx9.11). #}
+<section class="note-composer" id="note-composer">
+  <h2 class="nc-head">Tell the agent something
+    {% if pending_notes %}
+    <span class="muted">{{ pending_notes }} note{{ 's' if pending_notes != 1 else '' }} waiting</span>
+    {% endif %}
+  </h2>
+  {% if job_is_active %}
+  <form id="note-form" method="post" action="{{ request.url_for('api_queue_operator_note', job_id=job.job_id) }}">
+    <label class="visually-hidden" for="note-text">Note for the agent</label>
+    <textarea id="note-text" name="text" rows="3" maxlength="{{ note_max_chars }}"
+              placeholder="Something it does not know — a path that moved upstream, a line of attack that is wrong. It arrives on the agent's next turn."></textarea>
+    <div class="nc-actions">
+      <button type="submit" class="btn" id="note-send">Send on the next turn</button>
+      <span class="muted" id="note-flash">The agent reads this when the tool it is
+        waiting on returns — minutes, not at the end of the attempt.</span>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted">This job has finished, so there is no next turn to
+    deliver a note on. The occurrence page has a chat over its saved
+    session.</p>
+  {% endif %}
+</section>

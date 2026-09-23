@@ -279,6 +279,23 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
+        elif et == "operator_note":
+            # The note is part of why the job did what it did next, so it
+            # lands in the activity log like any other event and stays
+            # there (poly-qqx9.11). The text is already capped at the
+            # queue, and the row carries the note id so the page can pair
+            # this with the stored note rather than matching on prose.
+            self.activity_log(
+                self.queue_root, "operator_note",
+                f"operator note delivered at A{ev.get('attempt')}."
+                f"T{ev.get('turn')}",
+                job_id=self.job_id,
+                extra={
+                    "attempt": ev.get("attempt"), "turn": ev.get("turn"),
+                    "note_id": ev.get("note_id"),
+                    "text": _excerpt(ev.get("text")),
+                },
+            )
         elif et == "observations_masked":
             self.activity_log(
                 self.queue_root, "observations_masked",
@@ -1546,7 +1563,10 @@ class PatchAttemptStep:
 
         start = time.time()
         from dportsv3.agent import session_dump as _sd  # noqa: PLC0415
-        from dportsv3.agent.runner import artifact_store_put  # noqa: PLC0415
+        from dportsv3.agent.runner import (  # noqa: PLC0415
+            artifact_store_put,
+            take_operator_notes as _operator_notes,
+        )
         try:
             result = harness_patch.run(
                 payload,
@@ -1565,6 +1585,7 @@ class PatchAttemptStep:
                     job_id=ctx.job_id,
                     put_artifact=artifact_store_put,
                 ),
+                operator_notes=_operator_notes(ctx.job_id),
             )
         except Exception as exc:
             services.activity_log(
