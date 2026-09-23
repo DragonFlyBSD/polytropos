@@ -112,7 +112,7 @@ _REFERENCES: dict[str, tuple[tuple[str, str], ...]] = {
     "bundle_id": (
         ("bundles", "bundle_id"), ("jobs", "bundle_id"),
         ("activity_log", "bundle_id"), ("artifact_refs", "bundle_id"),
-        ("artifacts", "bundle_id"), ("bundle_review_requests", "bundle_id"),
+        ("bundle_review_requests", "bundle_id"),
         ("origin_skip_flags", "bundle_id"),
         ("user_context_requests", "bundle_id"),
         ("verify_requests", "bundle_id"),

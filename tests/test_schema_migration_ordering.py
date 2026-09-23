@@ -66,6 +66,14 @@ def _indexes(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA index_list({table})")}
 
 
+def _tables(conn: sqlite3.Connection) -> set[str]:
+    return {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+
+
 # --- the reported failure ---------------------------------------------------
 
 def test_init_db_survives_a_bundles_table_without_issue_key():
@@ -102,6 +110,49 @@ def test_legacy_rows_are_kept_not_wiped():
         "SELECT bundle_id, origin, issue_key FROM bundles"
     ).fetchone()
     assert row == ("b-1", "devel/foo", None)
+
+
+# --- dead tables ------------------------------------------------------------
+
+_LEGACY_ARTIFACTS = """CREATE TABLE artifacts (
+    bundle_id TEXT,
+    relpath TEXT,
+    kind TEXT,
+    mtime REAL,
+    size INTEGER,
+    PRIMARY KEY (bundle_id, relpath)
+);"""
+
+
+def test_init_db_drops_the_legacy_artifacts_table():
+    """It was created for years and never written -- no INSERT for it exists
+    anywhere in the history of the tree. It survives on deployed hosts, one
+    character from artifact_refs, which is the table everything uses
+    (poly-0guv)."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    conn.executescript(_LEGACY_ARTIFACTS)
+    assert _tables(conn) >= {"artifacts", "artifact_refs"}
+
+    init_db(conn)
+
+    tables = _tables(conn)
+    assert "artifacts" not in tables
+    assert "artifact_refs" in tables, "the table that matters stays"
+
+
+def test_dropping_it_is_idempotent_and_a_fresh_db_never_gets_it():
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    init_db(conn)
+    assert "artifacts" not in _tables(conn)
+
+
+def test_the_schema_does_not_create_it_again():
+    """The DROP runs after SCHEMA, so a re-added CREATE would not survive
+    init_db and the drop would silently do nothing visible. Assert on the
+    source as well."""
+    assert "CREATE TABLE IF NOT EXISTS artifacts" not in SCHEMA
 
 
 # --- the general guard ------------------------------------------------------

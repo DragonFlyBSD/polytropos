@@ -188,15 +188,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     owner_id TEXT
 );
 
-CREATE TABLE IF NOT EXISTS artifacts (
-    bundle_id TEXT,
-    relpath TEXT,
-    kind TEXT,
-    mtime REAL,
-    size INTEGER,
-    PRIMARY KEY (bundle_id, relpath)
-);
-
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -611,6 +602,22 @@ _RETIRE_STORED_REGRESSED: tuple[str, ...] = (
     "UPDATE issues SET state = 'unresolved' WHERE state = 'regressed'",
 )
 
+# Tables that were created for years and never written. Dropped rather than
+# left in place: `artifacts` is one character from `artifact_refs`, which is
+# the table everything actually uses, and the empty one is the first hit when
+# someone goes looking for artifact storage (poly-0guv).
+#
+# Safe to drop rather than deprecate because nothing ever wrote it -- no
+# INSERT appears anywhere in the history of the tree, so there are no rows to
+# lose on any host, not merely none on the one that was checked.
+#
+# NOT in MIGRATIONS: that list is documented as the non-destructive path for
+# an existing DB and is run tolerantly, which would swallow a real failure
+# here. IF EXISTS makes this idempotent on its own.
+_DROP_DEAD_TABLES: tuple[str, ...] = (
+    "DROP TABLE IF EXISTS artifacts",
+)
+
 
 def init_db(conn: sqlite3.Connection) -> None:
     """Run schema + seeds on an open connection.
@@ -644,5 +651,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     # an OperationalError here would hide a real failure rather than a
     # duplicate column.
     for stmt in _RETIRE_STORED_REGRESSED:
+        conn.execute(stmt)
+    for stmt in _DROP_DEAD_TABLES:
         conn.execute(stmt)
     conn.commit()
