@@ -74,7 +74,7 @@ def seeded(tmp_path):
         )
 
     # A terminal job whose one attempt exceeds the 40-row fold threshold,
-    # for the review-view (attempt-grouped) rendering contract.
+    # for the card-stream rendering contract on a terminal job.
     conn.execute(
         """INSERT INTO jobs
            (job_id, state, type, origin, flavor, bundle_dir,
@@ -227,25 +227,34 @@ def test_job_detail_row_sort_keys_use_neg_one_for_non_llm(client):
     assert 'data-sort-total="5200"' in body
 
 
-def test_job_detail_review_view_folds_long_attempts(client):
-    """Terminal jobs render attempt groups; a group over 40 rows folds
-    all but its last 30 into a hidden tbody behind a 'show earlier'
-    toggle. 44 rows here -> 14 folded. Pin the markup the fold JS
-    consumes."""
+def test_job_detail_renders_turn_cards_for_a_terminal_job(client):
+    """Cards are the reading view for both job states — one stream, one
+    vocabulary. The attempt accordion they replaced is gone (poly-qqx9.4).
+    """
     body = client.get("/agentic/jobs/job-done").text
-    assert "attempt-group" in body
-    assert 'class="folded-rows" hidden' in body
-    assert "Show 14 earlier events" in body
+    assert 'id="turn-cards"' in body
+    assert 'class="turn-card' in body
+    assert "attempt-group" not in body
+    assert 'class="folded-rows"' not in body
 
 
-def test_job_detail_review_view_renders_filter_pills(client):
-    """The review view has client-side stage-filter pills (the live
-    view's pills are server-side query params instead)."""
+def test_job_detail_boundary_card_carries_the_attempt_outcome(client):
+    """What the accordion header used to say, in the stream instead."""
     body = client.get("/agentic/jobs/job-done").text
-    assert 'id="review-filter"' in body
-    assert 'id="attempt-groups" data-filter="all"' in body
-    # The live-view-only controls stay out of the review render.
-    assert "job-activity-limit" not in body
+    assert "Attempt 1" in body
+    assert "rebuild passed" in body
+    assert "21 turns" in body
+
+
+def test_job_detail_keeps_the_raw_table_for_both_states(client):
+    """The sortable token column is how a 690k-token turn gets found
+    (poly-9hjm), so the table survives under the cards — collapsed, and
+    on terminal jobs too, which used to get the accordion instead."""
+    for job in ("job-mixed", "job-done"):
+        body = client.get(f"/agentic/jobs/{job}").text
+        assert 'id="raw-events"' in body, job
+        assert 'id="activity-table"' in body, job
+        assert "job-activity-limit" in body, job
 
 
 def test_job_detail_live_view_has_no_fold(client):

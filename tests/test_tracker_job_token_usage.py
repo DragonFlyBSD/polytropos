@@ -145,6 +145,30 @@ def test_activity_fragment_respects_stage_filter(client):
     assert body["html"].count("<tr") == 3
 
 
+def test_activity_fragment_also_returns_the_whole_card_stream(client):
+    """A new tool row belongs INSIDE an existing turn card, so cards
+    cannot be built by prepending: the client swaps the container
+    (poly-qqx9.4). Both bodies come off one poll."""
+    body = client.get("/api/jobs/job-active/activity-fragment?since_id=0").json()
+    assert body["changed"] is True
+    assert 'class="turn-card' in body["cards_html"]
+    # The stream is the window, not just the new rows — swapping in only
+    # the new ones would erase the turns above them.
+    assert body["cards_html"].count("<article") >= 3
+
+
+def test_activity_fragment_renders_nothing_when_the_cursor_has_not_moved(client):
+    """The poll runs every 3s whether or not the job wrote anything. Not
+    re-rendering an unchanged stream is what makes the swap affordable."""
+    first = client.get("/api/jobs/job-active/activity-fragment?since_id=0").json()
+    body = client.get(
+        f"/api/jobs/job-active/activity-fragment?since_id={first['since_id']}"
+    ).json()
+    assert body["changed"] is False
+    assert body["cards_html"] == ""
+    assert body["html"] == ""
+
+
 def test_token_usage_sums_only_llm_turn_rows(seeded):
     conn = sqlite3.connect(str(seeded))
     conn.row_factory = sqlite3.Row

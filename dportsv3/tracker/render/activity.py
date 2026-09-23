@@ -1,83 +1,313 @@
-"""Group a job's activity_log rows into attempt blocks for the job-detail
-timeline (Phase 6 redesign).
+"""Fold a job's activity_log rows into the cards the job-detail page shows.
 
-A patch job's activity is a flat firehose — every llm_turn, tool call, and
-decision in one long list, spanning multiple retry attempts. The runner
-brackets each attempt with ``attempt_start`` / ``attempt_end`` rows, so we can
-fold the firehose into one collapsible block per attempt with its outcome and
-cost in the header — the CI-step / agent-trace pattern ("Attempt 2 — rebuild
-failed"). Rows before the first attempt (triage, decision) form a leading
-setup group.
+A patch job's activity is a flat firehose — every llm_turn, tool_start,
+tool result and decision in one long list, spanning multiple retry
+attempts. The page used to render that firehose twice: a flat table while
+the job ran, and an accordion of attempt groups once it was done. Neither
+answered "what is the agent doing" without reading, because a turn's
+sentence, its tool calls and their verdicts were separate rows.
 
-Pure and unit-tested; the terminal-job view renders these, the live/active
-view keeps the flat stream.
+So the unit is the TURN, not the row. One card per model turn, carrying
+the model's own sentence and its tool calls nested inside as rows with
+name, args, elapsed and outcome. Attempt boundaries are cards too, so
+attempt structure survives without an accordion (poly-qqx9.4).
+
+Pure and unit-tested; the template does the formatting, this decides the
+structure and the verdicts.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+# A tool row's stage is "tool:<name>" — the completion row does not carry
+# the name in extra, only tool_start does.
+_TOOL_PREFIX = "tool:"
 
-def group_activity_by_attempt(
+
+def _extra(row: dict[str, Any]) -> dict[str, Any]:
+    e = row.get("extra")
+    return e if isinstance(e, dict) else {}
+
+
+def _billable(extra: dict[str, Any]) -> int:
+    """This turn's billable (uncached) tokens.
+
+    Never the provider total: that re-bills cache reads, and summing it
+    made the same attempt read 19x apart on one screen (poly-0g0). Rows
+    written before the field existed fall back to their total so old
+    jobs don't read 0.
+    """
+    billable = extra.get("billable_tokens")
+    if billable is None:
+        billable = extra.get("total_tokens") or 0
+    return int(billable or 0)
+
+
+def _tool_state(ok: Any, running: bool) -> str:
+    """ok is True / False / None — and None means NO VERDICT, not failure.
+
+    steps.py:238 writes None whenever the tool returned something that
+    isn't a dict, which is not the tool saying it failed. Colouring that
+    red invents a failure the job never had.
+    """
+    if running:
+        return "run"
+    if ok is False:
+        return "bad"
+    if ok is True:
+        return "ok"
+    return "info"
+
+
+def _turn_state(tools: list[dict[str, Any]], text_only: bool) -> str:
+    """The card's verdict, carried by one glyph: the worst thing in it."""
+    states = {t["state"] for t in tools}
+    if "bad" in states:
+        return "bad"
+    if "run" in states:
+        return "run"
+    if "ok" in states:
+        return "ok"
+    if states:
+        return "info"          # tools ran, none of them reported a verdict
+    return "ok" if text_only else "info"
+
+
+def _elapsed_seconds(start_ts: str | None, end_ts: str | None) -> int | None:
+    """Wall clock between two activity_log timestamps, or None."""
+    if not start_ts or not end_ts:
+        return None
+    try:
+        t0 = datetime.fromisoformat(str(start_ts))
+        t1 = datetime.fromisoformat(str(end_ts))
+    except ValueError:
+        return None
+    return max(0, int((t1 - t0).total_seconds()))
+
+
+def group_activity_into_cards(
     activity: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Fold activity rows into ordered attempt groups.
+    """Fold activity rows into ordered cards, newest first.
 
-    ``activity`` may be in any order (the detail route passes newest-first);
-    grouping is done chronologically by ``id``. Each returned group is::
+    ``activity`` may arrive in any order (the detail route passes
+    newest-first); grouping is chronological by ``id`` and the result is
+    reversed at the end, so the newest card is first — the running turn
+    is what the operator came to see.
 
-        {kind, label, attempt, outcome, outcome_cls, tokens, n_tools,
-         rows, open}
+    Three kinds, all full-width entries in one stream:
 
-    - ``kind``   — "attempt" or "setup".
-    - ``outcome``/``outcome_cls`` — from the attempt_end ``rebuild_ok``
-      (passed→built, failed→failed); None when the attempt has no end.
-    - ``tokens`` — sum of llm_turn BILLABLE tokens in the group: the
-      group header sits directly above a table whose own column is
-      "Cum (billable)", and summing the provider total there made the
-      same attempt read 19x apart on one screen (poly-0g0). Rows that
-      predate the field fall back to their total.
-    - ``open``   — the last group defaults open (the most recent / relevant);
-      every header shows its outcome so the operator can open the others.
+    - ``turn``     — an ``llm_turn`` row with its tool calls nested in
+      ``tools``. ``state`` is the verdict glyph: ok / bad / run / info.
+    - ``boundary`` — ``attempt_start`` / ``attempt_end``. The end card
+      carries what the old accordion header carried: outcome, billable
+      tokens, tool count, turn count and the attempt's wall clock.
+    - ``stage``    — everything else (decision, observations_masked,
+      api_error, and every verify/confirm operational stage) as a
+      one-line entry. verify and confirm jobs have no turns at all, so
+      this is the whole stream for them: a checklist rather than an
+      empty "Turns" heading.
+
+    Rows are joined to their turn by ``(extra.attempt, extra.turn)`` —
+    both event shapes carry them from the same loop variables, and
+    tool_loop emits the llm_turn before it dispatches. A tool row whose
+    turn was cut off by the row limit (or filtered away) synthesizes a
+    turn card so its calls still group.
     """
     rows = sorted(activity, key=lambda a: (a.get("id") or 0))
-    groups: list[dict[str, Any]] = []
-    cur: dict[str, Any] | None = None
+    cards: list[dict[str, Any]] = []
+    turns: dict[tuple[Any, Any], dict[str, Any]] = {}
+    open_turn: dict[str, Any] | None = None
+    # Per-attempt accumulators, so the attempt_end card can say what the
+    # attempt cost without a second pass.
+    attempts: dict[Any, dict[str, Any]] = {}
 
-    def _new(kind: str, label: str, attempt: int | None = None) -> dict[str, Any]:
-        g = {
-            "kind": kind, "label": label, "attempt": attempt,
-            "outcome": None, "outcome_cls": "total",
-            "tokens": 0, "n_tools": 0, "rows": [], "open": False,
+    def _acc(attempt: Any) -> dict[str, Any]:
+        return attempts.setdefault(
+            attempt,
+            {"tokens": 0, "n_tools": 0, "n_turns": 0, "start_ts": None},
+        )
+
+    def _new_turn(attempt: Any, turn: Any, row: dict[str, Any] | None) -> dict[str, Any]:
+        extra = _extra(row or {})
+        card = {
+            "kind": "turn",
+            "key": f"t-{attempt}-{turn}",
+            "state": "info",
+            "attempt": attempt,
+            "turn": turn,
+            "ts": (row or {}).get("ts"),
+            "id": (row or {}).get("id") or 0,
+            "text": str(extra.get("text") or ""),
+            "text_only": bool(extra.get("text_only")),
+            "total_tokens": int(extra.get("total_tokens") or 0),
+            "billable_tokens": _billable(extra) if row is not None else 0,
+            "cumulative_billable_tokens": extra.get("cumulative_billable_tokens"),
+            "tools_requested": list(extra.get("tools_requested") or []),
+            # A card synthesized from tool rows alone has no sentence and
+            # no cost — say so rather than printing zeros as if measured.
+            "partial": row is None,
+            "tools": [],
         }
-        groups.append(g)
-        return g
+        # A turn with no tool calls never reaches the tool branches below,
+        # so settle its verdict here: a text-only turn is the model's final
+        # answer, which is a pass, not an unknown.
+        card["state"] = _turn_state([], card["text_only"])
+        cards.append(card)
+        turns[(attempt, turn)] = card
+        return card
+
+    def _turn_for(extra: dict[str, Any]) -> dict[str, Any] | None:
+        """The card a tool row belongs to, synthesizing one if need be."""
+        attempt, turn = extra.get("attempt"), extra.get("turn")
+        if turn is None:
+            return open_turn
+        card = turns.get((attempt, turn))
+        if card is not None:
+            return card
+        return _new_turn(attempt, turn, None)
 
     for a in rows:
         stage = a.get("stage") or ""
-        extra = a.get("extra") if isinstance(a.get("extra"), dict) else {}
+        extra = _extra(a)
+
         if stage == "attempt_start":
-            n = extra.get("attempt")
-            cur = _new("attempt", f"Attempt {n}" if n else "Attempt", n)
-        elif cur is None:
-            cur = _new("setup", "Triage / setup")
+            attempt = extra.get("attempt")
+            _acc(attempt)["start_ts"] = a.get("ts")
+            cards.append({
+                "kind": "boundary", "edge": "start", "state": "bound",
+                "key": f"as-{a.get('id') or 0}",
+                "attempt": attempt, "ts": a.get("ts"),
+                "id": a.get("id") or 0,
+                "iterations": extra.get("iterations"),
+                "budget": extra.get("budget"),
+                "tokens_used_so_far": extra.get("tokens_used_so_far"),
+                "message": a.get("message") or "",
+            })
+            open_turn = None
+            continue
 
-        cur["rows"].append(a)
-        if stage.endswith("llm_turn"):
-            billable = extra.get("billable_tokens")
-            cur["tokens"] += (
-                billable if billable is not None
-                else (extra.get("total_tokens") or 0)
-            )
-        elif stage.startswith("tool:"):
-            cur["n_tools"] += 1
-        elif stage == "attempt_end":
+        if stage == "attempt_end":
+            attempt = extra.get("attempt")
+            acc = _acc(attempt)
             ok = extra.get("rebuild_ok")
-            if ok is True:
-                cur["outcome"], cur["outcome_cls"] = "rebuild passed", "built"
-            elif ok is False:
-                cur["outcome"], cur["outcome_cls"] = "rebuild failed", "failed"
+            cards.append({
+                "kind": "boundary", "edge": "end",
+                "state": "ok" if ok is True else ("bad" if ok is False else "bound"),
+                "key": f"ae-{a.get('id') or 0}",
+                "attempt": attempt, "ts": a.get("ts"),
+                "id": a.get("id") or 0,
+                "rebuild_ok": ok,
+                "tokens": acc["tokens"], "n_tools": acc["n_tools"],
+                "n_turns": acc["n_turns"],
+                "elapsed_s": _elapsed_seconds(acc["start_ts"], a.get("ts")),
+                "message": a.get("message") or "",
+            })
+            open_turn = None
+            continue
 
-    if groups:
-        groups[-1]["open"] = True
-    return groups
+        if stage.endswith("llm_turn"):
+            open_turn = _new_turn(extra.get("attempt"), extra.get("turn"), a)
+            acc = _acc(extra.get("attempt"))
+            acc["tokens"] += _billable(extra)
+            acc["n_turns"] += 1
+            continue
+
+        if stage == "tool_start":
+            card = _turn_for(extra)
+            if card is None:
+                cards.append(_stage_card(a, stage))
+                continue
+            card["tools"].append({
+                "state": "run", "running": True,
+                "name": extra.get("tool") or "?",
+                "args": extra.get("args") or {},
+                "call_id": extra.get("call_id"),
+                "ok": None, "duration_ms": None, "summary": None,
+                "id": a.get("id") or 0, "ts": a.get("ts"),
+            })
+            card["state"] = _turn_state(card["tools"], card["text_only"])
+            continue
+
+        if stage.startswith(_TOOL_PREFIX):
+            card = _turn_for(extra)
+            if card is None:
+                cards.append(_stage_card(a, stage))
+                continue
+            name = stage[len(_TOOL_PREFIX):]
+            entry = _pending_tool(card, extra.get("call_id"), name)
+            if entry is None:
+                entry = {
+                    "state": "run", "running": True, "name": name,
+                    "args": {}, "call_id": extra.get("call_id"),
+                    "ok": None, "duration_ms": None, "summary": None,
+                    "id": a.get("id") or 0, "ts": a.get("ts"),
+                }
+                card["tools"].append(entry)
+            ok = extra.get("ok")
+            entry.update({
+                "running": False, "ok": ok,
+                "state": _tool_state(ok, running=False),
+                "duration_ms": a.get("duration_ms"),
+                "summary": a.get("message") or "",
+                "args": extra.get("args") or entry["args"],
+                "error": extra.get("error"),
+                "stderr_tail": extra.get("stderr_tail"),
+                "stdout_tail": extra.get("stdout_tail"),
+                "rc": extra.get("rc"),
+                "id": a.get("id") or entry["id"],
+            })
+            card["state"] = _turn_state(card["tools"], card["text_only"])
+            _acc(extra.get("attempt") if extra.get("attempt") is not None
+                 else card.get("attempt"))["n_tools"] += 1
+            continue
+
+        cards.append(_stage_card(a, stage))
+
+    cards.reverse()
+    return cards
+
+
+def _pending_tool(
+    card: dict[str, Any], call_id: Any, name: str,
+) -> dict[str, Any] | None:
+    """The tool_start this completion closes.
+
+    call_id is the pairing (poly-qqx9.2). Rows written before it fall
+    back to the first still-running entry of the same name, which is
+    correct as long as the loop dispatches serially — it does.
+    """
+    if call_id:
+        for t in card["tools"]:
+            if t.get("call_id") == call_id:
+                return t
+    for t in card["tools"]:
+        if t.get("running") and t.get("name") == name:
+            return t
+    return None
+
+
+def _stage_card(row: dict[str, Any], stage: str) -> dict[str, Any]:
+    """One operational row as a compact entry in the same stream."""
+    extra = _extra(row)
+    failed = (
+        stage.endswith("_failed") or stage in ("api_error", "error")
+        or extra.get("ok") is False
+    )
+    return {
+        "kind": "stage",
+        "key": f"s-{row.get('id') or 0}",
+        "state": "bad" if failed else "info",
+        "stage": stage,
+        "ts": row.get("ts"),
+        "id": row.get("id") or 0,
+        "duration_ms": row.get("duration_ms"),
+        "message": row.get("message") or "",
+        "error": extra.get("error"),
+        "diag_tail": extra.get("diag_tail"),
+        "stderr_tail": extra.get("stderr_tail"),
+        "stdout_tail": extra.get("stdout_tail"),
+        "rc": extra.get("rc"),
+    }

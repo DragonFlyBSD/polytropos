@@ -2312,3 +2312,133 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 .runner-hold .hold-state span { color: var(--text-dim); font-size: 12px; }
 .runner-hold button { margin-left: auto; flex: none; }
 .runner-hold.held { border-color: var(--c-skipped, var(--amber)); }
+
+/* ── Turn cards: the job's activity as one card per model turn ────────
+ *
+ * The unit is the TURN, not the row (poly-qqx9.4). A card carries the
+ * model's own sentence and its tool calls nested inside, with the verdict
+ * on a glyph big enough to read without stopping. Attempt boundaries are
+ * cards too, so attempt structure survives without an accordion.
+ *
+ * Class names are the session viewer's on purpose -- one vocabulary for
+ * turn cards across the tracker -- and every rule is scoped under
+ * .turn-stream so agentic_session.html's own inline block keeps owning
+ * that page's look. Nothing here may be written as a bare .turn-card.
+ */
+.turn-stream { display: flex; flex-direction: column; gap: 8px; }
+.turn-stream .turn-card {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px;
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 4px;
+}
+.turn-stream .turn-card.state-ok   { border-left-color: var(--green); }
+.turn-stream .turn-card.state-bad  { border-left-color: var(--red); }
+.turn-stream .turn-card.state-run  { border-left-color: var(--cyan); }
+.turn-stream .turn-card.state-info { border-left-color: var(--line-hot); }
+/* A boundary is the same grammar in a quieter register: it is structure,
+   not work, so it sits back off the page ground. */
+.turn-stream .turn-card.boundary { background: var(--surface-2); }
+.turn-stream .turn-card.boundary.state-bound { border-left-color: var(--faint); }
+.turn-stream .turn-card.stage { padding: 7px 12px; }
+
+.turn-stream .turn-glyph {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  align-self: start; border: 1px solid; border-radius: 3px;
+}
+.turn-stream .turn-glyph svg { width: 16px; height: 16px; display: block; }
+.turn-stream .turn-glyph.state-ok {
+  color: var(--green); background: var(--green-soft); border-color: var(--green-line); }
+.turn-stream .turn-glyph.state-bad {
+  color: var(--red); background: var(--red-soft); border-color: var(--red-line); }
+.turn-stream .turn-glyph.state-run {
+  color: var(--cyan); background: var(--cyan-soft); border-color: var(--cyan-line); }
+.turn-stream .turn-glyph.state-info,
+.turn-stream .turn-glyph.state-bound {
+  color: var(--muted); background: var(--surface-3); border-color: var(--line-hot); }
+.glyph-spin { transform-origin: 50% 50%; animation: glyph-spin 1.15s linear infinite; }
+@keyframes glyph-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .glyph-spin { animation: none; } }
+
+.turn-stream .turn-body { min-width: 0; }
+.turn-stream .turn-header {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+.turn-stream .turn-id { font: 700 13.5px var(--mono); color: var(--text); }
+.turn-stream .turn-verdict {
+  font: 700 12px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+}
+.turn-stream .state-ok  > .turn-body .turn-verdict { color: var(--green); }
+.turn-stream .state-bad > .turn-body .turn-verdict { color: var(--red); }
+.turn-stream .state-run > .turn-body .turn-verdict { color: var(--cyan); }
+.turn-stream .state-bound > .turn-body .turn-verdict,
+.turn-stream .state-info  > .turn-body .turn-verdict { color: var(--muted); }
+.turn-stream .turn-meta {
+  margin-left: auto; color: var(--faint); font: 12px var(--mono);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.turn-stream .turn-text {
+  margin: 6px 0 0; color: var(--prose); font-size: 13.5px; line-height: 1.5;
+}
+.turn-stream .turn-note {
+  margin: 5px 0 0; color: var(--faint); font: 12px var(--mono);
+}
+.turn-stream .stage-message { color: var(--muted); overflow-wrap: anywhere; }
+
+/* Tool calls nested in their turn. One row each: glyph, name + args,
+   elapsed. The row is a disclosure when it has something to disclose. */
+.turn-stream .tool-calls {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 9px;
+}
+.turn-stream .tool-call {
+  border: 1px solid var(--line); border-radius: 3px; background: var(--head);
+}
+.turn-stream .tool-call > summary,
+.turn-stream .tool-call-line {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 9px;
+  align-items: center; padding: 6px 9px; font: 12.5px var(--mono);
+}
+.turn-stream .tool-call > summary { cursor: pointer; list-style: none; }
+.turn-stream .tool-call > summary::-webkit-details-marker { display: none; }
+.turn-stream .tool-glyph { width: 14px; height: 14px; display: block; }
+.turn-stream .tool-glyph svg { width: 14px; height: 14px; display: block; }
+.turn-stream .tool-glyph.state-ok   { color: var(--green); }
+.turn-stream .tool-glyph.state-bad  { color: var(--red); }
+.turn-stream .tool-glyph.state-run  { color: var(--cyan); }
+.turn-stream .tool-glyph.state-info { color: var(--muted); }
+.turn-stream .tool-call-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted);
+}
+.turn-stream .tool-call-name b { color: var(--cyan); font-weight: 700; }
+.turn-stream .tool-call.state-bad { border-color: var(--red-line); background: var(--red-soft); }
+.turn-stream .tool-call.state-bad .tool-call-name b { color: var(--red); }
+.turn-stream .tool-call-meta {
+  color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.turn-stream .tool-call-summary, .turn-stream .tool-call-error {
+  padding: 6px 10px; border-top: 1px solid var(--line);
+  font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere;
+}
+.turn-stream .tool-call-error { color: var(--red); }
+.turn-stream .tool-call pre {
+  margin: 0; padding: 8px 10px; border-top: 1px solid var(--line);
+  color: var(--code-fg); background: var(--code-bg);
+  font: 12px/1.5 var(--mono); white-space: pre-wrap;
+  max-height: 320px; overflow: auto;
+}
+.turn-stream .tool-call.state-bad pre {
+  color: var(--err-fg); background: transparent; border-top-color: var(--red-line);
+}
+
+/* The flat table the cards replaced, kept because its sortable token
+   column is how a 690k-token turn gets found (poly-9hjm). Collapsed:
+   it is the raw feed, not the reading view. */
+.raw-events { margin-top: 12px; }
+
+@media (max-width: 560px) {
+  .turn-stream .turn-card { grid-template-columns: 22px minmax(0, 1fr); gap: 9px; }
+  .turn-stream .turn-glyph { width: 22px; height: 22px; }
+  .turn-stream .turn-glyph svg { width: 13px; height: 13px; }
+  .turn-stream .turn-meta { margin-left: 0; }
+}

@@ -242,38 +242,40 @@ def test_a_namespaced_stage_reaches_both_cards(tmp_path):
     assert token_usage_for_job(conn, "j")["llm_turns"] == 2
 
 
-def test_the_activity_group_header_sums_billable():
-    """The header sits directly above a column labelled 'Cum
-    (billable)'. Summing the total there put 1,396,534 above 72,041 for
-    one attempt."""
-    from dportsv3.tracker.render.activity import (
-        group_activity_by_attempt as group_activity,
-    )
+def test_the_attempt_card_sums_billable():
+    """The attempt's total is the one the operator reads as its cost.
+    Summing the provider total instead put 1,396,534 above 72,041 for one
+    attempt — the same attempt, 19x apart on one screen."""
+    from dportsv3.tracker.render.activity import group_activity_into_cards
     rows = [
         {"id": 1, "stage": "attempt_start", "extra": {"attempt": 1}},
         {"id": 2, "stage": "llm_turn",
-         "extra": {"attempt": 1, "total_tokens": 34_881,
+         "extra": {"attempt": 1, "turn": 1, "total_tokens": 34_881,
                    "billable_tokens": 208}},
         {"id": 3, "stage": "llm_turn",
-         "extra": {"attempt": 1, "total_tokens": 34_881,
+         "extra": {"attempt": 1, "turn": 2, "total_tokens": 34_881,
                    "billable_tokens": 208}},
+        {"id": 4, "stage": "attempt_end",
+         "extra": {"attempt": 1, "rebuild_ok": True}},
     ]
-    groups = group_activity(rows)
-    assert groups[0]["tokens"] == 416
+    cards = group_activity_into_cards(rows)
+    end = next(c for c in cards if c.get("edge") == "end")
+    assert end["tokens"] == 416
 
 
 def test_a_row_without_billable_falls_back_to_its_total():
     """Old rows must not read 0 — that would understate rather than
     overstate, which is the worse failure for a cost display."""
-    from dportsv3.tracker.render.activity import (
-        group_activity_by_attempt as group_activity,
-    )
+    from dportsv3.tracker.render.activity import group_activity_into_cards
     rows = [
         {"id": 1, "stage": "attempt_start", "extra": {"attempt": 1}},
         {"id": 2, "stage": "llm_turn",
-         "extra": {"attempt": 1, "total_tokens": 500}},
+         "extra": {"attempt": 1, "turn": 1, "total_tokens": 500}},
+        {"id": 3, "stage": "attempt_end",
+         "extra": {"attempt": 1, "rebuild_ok": True}},
     ]
-    assert group_activity(rows)[0]["tokens"] == 500
+    cards = group_activity_into_cards(rows)
+    assert next(c for c in cards if c.get("edge") == "end")["tokens"] == 500
 
 
 # --- triage measured no caching at all --------------------------------

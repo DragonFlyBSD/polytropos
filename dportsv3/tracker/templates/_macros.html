@@ -65,3 +65,51 @@
 </div>
 {%- endif -%}
 {%- endmacro -%}
+
+{#- One turn's verdict as a glyph, big enough to read without stopping.
+    Colour never carries it alone: the shape differs (tick / cross /
+    spinner / diamond / dot) and the word sits next to it. The states are
+    the ones render.group_activity_into_cards decides -- ok, bad, run,
+    bound, info -- plus `say` for the operator note (poly-qqx9.11). -#}
+{%- macro verdict_glyph(state) -%}
+{%- if state == 'ok' -%}
+<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.4l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="square"/></svg>
+{%- elif state == 'bad' -%}
+<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="square"/></svg>
+{%- elif state == 'run' -%}
+<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="2" opacity=".25"/><path class="glyph-spin" d="M8 2.4a5.6 5.6 0 0 1 5.6 5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></svg>
+{%- elif state == 'bound' -%}
+<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l5.5 5.5L8 13.5 2.5 8z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+{%- else -%}
+<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.6" fill="currentColor"/></svg>
+{%- endif -%}
+{%- endmacro -%}
+
+{#- The word for a state, so the glyph is never the only signal. -#}
+{%- macro verdict_word(state) -%}
+{{- {'ok': 'passed', 'bad': 'tool failed', 'run': 'running',
+     'bound': 'attempt boundary', 'info': ''}.get(state, '') -}}
+{%- endmacro -%}
+
+{#- A tool's elapsed time, read at a glance. ms under a second, seconds
+    under a minute, m+s above -- a 44-minute dsynth build and a 118ms
+    file write must not look like the same number. -#}
+{%- macro dur_ms(ms) -%}
+{%- if ms is none -%}—
+{%- elif ms < 1000 -%}{{ ms }}ms
+{%- elif ms < 60000 -%}{{ (ms / 1000)|round(2) }}s
+{%- elif ms < 3600000 -%}{{ (ms // 60000)|int }}m{{ '%02d'|format(((ms % 60000) // 1000)|int) }}s
+{%- else -%}{{ (ms // 3600000)|int }}h{{ '%02d'|format(((ms % 3600000) // 60000)|int) }}m
+{%- endif -%}
+{%- endmacro -%}
+
+{#- A tool call's arguments as one line of key=value. The dispatcher caps
+    the values and drops file bodies (steps.py _redact_tool_args), so this
+    is already storage-safe; CSS ellipsises what is still too long. -#}
+{%- macro arg_line(args) -%}
+{%- if args is mapping -%}
+{%- for k, v in args.items() if k != '_dropped' -%}
+{%- if not loop.first %} {% endif %}{{ k }}={{ v }}
+{%- endfor -%}
+{%- endif -%}
+{%- endmacro -%}

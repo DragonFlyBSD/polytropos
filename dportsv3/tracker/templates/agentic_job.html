@@ -67,7 +67,8 @@
             data-job-id="{{ job.job_id }}"
             data-job-state="{{ job.state }}"
             data-since-id="{{ max_activity_id }}"
-            data-stage-filter="{{ stage_filter or '' }}">
+            data-stage-filter="{{ stage_filter or '' }}"
+            data-limit="{{ limit }}">
         <span class="dot"></span><span class="status-text">{% if is_active %}live{% else %}idle{% endif %}</span>
         {% if is_active %}
           · <span class="last-update">just now</span>

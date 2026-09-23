@@ -3,9 +3,12 @@
 // file is a no-op on idle jobs or jobs without an activity table.
 
 // --- Live activity refresh (active jobs only) ---
-// Streams new activity rows as SERVER-RENDERED fragments (one render path,
-// shared with the initial page render via _activity_row.html) and lets the
-// shared dpLive helper own the poll loop / pause / stop.
+// Streams SERVER-RENDERED fragments (one render path, shared with the
+// initial page render) and lets the shared dpLive helper own the poll
+// loop / pause / stop. Two things update off one poll: the turn-card
+// stream, swapped whole because a new tool row belongs INSIDE an existing
+// card and cannot be prepended, and the raw table, still prepended row by
+// row as it always was.
 (function () {
   var indicator = document.getElementById("live-indicator");
   if (!indicator) return;
@@ -13,7 +16,9 @@
   var jobId = indicator.dataset.jobId;
   var sinceId = parseInt(indicator.dataset.sinceId || "0", 10);
   var stageFilter = indicator.dataset.stageFilter || "";
+  var rowLimit = indicator.dataset.limit || "";
   var tbody = document.getElementById("activity-tbody");
+  var cardsEl = document.getElementById("turn-cards");
   var countEl = document.getElementById("activity-count");
   var lastUpdateEl = indicator.querySelector(".last-update");
   var statusText = indicator.querySelector(".status-text");
@@ -33,10 +38,26 @@
       var u = "/api/jobs/" + encodeURIComponent(jobId)
             + "/activity-fragment?since_id=" + sinceId;
       if (stageFilter) u += "&stage_filter=" + encodeURIComponent(stageFilter);
+      if (rowLimit) u += "&limit=" + encodeURIComponent(rowLimit);
       return u;
     },
     onData: function (data) {
-      if (data.html) {
+      if (data.cards_html && cardsEl) {
+        // Swap the whole stream. Which <details> the operator had open is
+        // page state the server can't know, so carry it across by the
+        // data-key the template stamps on each one.
+        var open = {};
+        Array.prototype.forEach.call(
+          cardsEl.querySelectorAll("details[data-key]"), function (d) {
+            if (d.open) open[d.dataset.key] = true;
+          });
+        cardsEl.innerHTML = data.cards_html;
+        Array.prototype.forEach.call(
+          cardsEl.querySelectorAll("details[data-key]"), function (d) {
+            if (open[d.dataset.key]) d.open = true;
+          });
+      }
+      if (data.html && tbody) {
         // Rows arrive oldest-first; inserting each at the top makes the
         // newest land highest, matching the newest-first static table.
         var frag = document.createElement("tbody");
@@ -47,8 +68,8 @@
         });
         if (data.since_id) sinceId = data.since_id;
         if (countEl && data.count) {
-          countEl.textContent = "(" + tbody.querySelectorAll("tr").length
-            + " rows, " + data.count + " new)";
+          countEl.textContent = "(live · " + tbody.querySelectorAll("tr").length
+            + " events, " + data.count + " new)";
         }
       }
       if (lastUpdateEl) lastUpdateEl.textContent = fmtAgo(Date.now());
@@ -148,46 +169,6 @@
       reset();
     });
   }
-})();
-
-// --- Review view: fold toggles + stage filter pills ---
-// Attempt groups over 40 rows render their earlier rows in a hidden
-// <tbody class="folded-rows"> with a "Show N earlier events" row above
-// it. The pills are the client-side counterpart of the live view's
-// server-side stage_filter: they set data-filter on the wrapper and
-// CSS does the hiding. Filtering first REVEALS every fold: the toggle's
-// count is computed unfiltered, and revealing rows the filter then
-// hides would make the click look like a no-op.
-(function () {
-  function revealFold(btn) {
-    var toggleBody = btn.closest("tbody");
-    var folded = toggleBody && toggleBody.nextElementSibling;
-    if (folded && folded.classList.contains("folded-rows")) {
-      folded.hidden = false;
-      toggleBody.remove();
-    }
-  }
-
-  document.querySelectorAll("tr.fold-toggle button").forEach(function (btn) {
-    btn.addEventListener("click", function () { revealFold(btn); });
-  });
-
-  var wrap = document.getElementById("attempt-groups");
-  if (!wrap) return;
-  var pills = document.querySelectorAll("#review-filter .filter-pill");
-  pills.forEach(function (p) {
-    p.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      if (p.dataset.filter !== "all") {
-        wrap.querySelectorAll("tr.fold-toggle button").forEach(revealFold);
-      }
-      wrap.dataset.filter = p.dataset.filter;
-      pills.forEach(function (q) {
-        q.classList.toggle("active", q === p);
-        q.setAttribute("aria-pressed", q === p ? "true" : "false");
-      });
-    });
-  });
 })();
 
 // --- Abandon job (mark dead) ---

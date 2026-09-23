@@ -81,26 +81,51 @@ def register(app, ctx):
         job_id: str,
         since_id: int = Query(default=0, ge=0),
         stage_filter: str | None = None,
+        limit: int = Query(default=500, ge=10, le=5000),
     ) -> dict[str, Any]:
-        """Server-rendered activity rows since a cursor, for the live feed.
+        """Server-rendered activity since a cursor, for the live feed.
 
-        Returns the same ``_activity_row.html`` markup the initial page
-        render uses — one render path, no client-side row duplication.
-        ``html`` is oldest-first (the caller inserts each at the top so the
-        newest lands highest). ``job_state`` lets the client stop polling
-        when the job reaches a terminal state without a second request.
+        Two shapes off one poll, both from the templates the initial page
+        render uses — one render path, no client-side duplication:
+
+        ``html``        the new ``_activity_row.html`` rows, oldest-first
+                        (the caller inserts each at the top of the raw
+                        table so the newest lands highest).
+        ``cards_html``  the WHOLE re-rendered ``_turn_cards.html`` window.
+                        A new tool row belongs INSIDE an existing turn
+                        card, so the card stream cannot be built by
+                        prepending; the client swaps the container
+                        (poly-qqx9.4).
+
+        ``changed`` is false when ``since_id`` has not advanced, and then
+        neither body is rendered — the 3s poll costs one cheap query
+        rather than a re-render. ``job_state`` lets the client stop
+        polling on a terminal state without a second request.
         """
         row_tmpl = templates.env.get_template("_activity_row.html")
+        cards_tmpl = templates.env.get_template("_turn_cards.html")
         with _conn() as conn:
             rows = activity_for_job(
                 conn, job_id, limit=200, since_id=since_id,
                 stage_filter=stage_filter,
             )
             job = get_job(conn, job_id)
+            window = (
+                activity_for_job(
+                    conn, job_id, limit=limit, stage_filter=stage_filter,
+                )
+                if rows else []
+            )
         html = "".join(row_tmpl.render(a=row) for row in rows)
+        cards_html = (
+            cards_tmpl.render(cards=render.group_activity_into_cards(window))
+            if rows else ""
+        )
         max_id = max((int(r["id"]) for r in rows if r.get("id")), default=since_id)
         return {
             "html": html,
+            "cards_html": cards_html,
+            "changed": bool(rows),
             "since_id": max_id,
             "job_state": (job or {}).get("state"),
             "count": len(rows),

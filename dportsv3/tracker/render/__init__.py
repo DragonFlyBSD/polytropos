@@ -16,7 +16,7 @@ from .sessions import (
     parse_session_records,
     SESSION_ATTEMPT_RE,
 )
-from .activity import group_activity_by_attempt
+from .activity import group_activity_into_cards
 from .compare import (
     compare_artifacts,
     default_relpath,
@@ -32,5 +32,5 @@ __all__ = [
     "compare_artifacts", "default_relpath", "is_diffable", "unified",
     "session_view_data", "is_session_relpath",
     "parse_session_records", "SESSION_ATTEMPT_RE",
-    "group_activity_by_attempt",
+    "group_activity_into_cards",
 ]

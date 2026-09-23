@@ -1,0 +1,145 @@
+{# The job's activity as one card per model turn (poly-qqx9.4).
+
+   Renders `cards` from render.group_activity_into_cards, newest first.
+   Also rendered on its own by /api/jobs/{id}/activity-fragment for the
+   live swap, so it must not depend on anything but `cards` --
+   everything else is imported here.
+
+   Vocabulary is the session viewer's (.turn-card / .turn-header /
+   .turn-id / .tool-calls / .tool-call / .tool-call-name), scoped under
+   .turn-stream in progress.css so that page's own inline block keeps
+   owning its look. #}
+{% from "_macros.html" import short_ts, verdict_glyph, verdict_word, dur_ms, arg_line %}
+{% for c in cards %}
+{% if c.kind == 'turn' %}
+<article class="turn-card state-{{ c.state }}" data-key="{{ c.key }}">
+  <span class="turn-glyph state-{{ c.state }}">{{ verdict_glyph(c.state) }}</span>
+  <div class="turn-body">
+    <div class="turn-header">
+      <span class="turn-id">{% if c.attempt is not none %}A{{ c.attempt }}.{% endif %}T{{ c.turn }}</span>
+      <span class="turn-verdict">{{ verdict_word(c.state) }}</span>
+      <span class="turn-meta">
+        {%- if not c.partial %}{{ '{:,}'.format(c.total_tokens) }} tok · {% endif -%}
+        {{ short_ts(c.ts) }}
+      </span>
+    </div>
+    {% if c.text %}<p class="turn-text">{{ c.text }}</p>{% endif %}
+    {% if c.partial %}
+    {# A card built from tool rows whose llm_turn fell outside the row
+       window (or was filtered away): say so instead of printing 0 tok
+       as though it had been measured. #}
+    <p class="turn-note">this turn's own row is outside the window shown</p>
+    {% elif not c.text %}
+    <p class="turn-note">
+      {%- if c.text_only %}text-only response
+      {%- elif c.tools_requested %}→ {{ c.tools_requested|join(', ') }}
+      {%- else %}no text recorded for this turn{% endif -%}
+    </p>
+    {% endif %}
+    {% if c.tools %}
+    <div class="tool-calls">
+      {% for t in c.tools %}
+      {% set diag = t.error or t.stderr_tail or t.stdout_tail %}
+      {% set body = diag or t.summary %}
+      {% if body %}
+      {# A failed tool keeps its diagnostic open -- the reject text is the
+         interesting part. A successful one folds. #}
+      <details class="tool-call state-{{ t.state }}"
+               data-key="{{ c.key }}-{{ loop.index }}"
+               {% if t.state == 'bad' %}open{% endif %}>
+        <summary>
+          <span class="tool-glyph state-{{ t.state }}">{{ verdict_glyph(t.state) }}</span>
+          <span class="tool-call-name"><b>{{ t.name }}</b> {{ arg_line(t.args) }}</span>
+          <span class="tool-call-meta">
+            {%- if t.running %}running{% else %}{{ dur_ms(t.duration_ms) }}{% endif -%}
+            {%- if t.rc is not none and t.state == 'bad' %} · rc={{ t.rc }}{% endif -%}
+          </span>
+        </summary>
+        {% if t.error %}<div class="tool-call-error">error: {{ t.error }}</div>{% endif %}
+        {% if t.summary %}<div class="tool-call-summary">{{ t.summary }}</div>{% endif %}
+        {% if t.stderr_tail %}<pre>{{ t.stderr_tail }}</pre>
+        {% elif t.stdout_tail %}<pre>{{ t.stdout_tail }}</pre>{% endif %}
+      </details>
+      {% else %}
+      <div class="tool-call state-{{ t.state }}" data-key="{{ c.key }}-{{ loop.index }}">
+        <div class="tool-call-line">
+          <span class="tool-glyph state-{{ t.state }}">{{ verdict_glyph(t.state) }}</span>
+          <span class="tool-call-name"><b>{{ t.name }}</b> {{ arg_line(t.args) }}</span>
+          <span class="tool-call-meta">
+            {%- if t.running %}running{% else %}{{ dur_ms(t.duration_ms) }}{% endif -%}
+          </span>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</article>
+
+{% elif c.kind == 'boundary' %}
+<article class="turn-card boundary state-{{ c.state }}" data-key="{{ c.key }}">
+  <span class="turn-glyph state-{{ c.state }}">{{ verdict_glyph(c.state) }}</span>
+  <div class="turn-body">
+    <div class="turn-header">
+      <span class="turn-id">Attempt {{ c.attempt if c.attempt is not none else '?' }}</span>
+      <span class="turn-verdict">
+        {%- if c.edge == 'start' %}started
+        {%- elif c.rebuild_ok is sameas true %}rebuild passed
+        {%- elif c.rebuild_ok is sameas false %}rebuild failed
+        {%- else %}ended{% endif -%}
+      </span>
+      <span class="turn-meta">{{ short_ts(c.ts) }}</span>
+    </div>
+    {% if c.edge == 'end' %}
+    {# What the accordion header used to carry, in the stream instead.
+       Tokens are BILLABLE (uncached), never the provider total -- summing
+       the re-billed total made the same attempt read 19x apart on one
+       screen (poly-0g0). #}
+    <p class="turn-note">
+      {{ c.n_turns }} turn{{ 's' if c.n_turns != 1 else '' }} ·
+      {{ c.n_tools }} tool call{{ 's' if c.n_tools != 1 else '' }} ·
+      {{ '{:,}'.format(c.tokens) }} billable tokens
+      {%- if c.elapsed_s is not none %} · {{ dur_ms(c.elapsed_s * 1000) }} wall clock{% endif -%}
+    </p>
+    {% elif c.budget %}
+    <p class="turn-note">
+      billable so far {{ '{:,}'.format(c.tokens_used_so_far or 0) }} /
+      {{ '{:,}'.format(c.budget) }}
+      {%- if c.iterations %} · attempt {{ c.attempt }} of {{ c.iterations }}{% endif -%}
+    </p>
+    {% endif %}
+  </div>
+</article>
+
+{% else %}
+{% set diag = c.error or c.diag_tail or c.stderr_tail or c.stdout_tail %}
+<article class="turn-card stage state-{{ c.state }}" data-key="{{ c.key }}">
+  <span class="turn-glyph state-{{ c.state }}">{{ verdict_glyph(c.state) }}</span>
+  <div class="turn-body">
+    <div class="turn-header">
+      <span class="turn-id">{{ c.stage }}</span>
+      <span class="turn-meta">
+        {%- if c.duration_ms is not none %}{{ dur_ms(c.duration_ms) }} · {% endif -%}
+        {{ short_ts(c.ts) }}
+      </span>
+    </div>
+    {% if c.message %}<p class="turn-note stage-message">{{ c.message }}</p>{% endif %}
+    {% if diag %}
+    <details class="tool-call state-{{ c.state }}" data-key="{{ c.key }}-diag"
+             {% if c.state == 'bad' %}open{% endif %}>
+      <summary>
+        <span class="tool-glyph state-{{ c.state }}">{{ verdict_glyph(c.state) }}</span>
+        <span class="tool-call-name">diagnostic</span>
+        <span class="tool-call-meta">{% if c.rc is not none %}rc={{ c.rc }}{% endif %}</span>
+      </summary>
+      {% if c.error %}<div class="tool-call-error">error: {{ c.error }}</div>{% endif %}
+      {% if c.diag_tail %}<pre>{{ c.diag_tail }}</pre>
+      {% elif c.stderr_tail %}<pre>{{ c.stderr_tail }}</pre>
+      {% elif c.stdout_tail %}<pre>{{ c.stdout_tail }}</pre>{% endif %}
+    </details>
+    {% endif %}
+  </div>
+</article>
+{% endif %}
+{% endfor %}
