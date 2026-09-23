@@ -1432,7 +1432,11 @@ def test_view_agentic_job_detail_shows_activity(client: TestClient) -> None:
     # prints the field's real name.
     assert '<span class="k">classification</span>=plist-error' in body
     assert "Retire reason" in body
-    assert "1/3 failures in last 2h" in body
+    # Renamed: it is the PORT's retry budget across jobs, not this job's
+    # attempt, which the now-bar carries now (poly-qqx9.3).
+    assert "Port retry budget" in body
+    assert "1/3 failed jobs for this port in the last 2h" in body
+    assert "Recent attempts" not in body
     assert "Lifecycle transitions" in body
     assert "hook_enqueued" in body
     assert "claimed" in body

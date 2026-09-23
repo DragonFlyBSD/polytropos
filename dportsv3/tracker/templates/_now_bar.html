@@ -1,0 +1,33 @@
+{# What the agent is doing right now, pinned at the top of the job page
+   (poly-qqx9.3). Rendered on its own by the live fragment endpoint too,
+   so it depends on nothing but `now`. Absent values render absent --
+   never as a zero. #}
+{% from "_macros.html" import arg_line %}
+{% if now %}
+<div class="now-bar" id="now-bar">
+  {% if now.attempt is not none %}
+  <span class="nb-pill cyan">attempt {{ now.attempt }}{% if now.attempts_total %}/{{ now.attempts_total }}{% endif %}</span>
+  {% endif %}
+  {% if now.turn is not none %}
+  <span class="nb-pill">turn {{ now.turn }}</span>
+  {% endif %}
+  {% if now.tier %}<span class="nb-pill">{{ now.tier }}</span>{% endif %}
+
+  {% if now.tool %}
+  <span class="nb-tool" {% if now.tool.since %}data-since="{{ now.tool.since }}"{% endif %}>
+    <b>{{ now.tool.name }}</b>
+    <span class="nb-args">{{ arg_line(now.tool.args) }}</span>
+    <span class="nb-elapsed" id="nb-elapsed">running</span>
+  </span>
+  {% else %}
+  <span class="nb-tool idle">no tool running</span>
+  {% endif %}
+
+  <span class="nb-spacer"></span>
+  {% if now.spend is not none %}
+  <span class="nb-spend" title="billable (uncached) tokens this job has spent, against the tier budget the whole job runs under">
+    {{ '{:,}'.format(now.spend) }}{% if now.budget %} / {{ '{:,}'.format(now.budget) }}{% endif %}
+  </span>
+  {% endif %}
+</div>
+{% endif %}

@@ -329,3 +329,14 @@ def test_the_turn_count_is_the_job_s_not_the_fetched_window_s(client):
     job that took 300."""
     body = client.get("/agentic/jobs/job-done?limit=10").text
     assert "all 21 turns" in body
+
+
+def test_the_job_page_pins_a_now_bar(client):
+    body = client.get("/agentic/jobs/job-mixed").text
+    assert 'id="now-bar-slot"' in body
+    assert 'class="now-bar"' in body
+
+
+def test_the_live_fragment_carries_the_bar(client):
+    body = client.get("/api/jobs/job-mixed/activity-fragment?since_id=0").json()
+    assert 'class="now-bar"' in body["nowbar_html"]

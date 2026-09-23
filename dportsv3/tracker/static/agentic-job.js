@@ -19,6 +19,7 @@
   var rowLimit = indicator.dataset.limit || "";
   var tbody = document.getElementById("activity-tbody");
   var cardsEl = document.getElementById("turn-cards");
+  var barSlot = document.getElementById("now-bar-slot");
   var lastUpdateEl = indicator.querySelector(".last-update");
   var statusText = indicator.querySelector(".status-text");
   var pauseLink = document.getElementById("pause-toggle");
@@ -41,6 +42,10 @@
       return u;
     },
     onData: function (data) {
+      if (data.nowbar_html !== undefined && barSlot) {
+        barSlot.innerHTML = data.nowbar_html;
+        startElapsedClock();
+      }
       if (data.cards_html && cardsEl) {
         // Swap the whole stream. Which <details> the operator had open is
         // page state the server can't know, so carry it across by the
@@ -103,6 +108,32 @@
 
   poller.start(3000);
 })();
+
+// --- The now-bar's elapsed clock ---
+// The bar names the tool running right now; without a clock beside it a
+// 44-minute dsynth build and a wedged runner look identical, which is
+// the whole reason tool_start exists (poly-qqx9.2, poly-qqx9.3).
+function startElapsedClock() {
+  if (window._dpElapsedTimer) clearInterval(window._dpElapsedTimer);
+  var el = document.getElementById("nb-elapsed");
+  var host = el && el.closest("[data-since]");
+  if (!el || !host) return;
+  var since = Date.parse(host.dataset.since);
+  if (isNaN(since)) return;
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function tick() {
+    // Two units, never three: at 1h53m the seconds are noise, and at
+    // 42s the minutes are a lie about precision.
+    var s = Math.max(0, Math.round((Date.now() - since) / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    el.textContent = h ? h + "h" + pad(m) + "m"
+      : m ? m + "m" + pad(s % 60) + "s"
+      : s + "s";
+  }
+  tick();
+  window._dpElapsedTimer = setInterval(tick, 1000);
+}
+startElapsedClock();
 
 // --- Client-side column sort ---
 (function () {

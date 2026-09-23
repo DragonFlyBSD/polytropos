@@ -2455,3 +2455,43 @@ body.tour-open .dock{opacity:0;pointer-events:none}
                              color: var(--text-dim); }
 .turn-stream .stage-fields .kv { display: inline-block; margin-right: 12px; }
 .turn-stream .stage-fields .k { color: var(--muted); }
+
+/* ── The now-bar: what the agent is doing, pinned ─────────────────────
+ * Sticky to the page scroller so it survives scrolling the stream --
+ * the thing it answers ("what is it doing NOW") is the thing you lose
+ * by scrolling. Absent values are absent: the template omits the cell
+ * rather than printing a zero (poly-qqx9.3).
+ */
+.now-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 8px 12px;
+  background: var(--head-deep); border: 1px solid var(--line);
+  border-radius: 4px; font: 12.5px var(--mono);
+}
+.now-bar .nb-pill {
+  padding: 2px 8px; border-radius: 3px; font-weight: 700;
+  background: var(--surface-3); color: var(--muted);
+}
+.now-bar .nb-pill.cyan {
+  background: var(--cyan-soft); color: var(--cyan);
+  border: 1px solid var(--cyan-line);
+}
+.now-bar .nb-tool {
+  min-width: 0; display: flex; align-items: baseline; gap: 8px;
+  overflow: hidden;
+}
+.now-bar .nb-tool b { color: var(--cyan); font-weight: 750; }
+.now-bar .nb-tool.idle { color: var(--faint); }
+.now-bar .nb-args {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--muted);
+}
+.now-bar .nb-elapsed {
+  color: var(--text); font-variant-numeric: tabular-nums; font-weight: 700;
+}
+.now-bar .nb-spacer { flex: 1 1 auto; }
+.now-bar .nb-spend {
+  color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+@media (max-width: 560px) { .now-bar .nb-spacer { flex-basis: 100%; } }

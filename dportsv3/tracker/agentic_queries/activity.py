@@ -111,6 +111,29 @@ def activity_for_job(
     return [_decode_extra_json(_row_dict(row)) for row in rows]
 
 
+def latest_activity_extra(
+    conn: sqlite3.Connection, job_id: str, stage: str,
+) -> dict[str, Any]:
+    """The ``extra`` of this job's newest row with that stage.
+
+    The now-bar's denominators are STORED, not settings: attempt_start
+    carries the iterations and the token budget the run actually used, so
+    a job that ran under a different setting still reports its own
+    numbers (poly-qqx9.3). The page fetches a bounded row window and a
+    long attempt's start row falls outside it, hence the query.
+    """
+    row = conn.execute(
+        "SELECT extra_json FROM activity_log "
+        "WHERE job_id = ? AND stage = ? ORDER BY id DESC LIMIT 1",
+        (job_id, stage),
+    ).fetchone()
+    if row is None:
+        return {}
+    item = _decode_extra_json({"extra_json": row[0]})
+    extra = item.get("extra")
+    return extra if isinstance(extra, dict) else {}
+
+
 def count_llm_turns_for_job(conn: sqlite3.Connection, job_id: str) -> int:
     """How many model turns this job has taken, all of them.
 

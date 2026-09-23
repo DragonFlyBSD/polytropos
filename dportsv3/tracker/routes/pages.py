@@ -17,6 +17,7 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    latest_activity_extra,
     count_llm_turns_for_job,
     active_job_for_port,
     activity_for_job,
@@ -1329,6 +1330,16 @@ def register(app, ctx):
             # turns" on a job that took 300 is a lie the reader can't see.
             job_turns = (count_llm_turns_for_job(conn, job_id)
                          if job is not None else 0)
+            # Queried, not read out of the windowed stream: a long
+            # attempt's start row sits outside the rows the page fetched,
+            # and it is where the now-bar's denominators live
+            # (poly-qqx9.3).
+            attempt_extra = (
+                latest_activity_extra(conn, job_id, "attempt_start")
+                if job is not None else {})
+            decision_extra = (
+                latest_activity_extra(conn, job_id, "decision")
+                if job is not None else {})
             transitions = (
                 job_events_for_job(conn, job_id, limit=limit)
                 if job is not None else []
@@ -1407,6 +1418,8 @@ def register(app, ctx):
                 "job": job,
                 "activity": activity,
                 "activity_cards": render.window_cards(activity_cards),
+                "now": render.now_bar(
+                    activity_cards, attempt_extra, decision_extra),
                 "total_turns": job_turns,
                 "turn_window": render.TURN_WINDOW,
                 "transitions": transitions,

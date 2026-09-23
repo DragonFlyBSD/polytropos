@@ -20,6 +20,7 @@ from dportsv3.tracker.agentic_queries.activity import (
     recent_activity,
     activity_for_job,
     count_llm_turns_for_job,
+    latest_activity_extra,
     events_since,
 )
 from dportsv3.tracker.agentic_queries.chat import (
@@ -120,6 +121,7 @@ __all__ = [
     "recent_activity",
     "activity_for_job",
     "count_llm_turns_for_job",
+    "latest_activity_extra",
     "events_since",
     "get_active_env",
     "set_active_env",

@@ -9,7 +9,11 @@
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Target</th><td>{{ job.target or '—' }}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Created</th><td>{{ job.created_ts_utc or '—' }}</td></tr>
         {% if attempt_summary %}
-        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Recent attempts</th><td>{{ attempt_summary.recent_failures }}/{{ attempt_summary.max_attempts }} failures in last {{ attempt_summary.window_hours }}h{% if attempt_summary.last_attempt_at %} (last {{ attempt_summary.last_attempt_at }}){% endif %}</td></tr>
+        {# "Recent attempts" read as this job's position in its own run and is
+           nothing of the kind: it is the PORT's retry budget across jobs, over
+           a window. The now-bar above carries this job's attempt, so the two
+           had to stop colliding (poly-qqx9.3). #}
+        <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Port retry budget</th><td>{{ attempt_summary.recent_failures }}/{{ attempt_summary.max_attempts }} failed jobs for this port in the last {{ attempt_summary.window_hours }}h{% if attempt_summary.last_attempt_at %} (last {{ attempt_summary.last_attempt_at }}){% endif %}</td></tr>
         {% endif %}
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Bundle dir</th><td>{{ job.bundle_dir or '—' }}</td></tr>
         <tr><th style="text-align:left;color:var(--text-dim);padding-right:12px;">Path</th><td>{{ job.path or '—' }}</td></tr>

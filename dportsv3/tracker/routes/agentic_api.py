@@ -10,6 +10,7 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    latest_activity_extra,
     activity_for_job,
     agentic_status,
     append_chat_turn,
@@ -104,6 +105,7 @@ def register(app, ctx):
         """
         row_tmpl = templates.env.get_template("_activity_row.html")
         cards_tmpl = templates.env.get_template("_turn_cards.html")
+        bar_tmpl = templates.env.get_template("_now_bar.html")
         with _conn() as conn:
             rows = activity_for_job(
                 conn, job_id, limit=200, since_id=since_id,
@@ -116,19 +118,34 @@ def register(app, ctx):
                 )
                 if rows else []
             )
+            attempt_extra = (
+                latest_activity_extra(conn, job_id, "attempt_start")
+                if rows else {}
+            )
+            decision_extra = (
+                latest_activity_extra(conn, job_id, "decision")
+                if rows else {}
+            )
         html = "".join(row_tmpl.render(a=row) for row in rows)
         # The same window the page renders, or the 3s swap would replace
         # five cards with the whole stream (poly-qqx9.5).
+        cards = render.group_activity_into_cards(window) if rows else []
         cards_html = (
-            cards_tmpl.render(
-                cards=render.window_cards(
-                    render.group_activity_into_cards(window)))
+            cards_tmpl.render(cards=render.window_cards(cards))
+            if rows else ""
+        )
+        # The bar is the whole point of polling: the tool it names is the
+        # thing that changes (poly-qqx9.3).
+        nowbar_html = (
+            bar_tmpl.render(
+                now=render.now_bar(cards, attempt_extra, decision_extra))
             if rows else ""
         )
         max_id = max((int(r["id"]) for r in rows if r.get("id")), default=since_id)
         return {
             "html": html,
             "cards_html": cards_html,
+            "nowbar_html": nowbar_html,
             "changed": bool(rows),
             "since_id": max_id,
             "job_state": (job or {}).get("state"),
