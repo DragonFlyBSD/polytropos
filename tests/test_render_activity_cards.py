@@ -273,3 +273,100 @@ def test_a_row_with_no_turn_at_all_becomes_a_stage_card():
 
 def test_empty_activity_returns_no_cards():
     assert group_activity_into_cards([]) == []
+
+
+# --- the window (poly-qqx9.5) ----------------------------------------------
+
+
+def _turn(id, attempt, turn):
+    return _row(id, "llm_turn", {"attempt": attempt, "turn": turn,
+                                 "total_tokens": 10})
+
+
+def test_the_window_keeps_the_newest_five_turns():
+    from dportsv3.tracker.render import window_cards
+    cards = group_activity_into_cards([_turn(i, 1, i) for i in range(1, 13)])
+    windowed = window_cards(cards)
+    assert [c["turn"] for c in windowed] == [12, 11, 10, 9, 8]
+
+
+def test_the_window_carries_the_boundaries_between_those_turns():
+    """Structure inside the span comes along; it is what makes the span
+    readable. Structure below it does not."""
+    from dportsv3.tracker.render import window_cards
+    rows = [
+        _row(1, "attempt_start", {"attempt": 1}),
+        _turn(2, 1, 1), _turn(3, 1, 2),
+        _row(4, "attempt_end", {"attempt": 1, "rebuild_ok": False}),
+        _row(5, "attempt_start", {"attempt": 2}),
+        _turn(6, 2, 1), _turn(7, 2, 2), _turn(8, 2, 3),
+    ]
+    windowed = window_cards(group_activity_into_cards(rows))
+    kinds = [(c["kind"], c.get("edge")) for c in windowed]
+    assert kinds == [
+        ("turn", None), ("turn", None), ("turn", None),   # A2.T3, T2, T1
+        ("boundary", "start"),                            # attempt 2 opened
+        ("boundary", "end"),                              # attempt 1 closed
+        ("turn", None), ("turn", None),                   # A1.T2, A1.T1
+    ]
+    # attempt 1's own start sits below the fifth turn, and stays there.
+    assert ("boundary", "start") not in kinds[4:]
+
+
+def test_a_short_job_is_not_windowed_at_all():
+    from dportsv3.tracker.render import window_cards
+    cards = group_activity_into_cards([_turn(1, 1, 1), _turn(2, 1, 2)])
+    assert window_cards(cards) == cards
+
+
+def test_a_queued_operator_note_pins_above_the_window():
+    """A note that scrolls out of its own window before the agent has read
+    it is the failure that surface exists to prevent (poly-qqx9.11)."""
+    from dportsv3.tracker.render import window_cards
+    cards = group_activity_into_cards([_turn(i, 1, i) for i in range(1, 13)])
+    note = {"kind": "note", "key": "n-1", "delivered": False}
+    windowed = window_cards(cards + [note])
+    assert windowed[0] is note
+    assert len(windowed) == 6
+    assert [c["turn"] for c in windowed[1:]] == [12, 11, 10, 9, 8]
+
+
+def test_a_delivered_note_falls_out_of_the_window_like_any_card():
+    from dportsv3.tracker.render import window_cards
+    cards = group_activity_into_cards([_turn(i, 1, i) for i in range(1, 13)])
+    note = {"kind": "note", "key": "n-1", "delivered": True}
+    windowed = window_cards(cards + [note])
+    assert note not in windowed
+
+
+def test_count_turns_counts_only_turn_cards():
+    from dportsv3.tracker.render import count_turns
+    cards = group_activity_into_cards([
+        _row(1, "attempt_start", {"attempt": 1}),
+        _turn(2, 1, 1),
+        _row(3, "decision", {"action": "patch"}),
+        _turn(4, 1, 2),
+    ])
+    assert count_turns(cards) == 2
+
+
+def test_an_attempt_whose_start_is_outside_the_window_says_so():
+    """Summing the rows in hand printed "66 turns" on an attempt of 75,
+    because the page fetches a bounded window (poly-qqx9.5)."""
+    cards = group_activity_into_cards([
+        _turn(1, 4, 70), _turn(2, 4, 71),
+        _row(3, "attempt_end", {"attempt": 4, "rebuild_ok": False}),
+    ])
+    end = next(c for c in cards if c.get("edge") == "end")
+    assert end["partial"] is True
+
+
+def test_an_attempt_seen_whole_reports_its_counts():
+    cards = group_activity_into_cards([
+        _row(1, "attempt_start", {"attempt": 1}),
+        _turn(2, 1, 1),
+        _row(3, "attempt_end", {"attempt": 1, "rebuild_ok": True}),
+    ])
+    end = next(c for c in cards if c.get("edge") == "end")
+    assert end["partial"] is False
+    assert end["n_turns"] == 1

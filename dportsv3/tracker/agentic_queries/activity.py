@@ -111,6 +111,23 @@ def activity_for_job(
     return [_decode_extra_json(_row_dict(row)) for row in rows]
 
 
+def count_llm_turns_for_job(conn: sqlite3.Connection, job_id: str) -> int:
+    """How many model turns this job has taken, all of them.
+
+    The job page fetches a bounded row window and windows that to five
+    turns; counting the turns IN that window would have the link offer
+    "all 67 turns" on a job that took 300 (poly-qqx9.5). The LIKE matches
+    the canonical stage plus prefixed variants like ``convert:llm_turn``,
+    the same way activity_for_job's filter does.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM activity_log "
+        "WHERE job_id = ? AND stage LIKE '%llm_turn'",
+        (job_id,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def events_since(
     conn: sqlite3.Connection,
     last_id: int = 0,

@@ -1,0 +1,47 @@
+{% extends "_base.html" %}
+{% block title %}{{ job.job_id }} transcript — DeltaPorts Tracker{% endblock %}
+{% block nav %}
+  {% with nav_crumbs = [
+      {"label": "Repairs", "url": request.url_for('agentic_index')},
+      {"label": "Jobs", "url": request.url_for('agentic_jobs')},
+      {"label": job.job_id,
+       "url": request.url_for('agentic_job_detail', job_id=job.job_id)},
+      {"label": "transcript"}
+  ] %}
+    {% include "_tracker_nav.html" %}
+  {% endwith %}
+  {% include "_pipeline_subnav.html" %}
+{% endblock %}
+
+{% block body %}
+  <div class="tracker-page">
+    <h1>{{ job.job_id }} <span class="muted">transcript</span></h1>
+    <p class="jump-links" style="font-size:12px;color:var(--text-dim);">
+      {%- if shown_turns < total_turns -%}
+        {{ shown_turns }} of {{ total_turns }} turns
+      {%- else -%}
+        {{ total_turns }} turn{{ 's' if total_turns != 1 else '' }}
+      {%- endif %} ·
+      {{ '{:,}'.format(n_rows) }} event{{ 's' if n_rows != 1 else '' }}
+      {%- if truncated %} · older events beyond
+      {{ '{:,}'.format(limit) }} rows are not shown{% endif %} ·
+      <a href="{{ request.url_for('agentic_job_detail', job_id=job.job_id) }}">back to the job</a>
+    </p>
+
+    {% if cards %}
+    <div class="turn-stream">
+      {% include "_turn_cards.html" %}
+    </div>
+
+    {% include "_raw_events.html" %}
+    {% else %}
+    <div class="empty-state">No activity recorded for this job.</div>
+    {% endif %}
+  </div>
+{% endblock %}
+{% block scripts %}
+  {# The raw table's client-side column sort lives in agentic-job.js; the
+     live-refresh block in the same file self-guards on #live-indicator,
+     which this page does not render. #}
+  <script src="{{ request.url_for('static', path='agentic-job.js') }}?v={{ static_v }}" defer></script>
+{% endblock %}

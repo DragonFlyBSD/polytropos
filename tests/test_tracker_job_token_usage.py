@@ -388,15 +388,17 @@ def test_the_collapsed_card_headlines_what_it_cost(client):
     assert summary.index("billable") < summary.index("total")
 
 
-def test_job_detail_renders_structured_columns(client):
-    """llm_turn rows have structured token cells, not just prose."""
-    body = client.get("/agentic/jobs/job-active").text
-    # Headers.
-    assert "Prompt" in body
-    assert "Compl" in body
-    assert "Cum" in body
-    # Numbers landed as table cells.
-    assert "80,000" in body          # largest turn's prompt
+def test_transcript_renders_structured_columns(client):
+    """llm_turn rows have structured token cells, not just prose. The
+    table holding them lives on the transcript now (poly-qqx9.5)."""
+    body = client.get("/agentic/jobs/job-active/transcript").text
+    # Headers. Prompt and completion collapsed into one Tokens column
+    # (poly-up2f); the split survives as that cell's hover title, which
+    # is the only place those two words are still written.
+    assert "Tokens" in body
+    assert "Cum (billable)" in body
+    assert "prompt 80,000" in body
+    # Numbers landed as table cells, not prose.
     assert "87,350" in body          # cumulative at the largest turn
     # The "→ tool" affordance replaced the crammed prose.
     assert "→ env_verify" in body or "→ dupe" in body

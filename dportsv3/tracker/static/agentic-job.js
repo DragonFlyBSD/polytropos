@@ -19,7 +19,6 @@
   var rowLimit = indicator.dataset.limit || "";
   var tbody = document.getElementById("activity-tbody");
   var cardsEl = document.getElementById("turn-cards");
-  var countEl = document.getElementById("activity-count");
   var lastUpdateEl = indicator.querySelector(".last-update");
   var statusText = indicator.querySelector(".status-text");
   var pauseLink = document.getElementById("pause-toggle");
@@ -57,6 +56,10 @@
             if (open[d.dataset.key]) d.open = true;
           });
       }
+      // The cursor advances whatever the page is showing: the raw table
+      // lives on the transcript page now, so tbody is usually absent and
+      // the update must not hang off it.
+      if (data.since_id) sinceId = data.since_id;
       if (data.html && tbody) {
         // Rows arrive oldest-first; inserting each at the top makes the
         // newest land highest, matching the newest-first static table.
@@ -66,11 +69,6 @@
           tr.classList.add("new-row");
           tbody.insertBefore(tr, tbody.firstChild);
         });
-        if (data.since_id) sinceId = data.since_id;
-        if (countEl && data.count) {
-          countEl.textContent = "(live · " + tbody.querySelectorAll("tr").length
-            + " events, " + data.count + " new)";
-        }
       }
       if (lastUpdateEl) lastUpdateEl.textContent = fmtAgo(Date.now());
       if (TERMINAL.indexOf(data.job_state) >= 0) {

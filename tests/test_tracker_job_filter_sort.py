@@ -179,8 +179,10 @@ def test_api_activity_filter_tool(client):
 # --- page rendering: pills + sort affordance --------------------------------
 
 
-def test_job_detail_renders_filter_pills(client):
-    body = client.get("/agentic/jobs/job-mixed").text
+def test_transcript_renders_filter_pills(client):
+    """The pills and the sortable table moved to the transcript with the
+    raw table they control (poly-qqx9.5)."""
+    body = client.get("/agentic/jobs/job-mixed/transcript").text
     assert "filter-pill" in body
     assert "llm_turn only" in body
     assert "tool calls only" in body
@@ -188,9 +190,9 @@ def test_job_detail_renders_filter_pills(client):
     assert 'class="filter-pill active">all<' in body
 
 
-def test_job_detail_active_pill_reflects_filter(client):
+def test_transcript_active_pill_reflects_filter(client):
     body = client.get(
-        "/agentic/jobs/job-mixed?stage_filter=llm_turn"
+        "/agentic/jobs/job-mixed/transcript?stage_filter=llm_turn"
     ).text
     assert "filter-pill active" in body
     # The activity_log query NARROWED — only llm_turn rows in body.
@@ -199,12 +201,12 @@ def test_job_detail_active_pill_reflects_filter(client):
     assert "tool:env_verify" not in body
 
 
-def test_job_detail_sortable_headers_present(client):
+def test_transcript_sortable_headers_present(client):
     """Sortable columns have data-sort=KEY so the JS knows what to
     sort. The JS itself runs in a browser; we pin the contract.
     Prompt/Compl collapsed into the Tokens column (poly-up2f); the
     split moved to the cell's title attribute."""
-    body = client.get("/agentic/jobs/job-mixed").text
+    body = client.get("/agentic/jobs/job-mixed/transcript").text
     for key in ("total", "cumulative"):
         assert f'data-sort="{key}"' in body
     # The corresponding row-level data-sort-* attributes exist too.
@@ -215,11 +217,11 @@ def test_job_detail_sortable_headers_present(client):
     assert "completion 600" in body
 
 
-def test_job_detail_row_sort_keys_use_neg_one_for_non_llm(client):
+def test_transcript_row_sort_keys_use_neg_one_for_non_llm(client):
     """Non-llm_turn rows carry data-sort-*=-1 so they sort to the
     bottom on descending. Without this sentinel, sorting by tokens
     would show "0" tool rows interleaved with the real values."""
-    body = client.get("/agentic/jobs/job-mixed").text
+    body = client.get("/agentic/jobs/job-mixed/transcript").text
     # Tool rows: -1 sentinels.
     assert 'data-sort-total="-1"' in body
     # llm_turn rows: actual turn totals.
@@ -246,15 +248,20 @@ def test_job_detail_boundary_card_carries_the_attempt_outcome(client):
     assert "21 turns" in body
 
 
-def test_job_detail_keeps_the_raw_table_for_both_states(client):
+def test_the_raw_table_is_on_the_transcript_not_the_job_page(client):
     """The sortable token column is how a 690k-token turn gets found
-    (poly-9hjm), so the table survives under the cards — collapsed, and
-    on terminal jobs too, which used to get the accordion instead."""
+    (poly-9hjm), so the table survives — one route away. Measured on a
+    908-event job it was 78KB of a 160KB job-page render, and the reader
+    who wants every row has already said so by going there."""
     for job in ("job-mixed", "job-done"):
-        body = client.get(f"/agentic/jobs/{job}").text
-        assert 'id="raw-events"' in body, job
-        assert 'id="activity-table"' in body, job
-        assert "job-activity-limit" in body, job
+        page = client.get(f"/agentic/jobs/{job}").text
+        assert 'id="raw-events"' not in page, job
+        assert 'id="activity-table"' not in page, job
+
+        full = client.get(f"/agentic/jobs/{job}/transcript").text
+        assert 'id="raw-events"' in full, job
+        assert 'id="activity-table"' in full, job
+        assert "job-activity-limit" in full, job
 
 
 def test_job_detail_live_view_has_no_fold(client):
@@ -275,5 +282,50 @@ def test_job_detail_live_polling_passes_stage_filter(client):
         "/agentic/jobs/job-mixed?stage_filter=llm_turn"
     ).text
     assert 'data-stage-filter="llm_turn"' in body
-    # The JS reads dataset.stageFilter and appends it to /api/activity.
-    assert "stage_filter=" in body
+    # The JS reads dataset.stageFilter and appends it to the fragment URL;
+    # the filter pills that used to spell it out in the markup went to the
+    # transcript with the table they control, so the attribute is the
+    # whole contract now.
+    assert 'data-limit="' in body
+    # And the filter still narrows what the cards are built from.
+    assert "tool:get_file" not in body
+
+
+# --- the window and the transcript route (poly-qqx9.5) ---------------------
+
+
+def test_job_page_shows_five_turns_and_links_to_the_rest(client):
+    """21 turns on job-done; the page shows five and routes to the rest."""
+    body = client.get("/agentic/jobs/job-done").text
+    assert body.count('class="turn-card state-') <= 12   # 5 turns + structure
+    assert "last 5 of 21 turns" in body
+    assert "Full transcript — all 21 turns" in body
+    assert "/transcript" in body
+
+
+def test_the_transcript_renders_every_turn(client):
+    body = client.get("/agentic/jobs/job-done/transcript").text
+    assert "21 turns" in body
+    # job-done's llm_turn rows carry no attempt, so the card id is the
+    # bare turn -- which is what a triage job's rows look like too.
+    for t in (1, 11, 21):
+        assert f'class="turn-id">T{t}<' in body
+
+
+def test_the_transcript_works_on_a_running_job(client):
+    """A route, not a job state: the accordion it replaced could only be
+    reached by a job being terminal."""
+    r = client.get("/agentic/jobs/job-mixed/transcript")
+    assert r.status_code == 200
+    assert 'class="turn-stream"' in r.text
+
+
+def test_the_transcript_404s_on_an_unknown_job(client):
+    assert client.get("/agentic/jobs/nope/transcript").status_code == 404
+
+
+def test_the_turn_count_is_the_job_s_not_the_fetched_window_s(client):
+    """Counting turns in the row window would offer 'all 67 turns' on a
+    job that took 300."""
+    body = client.get("/agentic/jobs/job-done?limit=10").text
+    assert "all 21 turns" in body

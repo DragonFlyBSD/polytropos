@@ -117,8 +117,12 @@ def register(app, ctx):
                 if rows else []
             )
         html = "".join(row_tmpl.render(a=row) for row in rows)
+        # The same window the page renders, or the 3s swap would replace
+        # five cards with the whole stream (poly-qqx9.5).
         cards_html = (
-            cards_tmpl.render(cards=render.group_activity_into_cards(window))
+            cards_tmpl.render(
+                cards=render.window_cards(
+                    render.group_activity_into_cards(window)))
             if rows else ""
         )
         max_id = max((int(r["id"]) for r in rows if r.get("id")), default=since_id)

@@ -16,7 +16,12 @@ from .sessions import (
     parse_session_records,
     SESSION_ATTEMPT_RE,
 )
-from .activity import group_activity_into_cards
+from .activity import (
+    count_turns,
+    group_activity_into_cards,
+    window_cards,
+    TURN_WINDOW,
+)
 from .compare import (
     compare_artifacts,
     default_relpath,
@@ -32,5 +37,6 @@ __all__ = [
     "compare_artifacts", "default_relpath", "is_diffable", "unified",
     "session_view_data", "is_session_relpath",
     "parse_session_records", "SESSION_ATTEMPT_RE",
-    "group_activity_into_cards",
+    "group_activity_into_cards", "window_cards", "count_turns",
+    "TURN_WINDOW",
 ]

@@ -2442,3 +2442,16 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   .turn-stream .turn-glyph svg { width: 13px; height: 13px; }
   .turn-stream .turn-meta { margin-left: 0; }
 }
+
+/* Out of the windowed stream and into the whole thing. */
+.transcript-link { margin: 10px 0 0; font-size: 13px; }
+
+/* Raw-events table cells. Lived in agentic_job.html's inline block until
+   the table moved to the transcript page, which needs them too. */
+.activity-table .tok { font-variant-numeric: tabular-nums; text-align: right;
+                       font-family: var(--mono); font-size: 12px; }
+.activity-table .tok-empty { color: transparent; }
+.activity-table .tool-list { font-family: var(--mono); font-size: 12px;
+                             color: var(--text-dim); }
+.turn-stream .stage-fields .kv { display: inline-block; margin-right: 12px; }
+.turn-stream .stage-fields .k { color: var(--muted); }

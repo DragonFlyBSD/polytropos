@@ -17,6 +17,7 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    count_llm_turns_for_job,
     active_job_for_port,
     activity_for_job,
     agentic_status,
@@ -1307,9 +1308,14 @@ def register(app, ctx):
     def agentic_job_detail(
         request: RequestType,
         job_id: str,
-        limit: int = 500,
+        limit: int = 200,
         stage_filter: str | None = None,
     ) -> Any:
+        # 200, not the 500 this took before: the page shows the last five
+        # turns and sends the rest to the transcript route, so fetching
+        # 500 rows to render five cards was work nobody read
+        # (poly-qqx9.5). The row select still reaches 5000 for the raw
+        # table underneath.
         limit = max(10, min(int(limit), 5000))
         # Normalize the filter. Step 9b — three pills: all/llm_turn/tool.
         sf = stage_filter if stage_filter in ("llm_turn", "tool") else None
@@ -1318,6 +1324,11 @@ def register(app, ctx):
             activity = (activity_for_job(conn, job_id, limit=limit,
                                           stage_filter=sf)
                         if job is not None else [])
+            # Counted over the whole job, not the fetched window: the
+            # window holds five turns, and the link offering "all 67
+            # turns" on a job that took 300 is a lie the reader can't see.
+            job_turns = (count_llm_turns_for_job(conn, job_id)
+                         if job is not None else 0)
             transitions = (
                 job_events_for_job(conn, job_id, limit=limit)
                 if job is not None else []
@@ -1387,6 +1398,7 @@ def register(app, ctx):
             ACTIVE_WORK_STATE_VALUES,
         )
         job_is_active = job.get("state") in ACTIVE_WORK_STATE_VALUES
+        activity_cards = render.group_activity_into_cards(activity)
         return templates.TemplateResponse(
             request,
             "agentic_job.html",
@@ -1394,7 +1406,9 @@ def register(app, ctx):
                 "title": job_id,
                 "job": job,
                 "activity": activity,
-                "activity_cards": render.group_activity_into_cards(activity),
+                "activity_cards": render.window_cards(activity_cards),
+                "total_turns": job_turns,
+                "turn_window": render.TURN_WINDOW,
                 "transitions": transitions,
                 "attempt_summary": attempt_summary,
                 "token_usage": token_usage,
@@ -1405,6 +1419,54 @@ def register(app, ctx):
                 "prior_attempts": prior_attempts,
                 "handoff": handoff,
                 "job_is_active": job_is_active,
+            },
+        )
+
+    @app.get("/agentic/jobs/{job_id}/transcript", response_class=HTMLResponse)
+    def agentic_job_transcript(
+        request: RequestType,
+        job_id: str,
+        limit: int = 2000,
+        stage_filter: str | None = None,
+    ) -> Any:
+        """Every turn of one job, as the same cards the detail page shows.
+
+        The detail page windows to the last five turns; this is where the
+        rest lives. A route rather than a job state, so a RUNNING job can
+        be read end to end too -- the old attempt accordion could only be
+        reached by a job being terminal (poly-qqx9.5).
+        """
+        # Same 5000 ceiling the job page's row select had: a transcript is
+        # meant to be long, not unbounded. 908 rows is already 917KB of
+        # HTML here, and the cap is what stops a pathological job from
+        # being a multi-megabyte response.
+        limit = max(10, min(int(limit), 5000))
+        sf = stage_filter if stage_filter in ("llm_turn", "tool") else None
+        with _conn() as conn:
+            job = get_job(conn, job_id)
+            activity = (activity_for_job(conn, job_id, limit=limit,
+                                         stage_filter=sf)
+                        if job is not None else [])
+            job_turns = (count_llm_turns_for_job(conn, job_id)
+                         if job is not None else 0)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+        cards = render.group_activity_into_cards(activity)
+        return templates.TemplateResponse(
+            request,
+            "agentic_job_transcript.html",
+            {
+                "title": f"{job_id} transcript",
+                "job": job,
+                "cards": cards,
+                "activity": activity,
+                "total_turns": job_turns,
+                "shown_turns": render.count_turns(cards),
+                "n_rows": len(activity),
+                "limit": limit,
+                "limit_options": [200, 500, 2000, 5000],
+                "stage_filter": sf,
+                "truncated": len(activity) >= limit,
             },
         )
 

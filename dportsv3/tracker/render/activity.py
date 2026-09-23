@@ -127,7 +127,8 @@ def group_activity_into_cards(
     def _acc(attempt: Any) -> dict[str, Any]:
         return attempts.setdefault(
             attempt,
-            {"tokens": 0, "n_tools": 0, "n_turns": 0, "start_ts": None},
+            {"tokens": 0, "n_tools": 0, "n_turns": 0, "start_ts": None,
+             "saw_start": False},
         )
 
     def _new_turn(attempt: Any, turn: Any, row: dict[str, Any] | None) -> dict[str, Any]:
@@ -175,7 +176,9 @@ def group_activity_into_cards(
 
         if stage == "attempt_start":
             attempt = extra.get("attempt")
-            _acc(attempt)["start_ts"] = a.get("ts")
+            acc = _acc(attempt)
+            acc["start_ts"] = a.get("ts")
+            acc["saw_start"] = True
             cards.append({
                 "kind": "boundary", "edge": "start", "state": "bound",
                 "key": f"as-{a.get('id') or 0}",
@@ -203,6 +206,13 @@ def group_activity_into_cards(
                 "tokens": acc["tokens"], "n_tools": acc["n_tools"],
                 "n_turns": acc["n_turns"],
                 "elapsed_s": _elapsed_seconds(acc["start_ts"], a.get("ts")),
+                # These are summed over the rows IN HAND. When the
+                # attempt's own start row fell outside the fetched
+                # window they count part of an attempt, so the card must
+                # not print them as the attempt's total -- it read "66
+                # turns" on an attempt of 75. poly-qqx9.9 replaces them
+                # with figures queried over the whole attempt.
+                "partial": not acc["saw_start"],
                 "message": a.get("message") or "",
             })
             open_turn = None
@@ -289,6 +299,39 @@ def _pending_tool(
     return None
 
 
+#: Keys a stage card renders somewhere else, or that mean nothing to a
+#: reader: the diagnostics have their own disclosure, and the rest is
+#: plumbing.
+_STAGE_FIELD_SKIP = frozenset({
+    "error", "diag_tail", "stderr_tail", "stdout_tail", "rc", "ok",
+    "call_id", "args", "tool", "text", "type",
+})
+_STAGE_FIELD_CAP = 8
+
+
+def _stage_fields(extra: dict[str, Any]) -> dict[str, Any]:
+    """The scalar extras worth showing beside a stage row's message.
+
+    A decision row's action / tier / classification / confidence was
+    visible in the flat table and would otherwise be lost with it: those
+    four are most of why anyone reads a decision row at all. Generalized
+    rather than special-cased, so observations_masked and the workspace
+    reset carry their numbers too.
+    """
+    out: dict[str, Any] = {}
+    for key, value in (extra or {}).items():
+        if key in _STAGE_FIELD_SKIP or value is None:
+            continue
+        if not isinstance(value, (str, int, float, bool)):
+            continue
+        if isinstance(value, str) and len(value) > 80:
+            continue
+        out[key] = value
+        if len(out) >= _STAGE_FIELD_CAP:
+            break
+    return out
+
+
 def _stage_card(row: dict[str, Any], stage: str) -> dict[str, Any]:
     """One operational row as a compact entry in the same stream."""
     extra = _extra(row)
@@ -305,9 +348,71 @@ def _stage_card(row: dict[str, Any], stage: str) -> dict[str, Any]:
         "id": row.get("id") or 0,
         "duration_ms": row.get("duration_ms"),
         "message": row.get("message") or "",
+        "fields": _stage_fields(extra),
         "error": extra.get("error"),
         "diag_tail": extra.get("diag_tail"),
         "stderr_tail": extra.get("stderr_tail"),
         "stdout_tail": extra.get("stdout_tail"),
         "rc": extra.get("rc"),
     }
+
+
+#: How many turns the job-detail page shows before sending the reader to
+#: the transcript. Five is what fits above the working-tree band without
+#: scrolling; at 442 events in one attempt (the poly-up2f exemplar) a
+#: full stream is the mess the cards replaced.
+TURN_WINDOW = 5
+
+
+def count_turns(cards: list[dict[str, Any]]) -> int:
+    """How many turn cards the stream holds, windowed or not."""
+    return sum(1 for c in cards if c.get("kind") == "turn")
+
+
+def window_cards(
+    cards: list[dict[str, Any]], turns: int = TURN_WINDOW,
+) -> list[dict[str, Any]]:
+    """The newest ``turns`` turn cards, with what sits between them.
+
+    ``cards`` is newest-first, so this is a prefix: walk until the turn
+    count is reached and stop. Boundary and stage cards inside that span
+    come along — they are what makes the span readable — and the ones
+    below it do not.
+
+    THE COST THIS EXISTS FOR. A poly-up2f-shaped job (4 attempts x 75
+    turns, 908 activity rows) rendered in 33.07 ms and 535,651 bytes
+    when the page fetched 500 rows and rendered every one of them.
+    Windowed to five turns, with the flat table moved to the transcript:
+    4.65 ms and 50,235 bytes. 7x the speed, 10x less HTML, on the page an
+    operator leaves open while a job runs. The transcript itself costs
+    41.40 ms for the same job, which is the point -- it is paid by
+    someone who asked for it.
+
+    Measured with 20 renders after 3 warm-ups, TestClient on seeded
+    sqlite -- the shape shell_facts uses, for the same reason: a cost
+    paid on every view is worth writing down.
+
+    One exception to the prefix: an operator note that has not been
+    delivered yet pins to the top whatever the window holds (poly-
+    qqx9.11). A note that scrolls out of its own window before the agent
+    has read it is the failure that surface exists to prevent. Once
+    delivered it takes its place in sequence and falls out like any
+    other card.
+    """
+    def _queued_note(card: dict[str, Any]) -> bool:
+        return card.get("kind") == "note" and not card.get("delivered")
+
+    pinned = [c for c in cards if _queued_note(c)]
+    if turns <= 0:
+        return pinned
+    out: list[dict[str, Any]] = []
+    seen = 0
+    for card in cards:
+        if seen >= turns:
+            break
+        if _queued_note(card):
+            continue            # already pinned above; don't show it twice
+        out.append(card)
+        if card.get("kind") == "turn":
+            seen += 1
+    return pinned + out

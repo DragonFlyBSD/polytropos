@@ -1423,8 +1423,14 @@ def test_view_agentic_job_detail_shows_activity(client: TestClient) -> None:
     body = resp.text
     assert "triage_start" in body
     assert "began triage" in body
-    assert "action=auto_patch" in body
-    assert "class=plist-error" in body
+    # The decision row's fields ride its stage card now, in the same
+    # <span class="kv"> grammar the transitions table uses, so the key
+    # and the value are separate elements (poly-qqx9.5).
+    assert '<span class="k">action</span>=auto_patch' in body
+    assert '<span class="k">tier</span>=AUTO' in body
+    # The old flat-table cell abbreviated this key to "class="; the card
+    # prints the field's real name.
+    assert '<span class="k">classification</span>=plist-error' in body
     assert "Retire reason" in body
     assert "1/3 failures in last 2h" in body
     assert "Lifecycle transitions" in body

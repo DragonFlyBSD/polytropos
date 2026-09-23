@@ -91,7 +91,11 @@
       </span>
       <span class="turn-meta">{{ short_ts(c.ts) }}</span>
     </div>
-    {% if c.edge == 'end' %}
+    {% if c.edge == 'end' and c.partial %}
+    {# The attempt started before the window this page fetched, so every
+       count here would be part of an attempt printed as the whole of it. #}
+    <p class="turn-note">counted in full on the transcript</p>
+    {% elif c.edge == 'end' %}
     {# What the accordion header used to carry, in the stream instead.
        Tokens are BILLABLE (uncached), never the provider total -- summing
        the re-billed total made the same attempt read 19x apart on one
@@ -125,6 +129,13 @@
       </span>
     </div>
     {% if c.message %}<p class="turn-note stage-message">{{ c.message }}</p>{% endif %}
+    {% if c.fields %}
+    {# A decision row's action / tier / classification is most of why
+       anyone reads one; it used to live in the flat table's detail cell. #}
+    <p class="turn-note stage-fields">
+      {%- for k, v in c.fields.items() %}<span class="kv"><span class="k">{{ k }}</span>={{ v }}</span>{% endfor -%}
+    </p>
+    {% endif %}
     {% if diag %}
     <details class="tool-call state-{{ c.state }}" data-key="{{ c.key }}-diag"
              {% if c.state == 'bad' %}open{% endif %}>
