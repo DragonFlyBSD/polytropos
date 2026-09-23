@@ -350,6 +350,19 @@ def test_the_live_fragment_carries_the_bar(client):
     assert 'class="now-bar"' in body["nowbar_html"]
 
 
+def test_a_quiet_poll_omits_the_bar_instead_of_emptying_it(client):
+    """The client guards with `nowbar_html !== undefined`, which "" passes,
+    so an empty body erased the bar on the first poll with nothing new --
+    and a long build is nothing but quiet polls (poly-qqx9.15)."""
+    latest = client.get(
+        "/api/jobs/job-mixed/activity-fragment?since_id=0").json()["since_id"]
+
+    body = client.get(
+        f"/api/jobs/job-mixed/activity-fragment?since_id={latest}").json()
+    assert body["changed"] is False
+    assert "nowbar_html" not in body, "present-but-empty is what wiped it"
+
+
 def test_the_job_page_renders_an_attempt_strip(client):
     body = client.get("/agentic/jobs/job-done").text
     assert 'id="attempt-strip"' in body

@@ -155,23 +155,35 @@ def register(app, ctx):
             cards_tmpl.render(cards=render.window_cards(cards))
             if rows else ""
         )
-        # The bar is the whole point of polling: the tool it names is the
-        # thing that changes (poly-qqx9.3).
-        nowbar_html = (
-            bar_tmpl.render(
-                now=render.now_bar(cards, attempt_extra, decision_extra))
-            if rows else ""
-        )
         max_id = max((int(r["id"]) for r in rows if r.get("id")), default=since_id)
-        return {
+        payload: dict[str, Any] = {
             "html": html,
             "cards_html": cards_html,
-            "nowbar_html": nowbar_html,
             "changed": bool(rows),
             "since_id": max_id,
             "job_state": (job or {}).get("state"),
             "count": len(rows),
         }
+        # THE BAR IS OMITTED WHEN NOTHING IS NEW, not sent empty. The client
+        # guards with `nowbar_html !== undefined`, which an empty string
+        # passes -- so sending "" erased the bar on the first quiet poll and
+        # left startElapsedClock with nothing to tick. Rows arrive in bursts
+        # at turn boundaries, and a 41-minute build is 41 minutes of quiet
+        # polls, so the bar vanished during exactly the wait it explains
+        # (poly-qqx9.15).
+        #
+        # An empty body still means "clear it", which is why this is a
+        # presence check and not a truthiness one: on a poll that HAS rows,
+        # now_bar returns None for a MANUAL tier or a job that just ended,
+        # and the slot must then go empty.
+        #
+        # Nothing is lost by omitting it: with no new rows there is no new
+        # turn and no new tool, so the bar's content cannot have changed,
+        # and its elapsed clock runs client-side.
+        if rows:
+            payload["nowbar_html"] = bar_tmpl.render(
+                now=render.now_bar(cards, attempt_extra, decision_extra))
+        return payload
 
     @app.get("/api/jobs/{job_id}/dsynth-tail")
     def api_job_dsynth_tail(
