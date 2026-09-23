@@ -177,6 +177,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     retire_reason TEXT,
     -- canonical relation to the occurrence it works on
     bundle_id TEXT,
+    -- the dev-env the work actually ran in. env_resolver ranks the job's
+    -- own env above tracker_active_env precisely because the operator can
+    -- change that selection mid-job, but the value only ever lived in the
+    -- queue file, so the tracker could not reach the workspace at all
+    -- (poly-qqx9.12).
+    dev_env TEXT,
     -- which runner last transitioned this job (see runners.runner_id).
     -- Recorded only; no code branches on it.
     owner_id TEXT
@@ -557,6 +563,7 @@ MIGRATIONS: tuple[str, ...] = (
     "INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE issues ADD COLUMN next_eligible_at TEXT",
     "ALTER TABLE jobs ADD COLUMN owner_id TEXT",
+    "ALTER TABLE jobs ADD COLUMN dev_env TEXT",
     "ALTER TABLE bundles ADD COLUMN verification_exit_code INTEGER",
     "ALTER TABLE bundles ADD COLUMN verification_reason TEXT",
     "ALTER TABLE bundles ADD COLUMN issue_key TEXT",

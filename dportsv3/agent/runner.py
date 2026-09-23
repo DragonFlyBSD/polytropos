@@ -138,7 +138,38 @@ def resolve_env(job: dict | None) -> str | None:
     """
     from dportsv3.agent.env_resolver import resolve_env_for_job  # noqa: PLC0415
     r = resolve_env_for_job(job, _state_db_conn, cli_env=_CLI_ENV_DEFAULT)
+    _record_job_env(job, r.env)
     return r.env
+
+
+def _record_job_env(job: dict | None, env: str | None) -> None:
+    """Persist the env this job resolved to, onto the job row.
+
+    The resolution itself is the only moment that knows the answer: the
+    queue file carries ``dev_env=`` and ``tracker_active_env`` can be
+    changed by an operator mid-job, so reading either one later can give a
+    different env than the work used. Written here, the row holds what the
+    tools were actually pointed at — which is what lets the tracker reach
+    the workspace for a diff or a build log (poly-qqx9.12).
+
+    Best-effort, like every other write to the read model: a job still runs
+    if this fails.
+    """
+    if _state_db_conn is None or not env or not isinstance(job, dict):
+        return
+    job_id = job.get("job_id")
+    if not job_id:
+        return
+    try:
+        with _state_db_lock:
+            _state_db_conn.execute(
+                "UPDATE jobs SET dev_env = ? "
+                "WHERE job_id = ? AND (dev_env IS NULL OR dev_env != ?)",
+                (env, job_id, env),
+            )
+            _state_db_conn.commit()
+    except Exception as exc:
+        print(f"Warning: could not record job env: {exc}", file=sys.stderr)
 
 
 # Gate-cycle cache for resolve_env(None). The gate runs every poll
