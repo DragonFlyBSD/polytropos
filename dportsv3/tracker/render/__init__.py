@@ -23,6 +23,7 @@ from .activity import (
     TURN_WINDOW,
 )
 from .nowbar import now_bar
+from .attempts import attempt_strip
 from .compare import (
     compare_artifacts,
     default_relpath,
@@ -39,5 +40,5 @@ __all__ = [
     "session_view_data", "is_session_relpath",
     "parse_session_records", "SESSION_ATTEMPT_RE",
     "group_activity_into_cards", "window_cards", "count_turns",
-    "TURN_WINDOW", "now_bar",
+    "TURN_WINDOW", "now_bar", "attempt_strip",
 ]

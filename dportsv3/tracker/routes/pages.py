@@ -17,6 +17,9 @@ from dportsv3.tracker import (
     render,
 )
 from dportsv3.tracker.agentic_queries import (
+    attempt_boundaries,
+    attempt_tool_totals,
+    attempt_turn_totals,
     latest_activity_extra,
     count_llm_turns_for_job,
     active_job_for_port,
@@ -1340,6 +1343,16 @@ def register(app, ctx):
             decision_extra = (
                 latest_activity_extra(conn, job_id, "decision")
                 if job is not None else {})
+            # Aggregated in SQL over the whole job: the strip compares
+            # attempts to each other, so it cannot be built from the
+            # windowed stream (poly-qqx9.6).
+            strip = (
+                render.attempt_strip(
+                    attempt_boundaries(conn, job_id),
+                    attempt_tool_totals(conn, job_id),
+                    attempt_turn_totals(conn, job_id),
+                )
+                if job is not None else {"attempts": [], "scale_ms": 0})
             transitions = (
                 job_events_for_job(conn, job_id, limit=limit)
                 if job is not None else []
@@ -1418,6 +1431,7 @@ def register(app, ctx):
                 "job": job,
                 "activity": activity,
                 "activity_cards": render.window_cards(activity_cards),
+                "strip": strip,
                 "now": render.now_bar(
                     activity_cards, attempt_extra, decision_extra),
                 "total_turns": job_turns,

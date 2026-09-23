@@ -1,0 +1,43 @@
+{# Where each attempt's wall clock went (poly-qqx9.6). One track per
+   attempt, all scaled against the longest so the rows compare; absent
+   entirely for job types that have no attempts. #}
+{% from "_macros.html" import dur_ms %}
+{% if strip and strip.attempts %}
+<div class="wf" id="attempt-strip">
+  {% for a in strip.attempts %}
+  <div class="wf-row">
+    <div class="wf-name">A{{ a.attempt }}
+      <span class="state-{{ a.state }}">{{ a.outcome }}</span>
+    </div>
+    <div class="wf-track" role="img"
+         aria-label="Attempt {{ a.attempt }}, {{ a.outcome }}, {{ dur_ms(a.elapsed_ms) }}">
+      {% for s in a.segments %}
+      <button type="button" class="seg {{ s.kind }}"
+              style="flex: 0 0 {{ '%.3f'|format(s.pct) }}%"
+              data-detail="{{ s.tools|join(', ') if s.tools else '' }}"
+              title="{% if s.kind == 'llm' %}model turns and loop overhead{% elif s.kind == 'run' %}in progress{% else %}{{ s.tools|join(', ') }}{% endif %} · {{ dur_ms(s.ms) }}">
+        {{- dur_ms(s.ms) -}}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  <div class="wf-axis">
+    <div></div>
+    <div class="wf-ticks">
+      <span>0</span>
+      <span>{{ dur_ms((strip.scale_ms / 2)|int) }}</span>
+      <span>{{ dur_ms(strip.scale_ms) }}</span>
+    </div>
+  </div>
+  <div class="wf-legend">
+    <span><i class="sw llm"></i>model turns + overhead (not timed: the
+      remainder)</span>
+    <span><i class="sw tool"></i>tool calls</span>
+    <span><i class="sw build"></i>dsynth build</span>
+    <span><i class="sw test"></i>dsynth test</span>
+    <span><i class="sw fail"></i>failed tool</span>
+    <span><i class="sw run"></i>in progress</span>
+  </div>
+</div>
+{% endif %}

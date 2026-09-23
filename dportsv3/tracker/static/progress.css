@@ -2495,3 +2495,63 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 @media (max-width: 560px) { .now-bar .nb-spacer { flex-basis: 100%; } }
+
+/* ── The attempt strip: where each attempt's wall clock went ──────────
+ * One track per attempt, every row scaled against the longest so the
+ * rows compare to each other -- which is the whole reason they are
+ * stacked (poly-qqx9.6). Colour is this sheet's AA-corrected palette,
+ * not the mock's raw values.
+ */
+.wf { margin: 0 0 12px; padding: 10px 12px;
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 4px; }
+.wf-row { display: grid; grid-template-columns: 86px minmax(0, 1fr);
+          gap: 11px; align-items: center; margin-bottom: 7px; }
+.wf-name { color: var(--muted); font: 700 12px var(--mono); }
+.wf-name span { display: block; font-weight: 400; font-size: 12px; }
+.wf-name .state-ok { color: var(--green); }
+.wf-name .state-bad { color: var(--red); }
+.wf-name .state-run { color: var(--cyan); }
+.wf-name .state-info { color: var(--faint); }
+.wf-track { display: flex; height: 26px; background: var(--surface-2);
+            border: 1px solid var(--line-hot); overflow: hidden; }
+.wf-track .seg {
+  border: 0; border-right: 1px solid var(--surface); min-width: 3px;
+  padding: 0 0 0 6px; overflow: hidden; text-align: left; cursor: pointer;
+  color: var(--prose); font: 12px var(--mono); white-space: nowrap;
+}
+.wf-track .seg:last-child { border-right: 0; }
+.wf-track .seg:hover, .wf-track .seg:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: -2px; }
+.seg.llm, .sw.llm { background: var(--violet-soft);
+                    box-shadow: inset 0 -4px var(--violet); }
+.seg.tool, .sw.tool { background: var(--cyan-soft);
+                      box-shadow: inset 0 -4px var(--cyan); }
+.seg.build, .sw.build { background: var(--amber-soft);
+                        box-shadow: inset 0 -4px var(--amber); }
+/* build and test are both dsynth and both 40 minutes; sharing one colour
+   made the two indistinguishable in the only place their split matters. */
+.seg.test, .sw.test { background: var(--green-soft);
+                      box-shadow: inset 0 -4px var(--green); }
+.seg.fail, .sw.fail { background: var(--red-soft);
+                      box-shadow: inset 0 -4px var(--red); }
+.seg.run, .sw.run {
+  background: repeating-linear-gradient(135deg, var(--cyan-soft) 0 7px,
+                                        var(--surface-3) 7px 14px);
+  box-shadow: inset 0 -4px var(--cyan);
+}
+.wf-axis { display: grid; grid-template-columns: 86px minmax(0, 1fr);
+           gap: 11px; margin-top: 2px; }
+.wf-ticks { display: flex; justify-content: space-between;
+            color: var(--faint); font: 12px var(--mono);
+            font-variant-numeric: tabular-nums; }
+.wf-legend { display: flex; flex-wrap: wrap; gap: 5px 14px;
+             margin-top: 9px; padding-top: 9px;
+             border-top: 1px solid var(--line);
+             color: var(--muted); font: 12px var(--mono); }
+.wf-legend .sw { display: inline-block; width: 10px; height: 10px;
+                 margin-right: 6px; border: 1px solid var(--line-hot);
+                 vertical-align: -1px; }
+@media (max-width: 560px) {
+  .wf-row, .wf-axis { grid-template-columns: 62px minmax(0, 1fr); gap: 8px; }
+}

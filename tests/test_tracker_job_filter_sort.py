@@ -340,3 +340,16 @@ def test_the_job_page_pins_a_now_bar(client):
 def test_the_live_fragment_carries_the_bar(client):
     body = client.get("/api/jobs/job-mixed/activity-fragment?since_id=0").json()
     assert 'class="now-bar"' in body["nowbar_html"]
+
+
+def test_the_job_page_renders_an_attempt_strip(client):
+    body = client.get("/agentic/jobs/job-done").text
+    assert 'id="attempt-strip"' in body
+    assert 'class="wf-track"' in body
+
+
+def test_a_job_with_no_attempts_gets_no_strip(client):
+    """job-q2-foo-style jobs write no attempt boundaries; an empty chart
+    is worse than none."""
+    body = client.get("/agentic/jobs/job-other").text
+    assert 'id="attempt-strip"' not in body

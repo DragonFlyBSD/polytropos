@@ -111,6 +111,86 @@ def activity_for_job(
     return [_decode_extra_json(_row_dict(row)) for row in rows]
 
 
+def attempt_boundaries(
+    conn: sqlite3.Connection, job_id: str,
+) -> list[dict[str, Any]]:
+    """Every attempt_start / attempt_end this job wrote, oldest first.
+
+    A handful of rows per job, and the only place an attempt's wall clock
+    has both edges. The job page fetches a bounded row window, so the
+    strip cannot be built from the stream (poly-qqx9.6).
+    """
+    rows = conn.execute(
+        "SELECT id, ts, stage, extra_json FROM activity_log "
+        "WHERE job_id = ? AND stage IN ('attempt_start', 'attempt_end') "
+        "ORDER BY id ASC",
+        (job_id,),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = _decode_extra_json(_row_dict(row))
+        extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+        out.append({
+            "id": item.get("id"), "ts": item.get("ts"),
+            "stage": item.get("stage"),
+            "attempt": extra.get("attempt"),
+            "rebuild_ok": extra.get("rebuild_ok"),
+        })
+    return out
+
+
+def attempt_tool_totals(
+    conn: sqlite3.Connection, job_id: str,
+) -> list[dict[str, Any]]:
+    """Per attempt and tool: how many calls, how much wall clock, and
+    whether they failed.
+
+    Aggregated in SQL rather than in Python over the fetched rows: a
+    908-event job has hundreds of tool rows and the strip needs all of
+    them, across every attempt, to say where the time went.
+    """
+    rows = conn.execute(
+        "SELECT json_extract(extra_json, '$.attempt') AS attempt, "
+        "       substr(stage, 6) AS tool, "
+        "       json_extract(extra_json, '$.ok') AS ok, "
+        "       COUNT(*) AS n, "
+        "       SUM(COALESCE(duration_ms, 0)) AS ms "
+        "FROM activity_log "
+        "WHERE job_id = ? AND stage LIKE 'tool:%' "
+        "GROUP BY attempt, tool, ok",
+        (job_id,),
+    ).fetchall()
+    return [
+        {"attempt": r[0], "tool": r[1],
+         # json_extract gives 1/0/NULL for a JSON bool; None stays None,
+         # which means NO VERDICT and must not read as a failure.
+         "ok": None if r[2] is None else bool(r[2]),
+         "n": int(r[3] or 0), "ms": int(r[4] or 0)}
+        for r in rows
+    ]
+
+
+def attempt_turn_totals(
+    conn: sqlite3.Connection, job_id: str,
+) -> list[dict[str, Any]]:
+    """Per attempt: how many model turns and what they billed."""
+    rows = conn.execute(
+        "SELECT json_extract(extra_json, '$.attempt') AS attempt, "
+        "       COUNT(*) AS n, "
+        "       SUM(COALESCE(json_extract(extra_json, '$.billable_tokens'), "
+        "                    json_extract(extra_json, '$.total_tokens'), "
+        "                    0)) AS billable "
+        "FROM activity_log "
+        "WHERE job_id = ? AND stage LIKE '%llm_turn' "
+        "GROUP BY attempt",
+        (job_id,),
+    ).fetchall()
+    return [
+        {"attempt": r[0], "n": int(r[1] or 0), "billable": int(r[2] or 0)}
+        for r in rows
+    ]
+
+
 def latest_activity_extra(
     conn: sqlite3.Connection, job_id: str, stage: str,
 ) -> dict[str, Any]:

@@ -84,6 +84,8 @@
     {# The slot survives the live swap; the bar inside it is replaced. #}
     <div id="now-bar-slot">{% include "_now_bar.html" %}</div>
 
+    {% include "_attempt_strip.html" %}
+
     {% include "_job_summary.html" %}
 
     {# Handoff + the phase story (transitions, activity) come first; the
