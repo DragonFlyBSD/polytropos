@@ -115,7 +115,8 @@
           slot.outerHTML = data.tail_html;
           var fresh = document.querySelector("#tool-tail-slot .tool-tail");
           if (fresh) {
-            fresh.scrollTop = atBottom ? fresh.scrollHeight : keep;
+            if (atBottom) tailToBottom(fresh);
+            else fresh.scrollTop = keep;
           }
           startTailClock();
         }
@@ -297,6 +298,16 @@ startElapsedClock();
 // The live badge reports the poll; this reports the JOB. A build that
 // has printed nothing for four minutes looks identical to a healthy one
 // without it (poly-qqx9.8).
+// A tail is read from the newest line: that is where the build is. Called
+// on first paint as well as after a swap -- rendered HTML starts scrolled
+// to the TOP, so without this the first thing shown is the oldest of the
+// last forty lines, beside a label reading "last line 4s ago"
+// (poly-qqx9.17).
+function tailToBottom(el) {
+  var pre = el || document.querySelector("#tool-tail-slot .tool-tail");
+  if (pre) pre.scrollTop = pre.scrollHeight;
+}
+
 function startTailClock() {
   if (window._dpTailTimer) clearInterval(window._dpTailTimer);
   function tick() {
@@ -313,6 +324,7 @@ function startTailClock() {
   window._dpTailTimer = setInterval(tick, 1000);
 }
 startTailClock();
+tailToBottom();
 
 // --- Working tree: pick a file, see its diff ---
 // Tabs, not a page of stacked diffs: the band is below the cards and a

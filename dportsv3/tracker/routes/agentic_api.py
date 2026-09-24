@@ -217,7 +217,7 @@ def register(app, ctx):
                 now=render.now_bar(cards, attempt_extra, decision_extra))
         if rows and tree is not None:
             payload["worktree_html"] = wt_tmpl.render(
-                tree=tree, wt_link=lambda n: f"?attempt={n}")
+                tree=tree, wt_link=lambda n: f"?attempt={n}#worktree")
         # The one body sent on EVERY poll, for the wall-clock reason above.
         # It renders empty for a job type with no attempts, which correctly
         # empties the slot rather than leaving a stale chart.

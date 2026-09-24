@@ -1495,8 +1495,15 @@ def register(app, ctx):
                 "tree": tree,
                 # The fragment renders this same partial without a request,
                 # so the link builder is passed in rather than derived.
+                # Anchored at the band it changes. Following a bare
+                # ?attempt=N is a full navigation that lands at the top of
+                # a long page, so picking a version looked like being
+                # thrown off the thing you were reading (poly-qqx9.19).
+                # The URL stays shareable, which is the point of pinning.
                 "wt_link": (
-                    lambda n: str(request.url.include_query_params(attempt=n))
+                    lambda n: str(
+                        request.url.include_query_params(attempt=n)
+                    ) + "#worktree"
                 ),
                 "pending_notes": pending_notes,
                 # What a queued note is waiting for, by name: "dsynth_test

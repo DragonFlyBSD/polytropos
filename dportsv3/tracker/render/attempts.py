@@ -30,6 +30,15 @@ _LONG_TOOLS = {"dsynth_build": "build", "dsynth_test": "test"}
 #: time in, and stable across attempts so two rows can be compared.
 _KIND_ORDER = ("llm", "run", "tool", "build", "test", "fail")
 
+#: Below this share of the track, a segment carries no label. It is not
+#: wide enough to hold one, and the overflow does not ellipsise -- it cuts,
+#: so "55.0s" became "55" sitting beside "1m52s" and read as a quantity in
+#: the same unit (poly-qqx9.18). The title attribute keeps the full value
+#: on every segment whatever its width, so nothing is lost by staying
+#: quiet. Six mono characters at this font need roughly 50px, and the
+#: track is ~1100px on the job page.
+_LABEL_MIN_PCT = 5.0
+
 
 def _parse(ts: Any) -> datetime | None:
     try:
@@ -93,6 +102,7 @@ def attempt_strip(
     for row in rows:
         for seg in row["segments"]:
             seg["pct"] = (seg["ms"] / scale * 100) if scale else 0.0
+            seg["label"] = seg["pct"] >= _LABEL_MIN_PCT
     return {"attempts": rows, "scale_ms": scale}
 
 

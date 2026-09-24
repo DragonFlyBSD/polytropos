@@ -16,7 +16,10 @@
               style="flex: 0 0 {{ '%.3f'|format(s.pct) }}%"
               data-detail="{{ s.tools|join(', ') if s.tools else '' }}"
               title="{% if s.kind == 'llm' %}model turns and loop overhead{% elif s.kind == 'run' %}in progress{% else %}{{ s.tools|join(', ') }}{% endif %} · {{ dur_ms(s.ms) }}">
-        {{- dur_ms(s.ms) -}}
+        {#- Silent when the segment is too narrow to hold it: the cut
+            label reads as a different number, and the title above still
+            carries the value (poly-qqx9.18). -#}
+        {%- if s.label %}{{ dur_ms(s.ms) }}{% endif -%}
       </button>
       {% endfor %}
     </div>

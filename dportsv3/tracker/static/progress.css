@@ -36,6 +36,15 @@
   --head-deep: #eef2f6;
   --code-bg: #f6f8fa;
   --code-fg: #253039;
+  /* A terminal, kept dark in BOTH themes -- distinct from --code-* on
+     purpose. The design source uses these for a running build's output
+     and --code-* for a tool's captured stdout, ten lines apart in the
+     same specimen; a light-on-dark block says "this is a console you are
+     watching" where a code block says "this is a value that was
+     returned" (poly-qqx9.17). */
+  --term-bg: #0e161d;
+  --term-fg: #c8d4dc;
+  --term-dim: #6c7f8d;
   --track: #ced7e0;
   --line: #d5dde5;
   --line-hot: #b4c1cd;
@@ -131,6 +140,9 @@
     --head-deep: #0b1016;
     --code-bg: #080d11;
     --code-fg: #cfdae0;
+    --term-bg: #05090d;
+    --term-fg: #c8d4dc;
+    --term-dim: #5d6e7b;
     --track: #26323d;
     --line: #2c3946;
     --line-hot: #4a5b6b;
@@ -183,6 +195,9 @@
   --head-deep: #0b1016;
   --code-bg: #080d11;
   --code-fg: #cfdae0;
+  --term-bg: #05090d;
+  --term-fg: #c8d4dc;
+  --term-dim: #5d6e7b;
   --track: #26323d;
   --line: #2c3946;
   --line-hot: #4a5b6b;
@@ -2630,10 +2645,17 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 }
 
 /* The build's own output, inside the tool row running it. */
+/* A terminal, not a code block: light on dark in both themes, per the
+   design source (poly-qqx9.17). Height rather than max-height, so the
+   pane does not resize under the reader as lines arrive and so
+   scroll-to-bottom has a stable frame to sit in. */
 .turn-stream .tool-tail {
-  margin: 0; max-height: 150px; overflow: auto; padding: 8px 10px;
+  margin: 0; height: 132px; overflow: auto; padding: 8px 10px;
   border-top: 1px solid var(--line);
-  color: var(--code-fg); background: var(--code-bg);
+  color: var(--term-fg); background: var(--term-bg);
+  /* The design says 11.5px here; this sheet's own floor is 12px and the
+     build log is exactly the essential text that floor protects. The
+     accessibility rule wins over the mock (poly-qqx9.17). */
   font: 12px/1.5 var(--mono); white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
