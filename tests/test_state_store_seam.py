@@ -199,8 +199,8 @@ class _Recorder:
     def register_runner(self, runner_id):
         self.calls.append(("register", runner_id))
 
-    def heartbeat(self, runner_id):
-        self.calls.append(("heartbeat", runner_id))
+    def heartbeat(self, runner_id, tail=None):
+        self.calls.append(("heartbeat", runner_id, tail))
 
     def set_runner_status(self, status, job_id=None, stage=None, extra=None):
         self.calls.append(("status", status, job_id, stage, extra))

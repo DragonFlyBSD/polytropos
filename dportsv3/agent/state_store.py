@@ -60,10 +60,14 @@ class StateStore(Protocol):
         """Announce this process. Idempotent: a restart re-enrolls the
         same id and clears any ``stopped_at`` from the last run."""
 
-    def heartbeat(self, runner_id: str) -> None:
-        """Say this runner is still alive. Called every
-        ``HEARTBEAT_INTERVAL`` seconds from a thread that keeps ticking
-        while the main thread blocks in ``subprocess.run``."""
+    def heartbeat(self, runner_id: str, tail: dict | None = None) -> None:
+        """Say this runner is still alive, and carry the running build's
+        last lines when there are any.
+
+        Called every ``HEARTBEAT_INTERVAL`` seconds from a thread that
+        keeps ticking while the main thread blocks in ``subprocess.run``
+        -- which is what makes it the right carrier for the tail
+        (poly-pvs2). ``tail=None`` clears whatever was published."""
 
     def set_runner_status(
         self,
@@ -88,6 +92,16 @@ _PRESENCE_WARNINGS = {
     "deregister": "could not deregister runner",
     "heartbeat": None,
 }
+
+
+def _heartbeat_payload(runner_id: str, tail: dict | None) -> dict:
+    """``tail`` is omitted rather than sent as null when there is nothing
+    to publish, so a heartbeat from a builder that never tails is the same
+    bytes it was before this feature existed."""
+    payload = {"event": "heartbeat", "runner_id": runner_id}
+    if tail is not None:
+        payload["tail"] = tail
+    return payload
 
 
 def _register_payload(runner_id: str) -> dict:
@@ -157,8 +171,8 @@ class LocalStore:
     def register_runner(self, runner_id: str) -> None:
         self._apply(_register_payload(runner_id))
 
-    def heartbeat(self, runner_id: str) -> None:
-        self._apply({"event": "heartbeat", "runner_id": runner_id})
+    def heartbeat(self, runner_id: str, tail: dict | None = None) -> None:
+        self._apply(_heartbeat_payload(runner_id, tail))
 
     def set_runner_status(
         self,
@@ -238,8 +252,8 @@ class HttpStore:
     def register_runner(self, runner_id: str) -> None:
         self._post(_register_payload(runner_id))
 
-    def heartbeat(self, runner_id: str) -> None:
-        self._post({"event": "heartbeat", "runner_id": runner_id})
+    def heartbeat(self, runner_id: str, tail: dict | None = None) -> None:
+        self._post(_heartbeat_payload(runner_id, tail))
 
     def set_runner_status(
         self,

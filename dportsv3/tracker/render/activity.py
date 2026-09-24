@@ -21,6 +21,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from dportsv3.common.tools import TAILABLE_TOOLS as _TAILABLE_TOOLS
+
 # A tool row's stage is "tool:<name>" — the completion row does not carry
 # the name in extra, only tool_start does.
 _TOOL_PREFIX = "tool:"
@@ -418,9 +420,9 @@ def window_cards(
     return pinned + out
 
 
-#: Tools whose output is worth tailing while they run. Everything else
-#: returns in milliseconds and has nothing to say in the meantime.
-TAILABLE_TOOLS = frozenset({"dsynth_build", "dsynth_test"})
+#: Re-exported: the runner gates publishing on the same set, and a copy
+#: on each side would let one grow without the other (common.tools).
+TAILABLE_TOOLS = _TAILABLE_TOOLS
 
 
 def running_tailable_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:

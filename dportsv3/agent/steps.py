@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from dportsv3 import settings
 from dportsv3.common import artifacts as _artifacts
+from dportsv3.common.tools import TAILABLE_TOOLS
 
 from . import llm
 from .attempt_loop import _WRITE_TOOLS
@@ -177,7 +178,26 @@ class PatchEventDispatcher:
     # (poly-5tgc). None disables publishing entirely, which is what every
     # existing test gets.
     publish_worktree: Callable[[int], None] | None = None
+    # Start/stop publishing a build's last lines: called with the tool name
+    # when a tailable one is dispatched and with None when it returns.
+    # Injected for the same reason as publish_worktree -- this class holds
+    # no env (poly-pvs2). None disables it, which is what every existing
+    # test gets.
+    set_tail_target: Callable[[str | None], None] | None = None
     trace_events: list[dict] = field(default_factory=list)
+
+    def _tail_target(self, tool: str | None) -> None:
+        """Tell the heartbeat what to tail, or that nothing is running.
+
+        Never raises: a tail is a nicety and this sits on the path every
+        tool call takes.
+        """
+        if self.set_tail_target is None:
+            return
+        try:
+            self.set_tail_target(tool)
+        except Exception:
+            pass  # observability must never break the loop
 
     def _publish_worktree(self, ev: dict) -> None:
         """Snapshot the working tree for the attempt this event belongs to.
@@ -246,6 +266,8 @@ class PatchEventDispatcher:
             )
             self._publish_worktree(ev)
         elif et == "tool_start":
+            if ev.get("tool") in TAILABLE_TOOLS:
+                self._tail_target(str(ev.get("tool")))
             # One row when the tool is DISPATCHED. Without it the page
             # cannot say what is running, and a 44-minute dsynth test is
             # indistinguishable from a stalled runner (poly-qqx9.2). The
@@ -264,6 +286,11 @@ class PatchEventDispatcher:
                 },
             )
         elif et == "tool_call":
+            # The call returned, so there is nothing left to tail. Cleared
+            # for ANY tool, not just tailable ones: the loop dispatches
+            # serially, so any completion means the build we were tailing
+            # is over.
+            self._tail_target(None)
             args = ev.get("args") or {}
             res = ev.get("result") or {}
             summary = self.summarize_tool_call(ev.get("tool", ""), args, res)
@@ -1602,6 +1629,22 @@ class PatchAttemptStep:
         def _publish_worktree(attempt: int) -> None:
             _publish_snapshot(_wt_bundle_id, env, ctx.job_id, attempt)
 
+        # And the running build's last lines, on the same reasoning: the
+        # dispatcher knows which tool started but not which env to resolve
+        # its log under (poly-pvs2). The heartbeat thread does the reading;
+        # this only tells it what to read.
+        from dportsv3.agent import runner as _runner_mod  # noqa: PLC0415
+
+        _tail_flavor = job.get("flavor") or ""
+
+        def _set_tail_target(tool: str | None) -> None:
+            if tool is None:
+                _runner_mod.clear_tail_target()
+            else:
+                _runner_mod.set_tail_target(
+                    env, origin, _tail_flavor, ctx.job_id, tool,
+                )
+
         dispatcher = PatchEventDispatcher(
             queue_root=queue_root,
             job_id=ctx.job_id,
@@ -1611,6 +1654,7 @@ class PatchAttemptStep:
             invalidate_health_cache=services.invalidate_health_cache,
             summarize_tool_call=services.summarize_tool_call,
             publish_worktree=_publish_worktree,
+            set_tail_target=_set_tail_target,
         )
 
         start = time.time()

@@ -258,6 +258,36 @@ CREATE TABLE IF NOT EXISTS runners (
     active_env TEXT
 );
 
+-- The last lines of the build a builder is running right now, published by
+-- the runner on its heartbeat (poly-pvs2). The tracker cannot read a build
+-- log itself: resolving one needs a root-only `dev-env path` and the tracker
+-- is unprivileged, which is why the first version of this feature rendered
+-- nothing (poly-paee).
+--
+-- KEYED BY RUNNER, NOT BY JOB, and that bounds it: exactly one row per
+-- builder, forever, overwritten in place. A row per job would grow without
+-- limit at up to 32 KiB each. job_id is a column instead, so the job page
+-- reads WHERE job_id = ? and correctly finds nothing once this builder has
+-- moved on -- a finished job's output is superseded by its logs/full.log.gz.
+CREATE TABLE IF NOT EXISTS runner_tail (
+    runner_id TEXT PRIMARY KEY,
+    -- NULL while no tailable tool is running: the runner clears the row
+    -- rather than deleting it, so a stale tail can never outlive its build.
+    job_id TEXT,
+    tool TEXT,
+    text TEXT,
+    lines INTEGER,
+    -- What the template states rather than silently applying: the newest
+    -- `max_bytes` of `total_bytes`, and how much was passed over.
+    total_bytes INTEGER,
+    skipped INTEGER,
+    max_bytes INTEGER,
+    -- When the LOG last grew, not when we read it. "last line 35s ago" is
+    -- about the build; the live badge already reports the poll.
+    log_mtime REAL,
+    updated_at TEXT
+);
+
 -- Health, and also the operator's list of which envs EXIST: the runner stubs
 -- a row per env on disk at start (runner.stub_unprobed_envs), because the UI
 -- sources its env list from here. Keyed by runner as well as env: a dev-env

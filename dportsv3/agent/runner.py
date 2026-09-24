@@ -451,6 +451,80 @@ def get_state_db_path(queue_root: Path) -> Path:
     return queue_root.parent / "state.db"
 
 
+#: What the heartbeat should tail, or None when no tailable tool is
+#: running. Set by the event dispatcher at ``tool_start`` and cleared when
+#: the call returns, so a 40-minute build publishes and a 3ms grep does
+#: not (poly-pvs2). Read from the heartbeat THREAD, hence the plain
+#: assignment of a whole dict: a reader either sees the old one or the new
+#: one, never a half-updated target.
+_tail_target: dict | None = None
+
+
+def set_tail_target(
+    env: str | None,
+    origin: str,
+    flavor: str,
+    job_id: str,
+    tool: str,
+) -> None:
+    """Start publishing this build's last lines on every heartbeat.
+
+    Without an env there is nothing to resolve the log under, so the row
+    simply has no tail rather than a wrong one -- the same rule the first
+    version of this feature used.
+    """
+    global _tail_target
+    _tail_target = (
+        {"env": env, "origin": origin, "flavor": flavor,
+         "job_id": job_id, "tool": tool}
+        if env else None
+    )
+
+
+def clear_tail_target() -> None:
+    global _tail_target
+    _tail_target = None
+
+
+def _heartbeat_tail() -> dict | None:
+    """The newest screenful of the running build's log, or None.
+
+    Read fresh every tick rather than incrementally: an offset-based read
+    would leave the published row holding only what arrived since the last
+    tick, which on a quiet build is nothing at all. The page wants the
+    last lines, always.
+
+    Never raises. This runs on the heartbeat thread, and a log that
+    vanished mid-build must cost a tick of tail, not the liveness signal
+    the same call carries.
+    """
+    target = _tail_target
+    if not target:
+        return None
+    try:
+        from dportsv3.agent import dsynth_tail  # noqa: PLC0415
+
+        read = dsynth_tail.read_tail(
+            target["env"], target["origin"],
+            flavor=target.get("flavor") or "",
+            offset=-1, max_lines=dsynth_tail.DEFAULT_MAX_LINES,
+        )
+        if not read.get("ok"):
+            return None
+        return {
+            "job_id": target["job_id"],
+            "tool": target["tool"],
+            "text": read.get("text") or "",
+            "lines": read.get("lines") or 0,
+            "total_bytes": read.get("total_bytes") or 0,
+            "skipped": read.get("skipped") or 0,
+            "max_bytes": dsynth_tail.MAX_CHUNK_BYTES,
+            "log_mtime": read.get("mtime"),
+        }
+    except Exception:
+        return None
+
+
 def select_state_store() -> str:
     """Install the state store ``runner.state_transport`` names.
 
@@ -1923,7 +1997,7 @@ def _heartbeat_loop():
     """Say we are alive every 5s, from a thread that keeps ticking while
     the main thread blocks in ``subprocess.run`` during a build."""
     while not _heartbeat_stop_event.is_set():
-        _state_store.store().heartbeat(runner_id())
+        _state_store.store().heartbeat(runner_id(), _heartbeat_tail())
         _heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
 
 

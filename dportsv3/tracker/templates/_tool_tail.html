@@ -1,0 +1,26 @@
+{# A running build's last lines, inside the tool row producing them
+   (poly-qqx9.8). Its own partial so the live poll can replace just this
+   while a 40-minute build writes no activity rows at all: re-rendering the
+   whole card stream every 3s would recreate the <pre> below and throw away
+   the scroll position of the one element a reader may be scrolled inside
+   (poly-pvs2).
+
+   Expects `tail`; the slot wrapper is always present so the client has
+   something to swap even when there is nothing to show. #}
+<div id="tool-tail-slot">
+  {%- if tail and tail.ok %}
+  <pre class="tool-tail" data-mtime="{{ tail.mtime }}">{{ tail.text }}</pre>
+  <div class="tool-tailbar">
+    <span>last line <b class="tail-ago">—</b> ago</span>
+    <span class="muted">{{ tail.lines }} line{{ 's' if tail.lines != 1 else '' }} ·
+      newest {{ (tail.max_bytes or 32768) // 1024 }} KiB of
+      {{ '{:,}'.format(tail.total_bytes) }} bytes
+      {%- if tail.skipped %} · {{ '{:,}'.format(tail.skipped) }} skipped{% endif -%}
+    </span>
+    {# No link while it runs: full.log.gz does not exist until the build
+       ends, and an empty href reads as a broken control. #}
+  </div>
+  {%- elif tail and tail.error %}
+  <div class="tool-tailbar"><span class="muted">{{ tail.error }}</span></div>
+  {%- endif %}
+</div>

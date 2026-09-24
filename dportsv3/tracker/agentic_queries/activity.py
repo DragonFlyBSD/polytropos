@@ -342,3 +342,40 @@ def activity_pruning(conn: Any, job_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------
 # Step 28a: origin skip flags
 # ---------------------------------------------------------------------
+
+
+def job_tail(conn: Any, job_id: str) -> dict[str, Any] | None:
+    """The running build's last lines for this job, as its builder
+    published them (poly-pvs2).
+
+    ``runner_tail`` is keyed by runner and carries ``job_id`` as a column,
+    so this returns nothing once that builder moved to other work -- which
+    is the right answer: a finished job's output is its ``logs/full.log.gz``,
+    not a tail frozen at whatever the last heartbeat caught.
+
+    ``None`` when no builder is tailing this job, which is the ordinary
+    state for every job that is not running dsynth right now.
+    """
+    row = conn.execute(
+        """SELECT tool, text, lines, total_bytes, skipped, max_bytes,
+                  log_mtime, updated_at
+           FROM runner_tail
+           WHERE job_id = ? AND text IS NOT NULL
+           ORDER BY updated_at DESC LIMIT 1""",
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "ok": True,
+        "tool": row["tool"],
+        "text": row["text"] or "",
+        "lines": int(row["lines"] or 0),
+        "total_bytes": int(row["total_bytes"] or 0),
+        "skipped": int(row["skipped"] or 0),
+        "max_bytes": int(row["max_bytes"] or 0),
+        # The template's ticker reads this to say "last line 35s ago": the
+        # LOG's clock, not the poll's.
+        "mtime": row["log_mtime"],
+        "updated_at": row["updated_at"],
+    }

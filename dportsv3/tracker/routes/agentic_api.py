@@ -19,6 +19,7 @@ from dportsv3.tracker.agentic_queries import (
     attempt_turn_totals,
     latest_activity_extra,
     activity_for_job,
+    job_tail,
     agentic_status,
     append_chat_turn,
     clear_chat_turns,
@@ -118,6 +119,7 @@ def register(app, ctx):
         bar_tmpl = templates.env.get_template("_now_bar.html")
         strip_tmpl = templates.env.get_template("_attempt_strip.html")
         wt_tmpl = templates.env.get_template("_worktree.html")
+        tail_tmpl = templates.env.get_template("_tool_tail.html")
         with _conn() as conn:
             rows = activity_for_job(
                 conn, job_id, limit=200, since_id=since_id,
@@ -170,11 +172,21 @@ def register(app, ctx):
                     app.state.artifact_root, want_attempt=attempt)
                 if rows and job is not None else None
             )
+            # NOT gated on `rows`, for the same reason the strip above is
+            # not: a dsynth build writes no activity rows for forty
+            # minutes, so a tail that only refreshed with new rows would
+            # sit frozen for exactly the build it exists to show
+            # (poly-qqx9.16's defect, one surface over). One indexed row.
+            tail = job_tail(conn, job_id) if job is not None else None
         html = "".join(row_tmpl.render(a=row) for row in rows)
         cards_html = (
             cards_tmpl.render(cards=render.window_cards(cards))
             if rows else ""
         )
+        # Its own slot rather than part of cards_html: swapping the card
+        # container would recreate the tail's <pre> every 3s and lose the
+        # scroll position of the one element a reader may be inside.
+        tail_html = tail_tmpl.render(tail=tail)
         max_id = max((int(r["id"]) for r in rows if r.get("id")), default=since_id)
         payload: dict[str, Any] = {
             "html": html,
@@ -210,6 +222,11 @@ def register(app, ctx):
         # It renders empty for a job type with no attempts, which correctly
         # empties the slot rather than leaving a stale chart.
         payload["strip_html"] = strip_tmpl.render(strip=strip)
+        # Sent on every poll for the same reason, and the same way: it
+        # renders empty when no build is running, which correctly empties
+        # the slot instead of leaving the last lines of a finished build
+        # sitting under a tool row that has already collapsed.
+        payload["tail_html"] = tail_html
         return payload
 
     @app.get("/api/runner-status")

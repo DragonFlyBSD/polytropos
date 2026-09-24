@@ -91,6 +91,35 @@
             if (open[d.dataset.key]) d.open = true;
           });
       }
+      // AFTER the cards swap, not before: the tail slot lives inside the
+      // card stream, so a cards_html swap replaces it and anything written
+      // here first would be thrown away.
+      //
+      // Sent on every poll because a dsynth build writes no activity rows
+      // for forty minutes, which is exactly when the tail matters
+      // (poly-pvs2). Rendered empty when no build runs, which clears it.
+      if (data.tail_html !== undefined) {
+        var slot = document.getElementById("tool-tail-slot");
+        if (slot) {
+          // Follow the newest line, unless the reader has scrolled up to
+          // look at something -- then leave them where they are. A live
+          // tail pinned to the TOP would show the oldest of the last forty
+          // lines beside a label reading "last line 4s ago".
+          var pre = slot.querySelector(".tool-tail");
+          var atBottom = true, keep = 0;
+          if (pre) {
+            keep = pre.scrollTop;
+            atBottom = pre.scrollHeight - pre.scrollTop
+                       - pre.clientHeight < 8;
+          }
+          slot.outerHTML = data.tail_html;
+          var fresh = document.querySelector("#tool-tail-slot .tool-tail");
+          if (fresh) {
+            fresh.scrollTop = atBottom ? fresh.scrollHeight : keep;
+          }
+          startTailClock();
+        }
+      }
       // The cursor advances whatever the page is showing: the raw table
       // lives on the transcript page now, so tbody is usually absent and
       // the update must not hang off it.

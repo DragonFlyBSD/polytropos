@@ -32,6 +32,7 @@ from dportsv3.tracker.agentic_queries import (
     active_job_for_port,
     activity_for_job,
     activity_pruning,
+    job_tail,
     agentic_status,
     bundles_for_run,
     discard_manual_request,
@@ -1424,6 +1425,11 @@ def register(app, ctx):
                 render.group_activity_into_cards(activity),
                 operator_notes_for_job(conn, job_id) if job is not None else [],
             )
+            # A running build's last lines, hung on the tool row producing
+            # them. The RUNNER publishes these on its heartbeat: the tracker
+            # cannot read a build log itself, which is why the first version
+            # of this rendered nothing (poly-paee, poly-pvs2).
+            render.attach_tool_tail(activity_cards, job_tail(conn, job_id))
             pending_notes = (pending_note_count(conn, job_id)
                              if job is not None else 0)
             now = render.now_bar(
@@ -1477,11 +1483,6 @@ def register(app, ctx):
             ACTIVE_WORK_STATE_VALUES,
         )
         job_is_active = job.get("state") in ACTIVE_WORK_STATE_VALUES
-        # No tail. Reading a running build's log meant resolving it through
-        # `dev-env path`, which requires root, and the tracker is not root
-        # -- so this only ever reported "no log" (poly-paee). Whether the
-        # runner publishes one instead is poly-pvs2; render.attach_tool_tail
-        # is the consumer side, waiting for a producer.
         return templates.TemplateResponse(
             request,
             "agentic_job.html",
