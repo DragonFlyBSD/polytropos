@@ -131,9 +131,14 @@ def _newest_prompt(cards: list[dict[str, Any]]) -> int | None:
 
 
 def _context_window() -> int | None:
-    """The declared window, or None. Read per render rather than cached:
-    this is a settings lookup off a table already in memory, and an
-    operator who edits the value expects the page to follow."""
+    """The declared window, or None.
+
+    Reads the settings table, which the process loads ONCE and caches
+    (settings.schema), so editing the config needs a tracker restart to
+    take effect -- the same as every other setting here. An earlier
+    version of this comment claimed the page would follow an edit live;
+    it does not.
+    """
     from dportsv3 import settings  # noqa: PLC0415
 
     try:
