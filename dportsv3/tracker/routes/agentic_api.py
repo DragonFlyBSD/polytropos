@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 from dportsv3.tracker import (
     fix_state,
     render,
+    worktree_source,
 )
 from dportsv3.tracker.agentic_queries import (
     queue_operator_note,
@@ -91,6 +92,7 @@ def register(app, ctx):
         since_id: int = Query(default=0, ge=0),
         stage_filter: str | None = None,
         limit: int = Query(default=500, ge=10, le=5000),
+        attempt: int | None = Query(default=None, ge=1),
     ) -> dict[str, Any]:
         """Server-rendered activity since a cursor, for the live feed.
 
@@ -115,6 +117,7 @@ def register(app, ctx):
         cards_tmpl = templates.env.get_template("_turn_cards.html")
         bar_tmpl = templates.env.get_template("_now_bar.html")
         strip_tmpl = templates.env.get_template("_attempt_strip.html")
+        wt_tmpl = templates.env.get_template("_worktree.html")
         with _conn() as conn:
             rows = activity_for_job(
                 conn, job_id, limit=200, since_id=since_id,
@@ -150,10 +153,24 @@ def register(app, ctx):
                     attempt_turn_totals(conn, job_id),
                 )
                 if job is not None else {"attempts": [], "scale_ms": 0})
+            # The same window the page renders, or the 3s swap would replace
+            # five cards with the whole stream (poly-qqx9.5). Built inside
+            # the connection block because the working-tree read below needs
+            # both it and the connection.
+            cards = render.group_activity_into_cards(window) if rows else []
+            # The working tree, so the band advances while the agent edits
+            # instead of only on reload (poly-5tgc). Gated on `rows` --
+            # unlike the strip -- because the band changes only when a write
+            # tool RETURNS, and that return is itself a new row. ``attempt``
+            # carries the operator's pinned version, which the swap must not
+            # steal back.
+            tree = (
+                worktree_source.working_tree_for(
+                    conn, job, job_id, cards,
+                    app.state.artifact_root, want_attempt=attempt)
+                if rows and job is not None else None
+            )
         html = "".join(row_tmpl.render(a=row) for row in rows)
-        # The same window the page renders, or the 3s swap would replace
-        # five cards with the whole stream (poly-qqx9.5).
-        cards = render.group_activity_into_cards(window) if rows else []
         cards_html = (
             cards_tmpl.render(cards=render.window_cards(cards))
             if rows else ""
@@ -186,6 +203,9 @@ def register(app, ctx):
         if rows:
             payload["nowbar_html"] = bar_tmpl.render(
                 now=render.now_bar(cards, attempt_extra, decision_extra))
+        if rows and tree is not None:
+            payload["worktree_html"] = wt_tmpl.render(
+                tree=tree, wt_link=lambda n: f"?attempt={n}")
         # The one body sent on EVERY poll, for the wall-clock reason above.
         # It renders empty for a job type with no attempts, which correctly
         # empties the slot rather than leaving a stale chart.

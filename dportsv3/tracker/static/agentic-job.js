@@ -21,6 +21,10 @@
   var cardsEl = document.getElementById("turn-cards");
   var barSlot = document.getElementById("now-bar-slot");
   var stripSlot = document.getElementById("attempt-strip-slot");
+  var wtSlot = document.getElementById("worktree-slot");
+  // A pinned ?attempt=N must survive the poll, or the swap would drag the
+  // reader back to the newest version every 3s (poly-5tgc UI 2).
+  var pinnedAttempt = new URLSearchParams(location.search).get("attempt");
   var lastUpdateEl = indicator.querySelector(".last-update");
   var statusText = indicator.querySelector(".status-text");
   var pauseLink = document.getElementById("pause-toggle");
@@ -40,6 +44,7 @@
             + "/activity-fragment?since_id=" + sinceId;
       if (stageFilter) u += "&stage_filter=" + encodeURIComponent(stageFilter);
       if (rowLimit) u += "&limit=" + encodeURIComponent(rowLimit);
+      if (pinnedAttempt) u += "&attempt=" + encodeURIComponent(pinnedAttempt);
       return u;
     },
     onData: function (data) {
@@ -50,6 +55,23 @@
       // Sent on every poll, not only when rows arrive: a running attempt's
       // track grows with the wall clock. Nothing in it is page state the
       // operator can change, so a straight swap is safe.
+      if (data.worktree_html !== undefined && wtSlot) {
+        // Which file the operator had open is page state the server cannot
+        // know. Carried across by path, then replayed through the same
+        // click handler so the diff panes follow.
+        var openPath = null;
+        var chosen = wtSlot.querySelector(
+          '.wt-file[aria-selected="true"] .wt-path');
+        if (chosen) openPath = chosen.textContent;
+        wtSlot.innerHTML = data.worktree_html;
+        if (openPath) {
+          Array.prototype.forEach.call(
+            wtSlot.querySelectorAll(".wt-file"), function (b) {
+              var pathEl = b.querySelector(".wt-path");
+              if (pathEl && pathEl.textContent === openPath) b.click();
+            });
+        }
+      }
       if (data.strip_html !== undefined && stripSlot) {
         stripSlot.innerHTML = data.strip_html;
       }
@@ -266,12 +288,14 @@ startTailClock();
 // --- Working tree: pick a file, see its diff ---
 // Tabs, not a page of stacked diffs: the band is below the cards and a
 // four-file job would otherwise push everything else off the screen.
+// Delegated from the document, not bound to .wt-list: the band is replaced
+// wholesale on a live poll, and a listener on the old list would go with it.
 (function () {
-  var list = document.querySelector(".wt-list");
-  if (!list) return;
-  list.addEventListener("click", function (ev) {
-    var btn = ev.target.closest(".wt-file");
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest && ev.target.closest(".wt-file");
     if (!btn) return;
+    var list = btn.closest(".wt-list");
+    if (!list) return;
     list.querySelectorAll(".wt-file").forEach(function (b) {
       b.setAttribute("aria-selected", b === btn ? "true" : "false");
     });

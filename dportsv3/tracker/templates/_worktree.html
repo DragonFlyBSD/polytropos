@@ -15,17 +15,36 @@
     attempt ends. Nothing has arrived for this job, which is the
     ordinary state while it is still working.</p>
 </section>
+{% elif tree and tree.empty and tree.versions %}
+{# The selected attempt published an empty diff on purpose: it changed
+   nothing. Distinct from "nothing published", above, and a finding in its
+   own right on an attempt that then failed (poly-5tgc UI 4). #}
+<section class="wt-band" id="worktree">
+  <h2 class="wt-head">Working tree
+    <span class="muted">attempt {{ tree.selected_attempt }} changed nothing</span>
+  </h2>
+  {% include "_worktree_versions.html" %}
+</section>
 {% elif tree and not tree.empty %}
 <section class="wt-band" id="worktree">
   <h2 class="wt-head">Working tree
     <span class="muted">{{ tree.n_files }} file{{ 's' if tree.n_files != 1 else '' }} changed ·
       <span class="wt-add">+{{ tree.added }}</span>
       <span class="wt-del">−{{ tree.removed }}</span>
-      {%- if tree.source == 'bundle' %} ·
+      {%- if tree.source == 'snapshot' %} ·
+      attempt {{ tree.selected_attempt }}
+      {%- if tree.as_of %}, as of
+      <span title="{{ tree.as_of }}">{{ tree.as_of | relative_age }}</span>
+      {%- endif -%}
+      {%- if not tree.is_latest %} ·
+      <span class="wt-historical">historical — a later attempt has its own</span>
+      {%- endif -%}
+      {%- elif tree.source == 'bundle' %} ·
       <span title="analysis/changes.diff belongs to the bundle, not the job. If this bundle was retried, these files may be a sibling attempt's.">from the bundle's diff</span>
       {%- else %} · as the job left it{% endif -%}
     </span>
   </h2>
+  {% include "_worktree_versions.html" %}
   <div class="wt">
     <div class="wt-list" role="tablist" aria-label="Changed files">
       {% for f in tree.files %}
@@ -41,6 +60,7 @@
           {%- if f.live %}<i class="dot run"></i>writing now · {% endif -%}
           {%- if f.attempt is not none %}first written in attempt {{ f.attempt }}
           {%- else %}attempt not recorded{% endif -%}
+          {%- if f.touched_here %} · <b>changed here</b>{% endif -%}
         </span>
       </button>
       {% endfor %}

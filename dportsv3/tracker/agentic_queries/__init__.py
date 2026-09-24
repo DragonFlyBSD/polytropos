@@ -70,6 +70,7 @@ from dportsv3.tracker.agentic_queries.bundles import (
     list_bundles,
     get_bundle,
     get_artifact_ref,
+    worktree_versions,
     list_port_bundles,
     bundles_for_run,
 )
@@ -170,6 +171,7 @@ __all__ = [
     "list_bundles",
     "get_bundle",
     "get_artifact_ref",
+    "worktree_versions",
     "list_port_bundles",
     "bundles_for_run",
     "count_manual_requests",

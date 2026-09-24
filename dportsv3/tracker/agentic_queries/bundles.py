@@ -125,6 +125,45 @@ def get_artifact_ref(
     )
 
 
+def worktree_versions(
+    conn: sqlite3.Connection, bundle_id: str, job_id: str,
+) -> list[dict[str, Any]]:
+    """Every published working-tree snapshot for this job, oldest first.
+
+    One per attempt (poly-5tgc). Filtered by job id as well as bundle,
+    because a bundle holds the snapshots of every job that ran on it and a
+    retried bundle's sibling must not appear as this job's earlier attempt.
+
+    ``size`` 0 is meaningful and kept: an attempt that changed nothing
+    published an empty diff on purpose, and dropping it would read as "that
+    attempt does not exist". A version that is MISSING -- a publish that
+    could not look, or never landed -- is simply absent here, and the
+    caller shows the gap.
+    """
+    from dportsv3.common import artifacts  # noqa: PLC0415
+
+    rows = conn.execute(
+        """SELECT relpath, backend, sha256, fs_path, kind, size, created_at
+           FROM artifact_refs
+           WHERE bundle_id = ? AND relpath LIKE ?
+           ORDER BY relpath ASC""",
+        (bundle_id, f"{artifacts.WORKTREE_PREFIX}%"),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        ref = _row_dict(row)
+        attempt = artifacts.worktree_snapshot_attempt(
+            str(ref.get("relpath") or ""), job_id)
+        if attempt is None:
+            continue
+        ref["attempt"] = attempt
+        out.append(ref)
+    # Numerically, not by the LIKE's lexical order: attempt10 sorts before
+    # attempt2 as a string.
+    out.sort(key=lambda r: r["attempt"])
+    return out
+
+
 def list_port_bundles(
     conn: sqlite3.Connection,
     origin: str,

@@ -40,6 +40,7 @@ from dportsv3.tracker.agentic_queries import (
     get_active_env,
     get_runner_control,
     get_artifact_ref,
+    worktree_versions,
     get_bundle,
     open_delivery_bundle_ids,
     get_job,
@@ -221,63 +222,6 @@ def _confirm_for(conn: Any):
 
 #: How many lines of a running build the tool row shows. A screenful:
 #: the row is a status line with context, not a terminal.
-def _working_tree_for(conn, job, job_id, cards, artifact_root):
-    """The agent's changed files, from the artifacts the runner published.
-
-    READS, NEVER RUNS. The live overlay read this used to prefer went
-    through ``dev-env exec``, which requires root while the tracker is
-    unprivileged -- so it failed silently on every job -- and it would be
-    wrong anyway once the runner is remote (poly-paee).
-
-    Two artifacts, exact first: the per-job rescued diff, then the
-    canonical per-bundle one, which on a retried bundle may belong to a
-    SIBLING job. ``source`` says which, so the band can label it rather
-    than implying a precision it does not have.
-
-    Returns the tree, or ``{"empty": True, "pending": True}`` for a patch
-    job with neither artifact yet -- a running job, usually -- because an
-    absent band reads as "changed nothing" and that is not what it means.
-    """
-    raw = ""
-    source = None
-    if job.get("bundle_id"):
-        for relpath, label in (
-            (worktree_source.rescued_relpath(job_id), "rescued"),
-            (worktree_source.canonical_relpath(), "bundle"),
-        ):
-            ref = get_artifact_ref(conn, job["bundle_id"], relpath)
-            raw = worktree_source.from_artifacts(artifact_root, ref, relpath)
-            if raw:
-                source = label
-                break
-    if not raw:
-        # Only a patch job has a diff to wait for. Saying "nothing recorded
-        # yet" on a triage or verify job would be noise about work it never
-        # does.
-        if job.get("type") == "patch":
-            return {"empty": True, "pending": True, "files": [],
-                    "n_files": 0, "added": 0, "removed": 0}
-        return None
-
-    # The file a write tool is working on right now, so the list can mark
-    # it. Only the newest turn can hold a running call.
-    live_path = None
-    newest = next((c for c in cards if c.get("kind") == "turn"), None)
-    for tool in (newest or {}).get("tools") or []:
-        if tool.get("running") and tool.get("name") in WRITE_TOOLS:
-            args = tool.get("args") or {}
-            live_path = next(
-                (v for v in args.values() if isinstance(v, str)), None)
-            break
-
-    tree = render.working_tree(
-        raw, write_tool_calls(conn, job_id), live_path=live_path)
-    for entry in tree["files"]:
-        entry["html"] = render.render_diff(entry.pop("raw"))
-    tree["source"] = source
-    return tree
-
-
 def _query_for(base: dict[str, Any]):
     """A ``query_for(**overrides)`` for one request's templates.
 
@@ -1381,6 +1325,7 @@ def register(app, ctx):
         job_id: str,
         limit: int = 200,
         stage_filter: str | None = None,
+        attempt: int | None = Query(default=None, ge=1),
     ) -> Any:
         # 200, not the 500 this took before: the page shows the last five
         # turns and sends the rest to the transcript route, so fetching
@@ -1477,8 +1422,9 @@ def register(app, ctx):
             now = render.now_bar(
                 activity_cards, attempt_extra, decision_extra)
             tree = (
-                _working_tree_for(conn, job, job_id, activity_cards,
-                                  app.state.artifact_root)
+                worktree_source.working_tree_for(
+                    conn, job, job_id, activity_cards,
+                    app.state.artifact_root, want_attempt=attempt)
                 if job is not None else None
             )
             # Step 9: when a job ends in 'escalated', operators
@@ -1539,6 +1485,11 @@ def register(app, ctx):
                 "activity_cards": render.window_cards(activity_cards),
                 "strip": strip,
                 "tree": tree,
+                # The fragment renders this same partial without a request,
+                # so the link builder is passed in rather than derived.
+                "wt_link": (
+                    lambda n: str(request.url.include_query_params(attempt=n))
+                ),
                 "pending_notes": pending_notes,
                 # What a queued note is waiting for, by name: "dsynth_test
                 # still running" is the difference between a wait an

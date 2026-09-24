@@ -27,8 +27,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from dportsv3 import settings
+from dportsv3.common import artifacts as _artifacts
 
 from . import llm
+from .attempt_loop import _WRITE_TOOLS
 from .lifecycle import JobEvent
 from .step import Step, StepCtx, StepOutcome, StepReadiness
 
@@ -169,7 +171,36 @@ class PatchEventDispatcher:
     looks_env_suspicious: Callable[[dict], bool]
     invalidate_health_cache: Callable[..., None]
     summarize_tool_call: Callable[[str, dict, dict], str]
+    # Publish one working-tree snapshot for an attempt. Injected rather
+    # than imported, like every other callable here, because this class
+    # holds no bundle_id and no env and must stay unit-testable
+    # (poly-5tgc). None disables publishing entirely, which is what every
+    # existing test gets.
+    publish_worktree: Callable[[int], None] | None = None
     trace_events: list[dict] = field(default_factory=list)
+
+    def _publish_worktree(self, ev: dict) -> None:
+        """Snapshot the working tree for the attempt this event belongs to.
+
+        Three triggers, all of them events this dispatcher already sees:
+        attempt_start (the tree inherited from the previous attempt),
+        every write tool's result (so the page advances while the agent
+        works), and attempt_end (the attempt's final state).
+
+        Cheap to repeat: the snapshot upserts one relpath per attempt and
+        is content-addressed, so an edit that changed nothing costs a row
+        update. Read-only tools are excluded because the publish shells
+        git in-chroot, and greps outnumber edits five to one.
+        """
+        if self.publish_worktree is None:
+            return
+        attempt = ev.get("attempt")
+        if not isinstance(attempt, int):
+            return
+        try:
+            self.publish_worktree(attempt)
+        except Exception:
+            pass  # observability must never break the loop
 
     def __call__(self, ev: dict) -> None:
         self.trace_events.append(ev)
@@ -213,6 +244,7 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
+            self._publish_worktree(ev)
         elif et == "tool_start":
             # One row when the tool is DISPATCHED. Without it the page
             # cannot say what is running, and a 44-minute dsynth test is
@@ -271,6 +303,11 @@ class PatchEventDispatcher:
                 duration_ms=ev.get("duration_ms"),
                 extra=extra,
             )
+            # The trigger that makes the band advance while the agent works.
+            # Write tools only: the publish shells git in-chroot, and on one
+            # measured window greps and reads outnumbered edits five to one.
+            if ok and ev.get("tool") in _WRITE_TOOLS:
+                self._publish_worktree(ev)
         elif et == "attempt_end":
             self.activity_log(
                 self.queue_root, "attempt_end",
@@ -279,6 +316,7 @@ class PatchEventDispatcher:
                 job_id=self.job_id,
                 extra={k: v for k, v in ev.items() if k != "type"},
             )
+            self._publish_worktree(ev)
         elif et == "operator_note":
             # The note is part of why the job did what it did next, so it
             # lands in the activity log like any other event and stays
@@ -956,7 +994,7 @@ def _rescue_work_on_raise(
         written = services.write_changes_diff(
             ctx.bundle_dir, bundle_id, env, origin,
             only_if_nonempty=True,
-            extra_relpaths=(f"analysis/rescued/{ctx.job_id}.diff",),
+            extra_relpaths=(_artifacts.rescued_relpath(ctx.job_id),),
         )
     except Exception as exc:
         try:
@@ -1551,6 +1589,19 @@ class PatchAttemptStep:
             job_id=ctx.job_id, extra={"origin": origin},
         )
 
+        # One working-tree snapshot per attempt, re-published as the agent
+        # edits, so the job page can show what it changed while it is still
+        # working instead of only after the bundle is written (poly-5tgc).
+        # A closure because the dispatcher holds no bundle_id and no env,
+        # and because the tracker must never reach into the chroot to ask.
+        from dportsv3.agent.runner import (  # noqa: PLC0415
+            publish_worktree_snapshot as _publish_snapshot,
+        )
+        _wt_bundle_id = ctx.bundle_id or job.get("bundle_id")
+
+        def _publish_worktree(attempt: int) -> None:
+            _publish_snapshot(_wt_bundle_id, env, ctx.job_id, attempt)
+
         dispatcher = PatchEventDispatcher(
             queue_root=queue_root,
             job_id=ctx.job_id,
@@ -1559,6 +1610,7 @@ class PatchAttemptStep:
             looks_env_suspicious=services.looks_env_suspicious,
             invalidate_health_cache=services.invalidate_health_cache,
             summarize_tool_call=services.summarize_tool_call,
+            publish_worktree=_publish_worktree,
         )
 
         start = time.time()

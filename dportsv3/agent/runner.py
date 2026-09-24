@@ -63,6 +63,7 @@ from pathlib import Path
 # convention, but this one backs a module-level constant.
 from dportsv3 import paths
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
+from dportsv3.common import artifacts
 from dportsv3.common.endpoints import tracker_url
 from dportsv3.engine import emit
 
@@ -4237,6 +4238,88 @@ def _write_patch_audit_harness(
         )
 
 
+def _capture_branch_diff(env: str) -> bytes:
+    """The bundle branch's full diff vs the env's base branch, or raise.
+
+    Factored out of ``_write_changes_diff`` so a second caller can have the
+    same bytes under different failure semantics: that one tombstones or
+    raises depending on its mode, while the per-attempt snapshot publisher
+    must do neither (poly-5tgc).
+
+    RAISES RATHER THAN RETURNING EMPTY on a git failure, and that is the
+    whole point of the returncode check: an unreachable chroot or an
+    unresolvable base yields empty stdout, which every reader downstream
+    reads as "the agent changed nothing" -- the one answer we cannot tell
+    apart from a real loss.
+    """
+    from dportsv3.agent import worker  # type: ignore[import-not-found]
+    # Whole-tree (not ports/<origin>) so fixes that correctly land
+    # outside the bundle origin — e.g. a slave port whose patch lives
+    # in the master's PATCHDIR — are captured instead of vanishing.
+    rel = "."
+    base = worker._resolve_bundle_base_branch(env)
+    # Takes the env, not a host path: the diff runs in-chroot now, because
+    # a job's tree may be a linked worktree whose gitdir: pointer only
+    # resolves under the chroot's /work/... prefix.
+    p = worker._git_diff_against_base(env, base, rel)
+    if p.returncode != 0:
+        raise RuntimeError(
+            f"git diff exited {p.returncode}: "
+            f"{(p.stderr or '').strip()[:200]}"
+        )
+    return p.stdout.encode("utf-8")
+
+
+def publish_worktree_snapshot(
+    bundle_id: str | None, env: str | None, job_id: str, attempt: int,
+) -> bool:
+    """Publish one version of the agent's working tree for the job page.
+
+    The runner does this; the tracker only ever reads it. The tracker runs
+    unprivileged and has no chroot, and under poly-fij it may not even be
+    on this host, so a page that wanted a live diff got nothing at all
+    (poly-paee). This is the durable replacement, over the one
+    runner->tracker channel that survives the runner being remote.
+
+    THREE STATES, AND TWO OF THEM MUST NOT COLLAPSE:
+
+    * a genuinely EMPTY diff publishes 0 bytes, because "this attempt
+      changed nothing" is a finding -- especially on an attempt that then
+      failed -- and an absent version would read as "this attempt does not
+      exist";
+    * a capture that COULD NOT LOOK publishes nothing, so the page shows a
+      gap rather than asserting a clean tree;
+    * anything else publishes the snapshot.
+
+    Never raises, and never writes a tombstone body. A raise would let a
+    cosmetic feature break a patch attempt; a tombstone would render in the
+    band as though it were a diff.
+
+    Re-publishing the same attempt is the normal case -- it happens on
+    every edit -- and is cheap: put_blob upserts on (bundle_id, relpath)
+    and is content-addressed, so unchanged bytes cost a row update and no
+    new blob.
+    """
+    if not bundle_id or not env or not job_id:
+        return False
+    # Both halves are inside the guard. artifact_store_put already swallows
+    # its own transport errors, but the guarantee in this docstring has to
+    # hold whatever it does later -- a test that stubbed it to raise walked
+    # straight through a narrower version of this.
+    try:
+        diff_bytes = _capture_branch_diff(env)
+        return artifact_store_put(
+            bundle_id,
+            artifacts.worktree_snapshot_relpath(job_id, attempt),
+            diff_bytes,
+            "text",
+        )
+    except Exception:
+        # Deliberately silent: the caller is an event hook on the patch
+        # loop's hot path, and a log line per edit would be noise.
+        return False
+
+
 def _write_changes_diff(
     bundle_dir: Path | None,
     bundle_id: str | None,
@@ -4284,26 +4367,7 @@ def _write_changes_diff(
     Returns the number of bytes persisted; 0 when nothing was written.
     """
     try:
-        from dportsv3.agent import worker  # type: ignore[import-not-found]
-        # Whole-tree (not ports/<origin>) so fixes that correctly land
-        # outside the bundle origin — e.g. a slave port whose patch lives
-        # in the master's PATCHDIR — are captured instead of vanishing.
-        rel = "."
-        base = worker._resolve_bundle_base_branch(env)
-        # Takes the env, not a host path: the diff runs in-chroot now, because
-        # a job's tree may be a linked worktree whose gitdir: pointer only
-        # resolves under the chroot's /work/... prefix.
-        p = worker._git_diff_against_base(env, base, rel)
-        if p.returncode != 0:
-            # Without this an unreachable chroot or an unresolvable base
-            # yields empty stdout, which every reader downstream reads as
-            # "the agent changed nothing" — the one answer we cannot
-            # tell apart from a real loss.
-            raise RuntimeError(
-                f"git diff exited {p.returncode}: "
-                f"{(p.stderr or '').strip()[:200]}"
-            )
-        diff_bytes = p.stdout.encode("utf-8")
+        diff_bytes = _capture_branch_diff(env)
     except Exception as exc:
         if only_if_nonempty:
             # The caller is salvaging work off a tree that is about to be

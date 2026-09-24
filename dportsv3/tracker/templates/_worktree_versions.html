@@ -1,0 +1,31 @@
+{# The version selector (poly-5tgc UI 1, 2, 5).
+
+   One pill per PUBLISHED attempt. The newest is the default and stays the
+   default as attempts arrive; ?attempt=N pins one instead, which is also
+   what makes a version linkable into a bead or a handoff (UI 8).
+
+   wt_link is supplied by whichever renderer is running: the page derives it
+   from the request so limit and stage_filter survive a click, while the live
+   fragment has no request and emits a bare "?attempt=N".
+
+   An empty version is listed, because "this attempt changed nothing" is a
+   finding. A MISSING one is listed as a gap rather than renumbering the
+   ones around it -- publishing is best-effort, so a hole means the runner
+   could not look or the POST never landed, not that the attempt is absent.
+#}
+{% if tree.versions and tree.versions | length > 0 %}
+<div class="wt-versions" role="tablist" aria-label="Working tree versions">
+  <span class="wt-vlabel">Version</span>
+  {% for v in tree.versions %}
+  <a class="wt-v{{ ' on' if v.selected else '' }}" role="tab"
+     aria-selected="{{ 'true' if v.selected else 'false' }}"
+     href="{{ wt_link(v.attempt) }}"
+     title="attempt {{ v.attempt }}{% if v.created_at %} · {{ v.created_at }}{% endif %}{% if v.empty %} · changed nothing{% endif %}">
+    A{{ v.attempt }}{% if v.empty %}<span class="wt-vnil">∅</span>{% endif %}
+  </a>
+  {% endfor %}
+  {% for n in tree.gaps %}
+  <span class="wt-v gap" title="attempt {{ n }} published no snapshot: the runner could not read the tree, or the upload did not land">A{{ n }}</span>
+  {% endfor %}
+</div>
+{% endif %}

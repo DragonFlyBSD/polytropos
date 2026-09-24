@@ -116,6 +116,39 @@ def attribute_files(
                 break
 
 
+def attribute_across_snapshots(
+    snapshots: list[tuple[int, str]],
+) -> dict[str, dict[str, int]]:
+    """``{path: {first, last_changed}}`` from per-attempt snapshots.
+
+    EXACT, WHERE ``attribute_files`` GUESSES. That one infers the attempt
+    from write-tool arguments on activity rows -- first-write-wins on a
+    path the model chose the spelling of -- and prints "attempt not
+    recorded" when it cannot tell. It also reads rows the activity cap
+    evicts, so it degrades to nothing on an older job.
+
+    The snapshots are cumulative (the overlay accumulates across attempts;
+    reset_attempt_workspace clears only scratch), so a path's first
+    appearance IS the attempt that created it, and a change in its diff
+    body between consecutive snapshots IS an edit by the later attempt.
+
+    ``snapshots`` is ``[(attempt, raw diff)]`` oldest first; gaps are fine,
+    since a missing attempt simply attributes its work to the next one that
+    published -- which is honest, and the band shows the gap separately.
+    """
+    seen: dict[str, dict[str, int]] = {}
+    previous: dict[str, str] = {}
+    for attempt, raw in snapshots:
+        current = {f["path"]: f["raw"] for f in parse_diff_files(raw)}
+        for path, body in current.items():
+            if path not in seen:
+                seen[path] = {"first": attempt, "last_changed": attempt}
+            elif previous.get(path) != body:
+                seen[path]["last_changed"] = attempt
+        previous = current
+    return seen
+
+
 def working_tree(
     raw: str,
     write_calls: list[dict[str, Any]] | None = None,

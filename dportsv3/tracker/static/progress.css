@@ -910,6 +910,49 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
 /* The rolling cap ate this job's history (poly-a162). Stated, not
    implied: an absent section reads as "nothing happened", which is the
    one thing it does not mean. */
+/* Version selector for the working tree (poly-5tgc). */
+.wt-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wt-vlabel {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wt-v {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.wt-v.on {
+  color: var(--text);
+  border-color: var(--cyan-line);
+  background: var(--surface-3);
+  font-weight: 600;
+}
+
+.wt-v.gap {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.wt-vnil { margin-left: 3px; opacity: 0.7; }
+
+.wt-historical { color: var(--amber); }
+
 .wt-pending {
   margin: 0;
   padding: 10px 12px;

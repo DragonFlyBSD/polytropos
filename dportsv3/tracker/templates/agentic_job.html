@@ -159,7 +159,9 @@
 
     {% include "_job_activity.html" %}
 
-    {% include "_worktree.html" %}
+    {# Slot, like the bar's and the strip's: the band inside is replaced on
+       a poll that carried new rows, so it advances while the agent edits. #}
+    <div id="worktree-slot">{% include "_worktree.html" %}</div>
 
     {% include "_note_composer.html" %}
 
