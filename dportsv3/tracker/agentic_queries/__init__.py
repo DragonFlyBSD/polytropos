@@ -44,6 +44,7 @@ from dportsv3.tracker.agentic_queries.chat import (
 from dportsv3.tracker.agentic_queries.env import (
     get_active_env,
     set_active_env,
+    builder_env_selections,
     env_health_statuses,
     get_runner_control,
     set_runner_pause,
@@ -151,6 +152,7 @@ __all__ = [
     "events_since",
     "get_active_env",
     "set_active_env",
+    "builder_env_selections",
     "env_health_statuses",
     "get_runner_control", "set_runner_pause",
     "list_chat_turns", "append_chat_turn", "clear_chat_turns",

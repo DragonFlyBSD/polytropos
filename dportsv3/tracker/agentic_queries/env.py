@@ -15,13 +15,33 @@ from dportsv3.tracker.agentic_queries._util import (
 )
 
 
-def get_active_env(conn: sqlite3.Connection) -> str | None:
-    """Return the operator-selected active dev-env, or None if unset.
+def get_active_env(
+    conn: sqlite3.Connection, runner_id: str | None = None
+) -> str | None:
+    """The active dev-env for this builder, or the deployment default.
 
-    Singleton row in ``tracker_active_env``. Source of truth for the
-    runner's per-job-dispatch env resolution (precedence step 2) and
-    for the verify-fix CLI's fallback when ``--env`` is omitted.
+    Source of truth for the runner's per-job-dispatch env resolution
+    (precedence step 2) and for the verify-fix CLI's fallback when
+    ``--env`` is omitted.
+
+    TWO LEVELS, because a dev-env belongs to a host. ``tracker_active_env``
+    is a singleton by CHECK constraint and stays the operator's
+    DEPLOYMENT DEFAULT; a builder that has picked its own overrides it via
+    ``runners.active_env``. A builder has the envs it has, and one global
+    answer is wrong for every builder that lacks that env (poly-fij.13).
+
+    ``runner_id`` omitted returns the default, which is what every caller
+    got before there was anything else -- so a single-builder install
+    behaves exactly as it did.
     """
+    if runner_id:
+        row = conn.execute(
+            "SELECT active_env FROM runners WHERE runner_id = ?", (runner_id,)
+        ).fetchone()
+        if row is not None:
+            val = row["active_env"]
+            if isinstance(val, str) and val:
+                return val
     row = conn.execute(
         "SELECT env_name FROM tracker_active_env WHERE singleton = 1"
     ).fetchone()
@@ -31,8 +51,17 @@ def get_active_env(conn: sqlite3.Connection) -> str | None:
     return val if isinstance(val, str) and val else None
 
 
-def set_active_env(conn: sqlite3.Connection, env_name: str | None) -> None:
-    """Upsert the active dev-env. ``None`` clears it.
+def set_active_env(
+    conn: sqlite3.Connection,
+    env_name: str | None,
+    runner_id: str | None = None,
+) -> None:
+    """Upsert an active dev-env. ``None`` clears it.
+
+    With ``runner_id`` this sets that builder's own choice; without one it
+    sets the deployment default every builder falls back to (poly-fij.13).
+    Clearing a builder's choice returns it to the default rather than
+    leaving it with none.
 
     No server-side validation against the envs that actually exist —
     the runner / CLI surface a clear error on use if the name doesn't
@@ -41,6 +70,16 @@ def set_active_env(conn: sqlite3.Connection, env_name: str | None) -> None:
     """
     from datetime import datetime, timezone  # noqa: PLC0415
     now = datetime.now(timezone.utc).isoformat()
+    if runner_id:
+        # UPDATE, not upsert: a runner row is created by enrollment and the
+        # heartbeat, and inventing one here would put a builder in the table
+        # that has never reported for duty.
+        conn.execute(
+            "UPDATE runners SET active_env = ? WHERE runner_id = ?",
+            (env_name, runner_id),
+        )
+        conn.commit()
+        return
     conn.execute(
         """INSERT INTO tracker_active_env (singleton, env_name, set_at)
            VALUES (1, ?, ?)
@@ -52,13 +91,49 @@ def set_active_env(conn: sqlite3.Connection, env_name: str | None) -> None:
     conn.commit()
 
 
-def env_health_statuses(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Latest persisted health probe per dev-env."""
+def builder_env_selections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every enrolled builder and the env it has chosen, if any.
+
+    ``active_env`` NULL means the builder follows the deployment default, so
+    the UI can show "default" rather than a blank (poly-fij.13). Ordered by
+    liveness, newest first, because a restarted runner leaves its old rows
+    behind -- runner_id is regenerated every process start until poly-fij.3
+    persists it, so the top row is the one that is actually running.
+    """
     rows = conn.execute(
-        """SELECT env, status, probed_at, operator_action, detail_json, updated_at
-           FROM env_health_status
-           ORDER BY env ASC"""
+        """SELECT runner_id, hostname, active_env, last_heartbeat_at,
+                  stopped_at
+             FROM runners
+            ORDER BY last_heartbeat_at DESC"""
     ).fetchall()
+    return [_row_dict(r) for r in rows]
+
+
+def env_health_statuses(
+    conn: sqlite3.Connection, runner_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Latest persisted health probe per (builder, dev-env).
+
+    Also the operator's list of which envs EXIST: the runner stubs a row per
+    env on disk at start, because this is where the UI sources its env list
+    from (runner.stub_unprobed_envs). So with N builders these rows are the
+    inventory of who has what, and the runner_id is what makes that legible
+    rather than a union of names (poly-fij.13).
+
+    ``runner_id`` filters to one builder. Omitted, every row comes back,
+    ordered by builder then env so a grouped render needs no second sort.
+    ``runner_id`` of '' means unattributed -- a row that predates the host
+    dimension.
+    """
+    sql = """SELECT runner_id, env, status, probed_at, operator_action,
+                    detail_json, updated_at
+               FROM env_health_status"""
+    params: tuple[Any, ...] = ()
+    if runner_id is not None:
+        sql += " WHERE runner_id = ?"
+        params = (runner_id,)
+    sql += " ORDER BY runner_id ASC, env ASC"
+    rows = conn.execute(sql, params).fetchall()
     items: list[dict[str, Any]] = []
     for row in rows:
         item = _row_dict(row)

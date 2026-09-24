@@ -251,16 +251,29 @@ CREATE TABLE IF NOT EXISTS runners (
     pid INTEGER,
     started_at TEXT,
     last_heartbeat_at TEXT,
-    stopped_at TEXT
+    stopped_at TEXT,
+    -- This builder's own active env, overriding tracker_active_env's
+    -- deployment default when set. NULL means "use the default", which is
+    -- every row until an operator picks per builder (poly-fij.13).
+    active_env TEXT
 );
 
+-- Health, and also the operator's list of which envs EXIST: the runner stubs
+-- a row per env on disk at start (runner.stub_unprobed_envs), because the UI
+-- sources its env list from here. Keyed by runner as well as env: a dev-env
+-- called 2026Q3 on one builder is not the one on another, and keyed by name
+-- alone two builders overwrite each other's probes on every cycle -- silently,
+-- which is worse than the active-env singleton next door (poly-fij.13).
+-- runner_id '' means unattributed: a row that predates the host dimension.
 CREATE TABLE IF NOT EXISTS env_health_status (
-    env TEXT PRIMARY KEY,
+    runner_id TEXT NOT NULL DEFAULT '',
+    env TEXT NOT NULL,
     status TEXT NOT NULL,
     probed_at TEXT,
     operator_action TEXT,
     detail_json TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (runner_id, env)
 );
 
 CREATE TABLE IF NOT EXISTS user_context (
@@ -583,6 +596,10 @@ MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE bundles ADD COLUMN verification_exit_code INTEGER",
     "ALTER TABLE bundles ADD COLUMN verification_reason TEXT",
     "ALTER TABLE bundles ADD COLUMN issue_key TEXT",
+    # A builder's own active env, overriding tracker_active_env's
+    # deployment-wide default when set. NULL means "use the default", which
+    # is every row until an operator picks per builder (poly-fij.13).
+    "ALTER TABLE runners ADD COLUMN active_env TEXT",
 )
 
 # One-shot data repair for a state.db written before C3 removed `regressed`
@@ -617,6 +634,52 @@ _RETIRE_STORED_REGRESSED: tuple[str, ...] = (
 _DROP_DEAD_TABLES: tuple[str, ...] = (
     "DROP TABLE IF EXISTS artifacts",
 )
+
+
+def _add_env_health_runner_dimension(conn: sqlite3.Connection) -> bool:
+    """Give an existing ``env_health_status`` its ``runner_id`` (poly-fij.13).
+
+    A rebuild, not an ALTER: the fix is to the PRIMARY KEY, which sqlite
+    cannot alter in place. Not in MIGRATIONS either -- that tuple is the
+    tolerant ADD COLUMN path, and a multi-statement rebuild whose failure is
+    swallowed halfway is exactly what must not happen to a table an operator
+    reads env health from.
+
+    Idempotent by inspection rather than by IF NOT EXISTS: it checks for the
+    column and returns early, so a second init_db is a no-op.
+
+    EXISTING ROWS ARE DISCARDED, deliberately. Nothing recorded which builder
+    probed them, and inventing an attribution would be a lie -- but keeping
+    them as runner_id '' is worse than it looks: a runner stamping its real id
+    would not match them, so every env would carry a permanent unattributable
+    ghost alongside its real row, forever.
+
+    Safe because every column here is a PROBE CACHE, not a record. status,
+    probed_at, operator_action and detail_json all come from the health probe
+    (runner.py: getattr(env_health, ...)); there is no operator input in the
+    table. The runner stubs a row per env at start and re-probes on its cycle,
+    so the cost is one cycle of "unprobed" and the gain is no orphans.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(env_health_status)")}
+    if not cols or "runner_id" in cols:
+        return False
+    conn.executescript(
+        """
+        CREATE TABLE env_health_status_new (
+            runner_id TEXT NOT NULL DEFAULT '',
+            env TEXT NOT NULL,
+            status TEXT NOT NULL,
+            probed_at TEXT,
+            operator_action TEXT,
+            detail_json TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (runner_id, env)
+        );
+        DROP TABLE env_health_status;
+        ALTER TABLE env_health_status_new RENAME TO env_health_status;
+        """
+    )
+    return True
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -654,4 +717,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute(stmt)
     for stmt in _DROP_DEAD_TABLES:
         conn.execute(stmt)
+    # After SCHEMA: on a fresh DB the CREATE above already has the column and
+    # this returns early; on an existing one SCHEMA's IF NOT EXISTS left the
+    # old table alone and this converts it.
+    _add_env_health_runner_dimension(conn)
     conn.commit()

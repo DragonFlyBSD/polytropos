@@ -369,7 +369,7 @@ def test_api_active_env_initially_null(client: TestClient) -> None:
 def test_api_active_env_set_and_read(client: TestClient) -> None:
     put = client.put("/api/config/active-env", json={"name": "2026Q2"})
     assert put.status_code == 200
-    assert put.json() == {"name": "2026Q2"}
+    assert put.json() == {"name": "2026Q2", "runner_id": None}
 
     get = client.get("/api/config/active-env")
     assert get.json() == {"name": "2026Q2"}
@@ -378,14 +378,14 @@ def test_api_active_env_set_and_read(client: TestClient) -> None:
 def test_api_active_env_clear_with_null(client: TestClient) -> None:
     client.put("/api/config/active-env", json={"name": "2026Q2"})
     cleared = client.put("/api/config/active-env", json={"name": None})
-    assert cleared.json() == {"name": None}
+    assert cleared.json() == {"name": None, "runner_id": None}
     assert client.get("/api/config/active-env").json() == {"name": None}
 
 
 def test_api_active_env_empty_string_clears(client: TestClient) -> None:
     client.put("/api/config/active-env", json={"name": "2026Q2"})
     cleared = client.put("/api/config/active-env", json={"name": "   "})
-    assert cleared.json() == {"name": None}
+    assert cleared.json() == {"name": None, "runner_id": None}
 
 
 def test_api_active_env_rejects_non_string(client: TestClient) -> None:

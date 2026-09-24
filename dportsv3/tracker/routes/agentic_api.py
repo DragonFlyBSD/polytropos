@@ -290,9 +290,19 @@ def register(app, ctx):
         # Empty string normalizes to None (clear).
         if isinstance(name, str) and not name.strip():
             name = None
+        # With a runner_id this sets that BUILDER's env; without one it sets
+        # the deployment default every builder falls back to. A dev-env
+        # belongs to a host, so one global answer is wrong for every builder
+        # that does not have it (poly-fij.13).
+        runner = payload.get("runner_id")
+        if runner is not None and not isinstance(runner, str):
+            raise HTTPException(
+                status_code=400, detail="runner_id must be a string or null")
+        runner = runner.strip() if isinstance(runner, str) else None
         with _conn() as conn:
-            set_active_env(conn, name)
-            return {"name": get_active_env(conn)}
+            set_active_env(conn, name, runner_id=runner or None)
+            return {"name": get_active_env(conn, runner or None),
+                    "runner_id": runner or None}
 
     @app.get("/api/runs")
     def api_runs(

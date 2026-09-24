@@ -380,11 +380,11 @@ def stub_unprobed_envs() -> int:
                 # degraded / broken) must not be overwritten by stubs.
                 cur = _state_db_conn.execute(
                     """INSERT OR IGNORE INTO env_health_status
-                       (env, status, probed_at, operator_action,
+                       (runner_id, env, status, probed_at, operator_action,
                         detail_json, updated_at)
-                       VALUES (?, 'unprobed', NULL, NULL,
+                       VALUES (?, ?, 'unprobed', NULL, NULL,
                                '{"checks":[]}', ?)""",
-                    (env, ts),
+                    (runner_id(), env, ts),
                 )
                 if cur.rowcount:
                     inserted += 1
@@ -411,17 +411,22 @@ def record_env_health(env_health) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     try:
         with _state_db_lock:
+            # ON CONFLICT on (runner_id, env), not (env): keyed by name alone
+            # two builders carrying the same env overwrote each other's probe
+            # on every cycle, silently (poly-fij.13).
             _state_db_conn.execute(
                 """INSERT INTO env_health_status
-                   (env, status, probed_at, operator_action, detail_json, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(env) DO UPDATE SET
+                   (runner_id, env, status, probed_at, operator_action,
+                    detail_json, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(runner_id, env) DO UPDATE SET
                      status=excluded.status,
                      probed_at=excluded.probed_at,
                      operator_action=excluded.operator_action,
                      detail_json=excluded.detail_json,
                      updated_at=excluded.updated_at""",
-                (env, status, probed_at, operator_action, json.dumps(detail), ts),
+                (runner_id(), env, status, probed_at, operator_action,
+                 json.dumps(detail), ts),
             )
             _state_db_conn.commit()
     except Exception as exc:

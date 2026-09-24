@@ -96,31 +96,75 @@
        a broken env; this is which env, and whether it is broken. #}
     <h2 id="env-health" style="margin-top:30px;">Environment health</h2>
     <div class="env-active-banner">
-      Active env (runner default + verify-fix fallback):
-      <strong>{{ active_env or 'none — runner will auto-pick if exactly one env exists' }}</strong>
+      Default env (verify-fix fallback, and any builder that has not chosen):
+      <strong>{{ active_env or 'none — a runner will auto-pick if exactly one env exists' }}</strong>
       {% if active_env %}
-        <button type="button" class="btn btn-ghost btn-sm env-set-btn" data-env="" title="Clear the active env">clear</button>
+        <button type="button" class="btn btn-ghost btn-sm env-set-btn" data-env="" title="Clear the default env">clear</button>
       {% endif %}
       <div style="color:var(--text-dim);font-size:12px;margin-top:4px;">
         Name is not validated when set — a typo only surfaces when
         the runner or verify-fix tries to use it.
       </div>
     </div>
+    {# A dev-env belongs to a HOST: 2026Q3 on one builder is not the one on
+       another, and a builder can only run what it has. So the default above
+       is a fallback and each builder may override it (poly-fij.13). Absent
+       until a second builder exists, because with one there is nothing to
+       distinguish. #}
+    {% if builders and builders | length > 1 %}
+    <div class="wl-tablecard" style="margin-top:12px;">
+    <div class="table-scroll-x">
+    <table class="tracker-table">
+      <thead><tr><th scope="col">Builder</th><th scope="col">Env in use</th><th scope="col">Last heartbeat</th></tr></thead>
+      <tbody>
+        {% for b in builders %}
+        <tr>
+          <td title="{{ b.runner_id }}">{{ b.hostname or b.runner_id }}</td>
+          <td>
+            {% if b.active_env %}<strong>{{ b.active_env }}</strong>
+              <button type="button" class="btn btn-ghost btn-sm env-set-btn"
+                      data-env="" data-runner="{{ b.runner_id }}"
+                      title="Return this builder to the default">use default</button>
+            {% else %}
+              <span class="muted">default{% if active_env %} ({{ active_env }}){% endif %}</span>
+            {% endif %}
+          </td>
+          <td>{{ b.last_heartbeat_at or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    </div>
+    {% endif %}
     {% if env_health %}
     <div class="wl-tablecard">
     <div class="table-scroll-x">
     <table class="tracker-table">
-      <thead><tr><th scope="col">Active</th><th scope="col">Env</th><th scope="col">Status</th><th scope="col">Probed</th><th scope="col">Operator action</th><th scope="col">Checks</th></tr></thead>
+      {% set show_builder = builders and builders | length > 1 %}
+      <thead><tr><th scope="col">Active</th>{% if show_builder %}<th scope="col">Builder</th>{% endif %}<th scope="col">Env</th><th scope="col">Status</th><th scope="col">Probed</th><th scope="col">Operator action</th><th scope="col">Checks</th></tr></thead>
       <tbody>
+        {# Rows are per (builder, env) since poly-fij.13. Keyed by env alone
+           two builders carrying the same name overwrote each other's probes,
+           so a green env could have been probed on another machine. #}
         {% for h in env_health %}
-        <tr {% if h.env == active_env %}class="env-row-active"{% endif %}>
+        {% set row_active = builder_env.get(h.runner_id, active_env) %}
+        <tr {% if h.env == row_active %}class="env-row-active"{% endif %}>
           <td>
-            {% if h.env == active_env %}
-              <span class="stat-pill built" title="This env is the runner default">active</span>
+            {% if h.env == row_active %}
+              <span class="stat-pill built" title="The env this builder is using">active</span>
             {% else %}
-              <button type="button" class="btn btn-ghost btn-sm env-set-btn" data-env="{{ h.env }}" title="Make {{ h.env }} the active env">set</button>
+              <button type="button" class="btn btn-ghost btn-sm env-set-btn"
+                      data-env="{{ h.env }}" data-runner="{{ h.runner_id }}"
+                      title="Make {{ h.env }} the env this builder uses">set</button>
             {% endif %}
           </td>
+          {% if show_builder %}
+          <td>
+            {%- if h.runner_id %}<span title="{{ h.runner_id }}">{{ builder_host.get(h.runner_id, h.runner_id) }}</span>
+            {%- else %}<span class="muted" title="Probed before env health recorded which builder it came from">unattributed</span>{% endif -%}
+          </td>
+          {% endif %}
           <td>{{ h.env }}</td>
           <td>
             {% set cls = {'ready':'built','degraded':'skipped','broken':'failed'}.get(h.status,'total') %}
@@ -184,10 +228,13 @@
     document.querySelectorAll('.env-set-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var name = btn.dataset.env || null;
+        // With a builder this sets that builder's env; without one it sets
+        // the deployment default (poly-fij.13).
+        var runner = btn.dataset.runner || null;
         fetch('/api/config/active-env', {
           method: 'PUT',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: name}),
+          body: JSON.stringify({name: name, runner_id: runner}),
         }).then(function (r) {
           if (r.ok) { window.location.reload(); }
           else { alert('Failed to set active env: HTTP ' + r.status); }

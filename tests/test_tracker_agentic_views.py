@@ -1537,8 +1537,10 @@ def test_view_runner_renders_active_env_banner_unset(client: TestClient) -> None
     resp = client.get("/agentic/runner")
     assert resp.status_code == 200
     body = resp.text
-    # Banner shows the "none" message when unset.
-    assert "Active env" in body
+    # Banner shows the "none" message when unset. Reads "Default env" since
+    # poly-fij.13: it is the fallback for a builder that has not chosen, not
+    # the one answer for the deployment.
+    assert "Default env" in body
     assert "none" in body
     # Per-row "set" button is present for the seeded env.
     assert 'data-env="test-env"' in body

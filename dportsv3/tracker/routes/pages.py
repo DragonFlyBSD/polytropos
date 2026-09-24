@@ -36,6 +36,7 @@ from dportsv3.tracker.agentic_queries import (
     bundles_for_run,
     discard_manual_request,
     distinct_targets,
+    builder_env_selections,
     env_health_statuses,
     get_active_env,
     get_runner_control,
@@ -1102,11 +1103,17 @@ def register(app, ctx):
         verify_default_env: str | None = None
         if acts["can_verify"]:
             with _conn() as _envs_conn:
-                verify_envs = [
+                # DISTINCT names, order preserved: health rows are per
+                # (builder, env) since poly-fij.13, so two builders carrying
+                # 2026Q3 produce two rows and this picker would list it
+                # twice. verify-fix is a CLI the operator runs on some host,
+                # and the tracker cannot know which -- so the union of names
+                # is the right set here, not one builder's.
+                verify_envs = list(dict.fromkeys(
                     str(r.get("env"))
                     for r in env_health_statuses(_envs_conn)
                     if r.get("env")
-                ]
+                ))
                 verify_default_env = get_active_env(_envs_conn)
             if (
                 verify_default_env is not None
@@ -1590,6 +1597,8 @@ def register(app, ctx):
     @app.get("/agentic/runner", response_class=HTMLResponse)
     def agentic_runner(request: RequestType) -> Any:
         with _conn() as conn:
+            _default_env = get_active_env(conn)
+            _builders = builder_env_selections(conn)
             return templates.TemplateResponse(
                 request,
                 "agentic_runner.html",
@@ -1605,7 +1614,22 @@ def register(app, ctx):
                     # page already explains that the runner pauses itself on
                     # a broken env; that is the same subject (poly-x3pg.7).
                     "env_health": env_health_statuses(conn),
-                    "active_env": get_active_env(conn),
+                    # The DEPLOYMENT DEFAULT. A builder that has picked its
+                    # own overrides it, which is what `builders` carries: a
+                    # dev-env belongs to a host, and 2026Q3 on one builder is
+                    # not the one on another (poly-fij.13).
+                    "active_env": _default_env,
+                    "builders": _builders,
+                    # Lookups the health table needs per row: which env each
+                    # builder is using, and a readable name for it.
+                    "builder_env": {
+                        b["runner_id"]: b.get("active_env") or _default_env
+                        for b in _builders
+                    },
+                    "builder_host": {
+                        b["runner_id"]: b.get("hostname") or b["runner_id"]
+                        for b in _builders
+                    },
                     # The operator's own hold, which is not the same thing
                     # as the three the runner puts on itself (poly-0w6j).
                     "control": get_runner_control(conn),

@@ -135,7 +135,11 @@ def resolve_env_for_job(
             from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
                 get_active_env,
             )
-            active = get_active_env(db_conn)
+            # This builder's own choice first, the deployment default
+            # behind it. Without the runner_id a per-builder selection could
+            # never take effect (poly-fij.13).
+            from dportsv3.agent.runner import runner_id  # noqa: PLC0415
+            active = get_active_env(db_conn, runner_id())
             if active:
                 return EnvResolution(env=active, source="tracker")
         except Exception as exc:

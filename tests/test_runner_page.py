@@ -134,8 +134,14 @@ def test_the_page_shows_one_runner(live: TestClient) -> None:
     body = live.get("/agentic/runner").text
 
     assert "single agent queue runner" in _flat(body)
-    assert "runner_id" not in body
     assert "hostname" not in body
+    # The host dimension exists in the data now (poly-fij.13), but nothing
+    # about it renders until there are two builders to tell apart: no Builder
+    # column on the health table, no per-builder env table. Asserted on the
+    # rendered UI rather than on the string "runner_id", which now appears in
+    # the page's own script as a request payload key.
+    assert "<th scope=\"col\">Builder</th>" not in body
+    assert "Env in use" not in body
 
 
 # --- the heartbeat qualifies the status -----------------------------------

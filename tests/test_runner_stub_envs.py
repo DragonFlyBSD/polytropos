@@ -49,11 +49,15 @@ def test_stub_does_not_overwrite_real_probe(in_memory_db, monkeypatch):
     """A real probe row (status=ready/degraded/broken) must survive
     a subsequent stub run — INSERT OR IGNORE is load-bearing."""
     now = datetime.now(timezone.utc).isoformat()
+    # Stamped with this runner's id: keyed by (runner_id, env) since
+    # poly-fij.13, so a row belonging to nobody would not be recognised as
+    # this builder's already-probed env.
     in_memory_db.execute(
         """INSERT INTO env_health_status
-           (env, status, probed_at, operator_action, detail_json, updated_at)
-           VALUES (?, 'ready', ?, NULL, '{"checks":[]}', ?)""",
-        ("alpha", now, now),
+           (runner_id, env, status, probed_at, operator_action, detail_json,
+            updated_at)
+           VALUES (?, ?, 'ready', ?, NULL, '{"checks":[]}', ?)""",
+        (runner.runner_id(), "alpha", now, now),
     )
     in_memory_db.commit()
 
