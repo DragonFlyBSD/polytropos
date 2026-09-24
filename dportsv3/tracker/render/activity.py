@@ -429,6 +429,12 @@ def running_tailable_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
     Only the newest turn can hold a running call -- the loop dispatches
     serially -- and only dsynth takes long enough for a tail to mean
     anything.
+
+    NO PRODUCER TODAY. The tracker used to read the build log itself, which
+    needed a root-only `dev-env path` while it runs unprivileged, so it
+    never worked and was removed (poly-paee). This and ``attach_tool_tail``
+    are the consumer side, kept because any publisher would feed exactly
+    them; poly-pvs2 decides whether one arrives or the feature goes.
     """
     newest = next((c for c in cards if c.get("kind") == "turn"), None)
     for tool in (newest or {}).get("tools") or []:
@@ -441,6 +447,8 @@ def attach_tool_tail(
     cards: list[dict[str, Any]], tail: dict[str, Any] | None,
 ) -> None:
     """Hang a build's last lines on the tool row that is producing them.
+
+    Has no caller in production -- see ``running_tailable_tool``.
 
     In the row, not in a pane: a tail only exists while one tool runs,
     and when the tool finishes the row collapses to its duration and rc

@@ -8,6 +8,8 @@ their arguments since poly-qqx9.13.
 
 from __future__ import annotations
 
+import pathlib
+
 from dportsv3.tracker.render import working_tree
 from dportsv3.tracker.render.worktree import parse_diff_files
 
@@ -225,31 +227,96 @@ def test_the_job_links_through_to_its_occurrence(tmp_path):
     assert "/agentic/bundles/b7" in body
 
 
-def test_a_live_read_that_is_not_a_diff_falls_through(monkeypatch):
-    """An ok result whose body is not a diff must not count as "the live
-    read worked" — the rescued artifact behind it would never be reached
-    and the band would be empty on a job that had changes recorded."""
+def test_the_tracker_no_longer_reaches_into_a_build_env(monkeypatch):
+    """It must not run anything: `dev-env path` and `dev-env exec` both
+    require root while the tracker is unprivileged, so the live read failed
+    silently on every job -- and it would be wrong anyway once the runner is
+    remote (poly-paee). The reader is gone, not repaired."""
     from dportsv3.tracker import worktree_source  # noqa: PLC0415
-    from dportsv3.agent import worker  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        worker, "emit_diff",
-        lambda *a, **k: {"ok": True, "diff": "/some/env/path\n"})
-    assert worktree_source.from_workspace("e", "devel/foo") == ""
-
-    monkeypatch.setattr(
-        worker, "emit_diff", lambda *a, **k: {"ok": True, "diff": DIFF})
-    assert worktree_source.from_workspace("e", "devel/foo") == DIFF
+    assert not hasattr(worktree_source, "from_workspace")
+    src = pathlib.Path(worktree_source.__file__).read_text()
+    assert "agent import worker" not in src
+    assert "subprocess" not in src
 
 
-def test_a_workspace_that_cannot_be_read_is_not_an_error(monkeypatch):
-    """The env can be gone, and under poly-fij the runner is on another
-    host. A page that cannot show a diff shows no band."""
-    from dportsv3.tracker import worktree_source  # noqa: PLC0415
-    from dportsv3.agent import worker  # noqa: PLC0415
+def test_the_canonical_diff_is_read_when_no_rescued_one_exists(tmp_path):
+    """The rescue path only runs when the harness RAISES: 4 bundles on a
+    live builder against 289 carrying analysis/changes.diff. Preferring the
+    exact artifact and rendering nothing cost the band 98% of its jobs."""
+    import sqlite3  # noqa: PLC0415
 
-    def boom(*a, **k):
-        raise RuntimeError("dev-env path failed")
+    import pytest  # noqa: PLC0415
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    monkeypatch.setattr(worker, "emit_diff", boom)
-    assert worktree_source.from_workspace("e", "devel/foo") == ""
+    from dportsv3.db.schema import init_db  # noqa: PLC0415
+    from dportsv3.tracker.server import create_app  # noqa: PLC0415
+
+    blob = tmp_path / "changes.diff"
+    blob.write_text(DIFF)
+    db = tmp_path / "state.db"
+    c = sqlite3.connect(str(db)); c.row_factory = sqlite3.Row; init_db(c)
+    now = "2026-09-23T10:00:00+00:00"
+    c.execute(
+        "INSERT INTO bundles (bundle_id, run_id, origin, flavor, ts_utc, "
+        "result, path, last_seen_at, target) VALUES "
+        "('b1','r1','devel/foo','',?, 'failed','/p',?, '@2026Q3')",
+        (now, now))
+    c.execute(
+        "INSERT INTO jobs (job_id, state, type, origin, flavor, bundle_dir, "
+        "created_ts_utc, path, last_seen_at, target, bundle_id) VALUES "
+        "('j1','done','patch','devel/foo','','',?,'',?,'@2026Q3','b1')",
+        (now, now))
+    # No analysis/rescued/j1.diff at all -- only the canonical one.
+    c.execute(
+        "INSERT INTO artifact_refs (bundle_id, relpath, backend, sha256, "
+        "fs_path, kind, size, created_at) VALUES "
+        "('b1','analysis/changes.diff','fs','x',?, 'text', ?, ?)",
+        (str(blob), blob.stat().st_size, now))
+    c.commit(); c.close()
+
+    with TestClient(create_app(db)) as client:
+        body = client.get("/agentic/jobs/j1").text
+    assert 'id="worktree"' in body
+    assert "3 files changed" in body
+    # Labelled, because a retried bundle shares this artifact between jobs.
+    assert "from the bundle's diff" in body
+
+
+def test_a_patch_job_with_no_diff_yet_says_so(tmp_path):
+    """An absent band reads as "changed nothing", which is the one thing it
+    does not mean on a job that is still working."""
+    import sqlite3  # noqa: PLC0415
+
+    import pytest  # noqa: PLC0415
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    from dportsv3.db.schema import init_db  # noqa: PLC0415
+    from dportsv3.tracker.server import create_app  # noqa: PLC0415
+
+    db = tmp_path / "state.db"
+    c = sqlite3.connect(str(db)); c.row_factory = sqlite3.Row; init_db(c)
+    now = "2026-09-23T10:00:00+00:00"
+    c.execute(
+        "INSERT INTO jobs (job_id, state, type, origin, flavor, bundle_dir, "
+        "created_ts_utc, path, last_seen_at, target) VALUES "
+        "('j2','patching','patch','devel/foo','','',?,'',?,'@2026Q3')",
+        (now, now))
+    c.execute(
+        "INSERT INTO jobs (job_id, state, type, origin, flavor, bundle_dir, "
+        "created_ts_utc, path, last_seen_at, target) VALUES "
+        "('j3','triaging','triage','devel/bar','','',?,'',?,'@2026Q3')",
+        (now, now))
+    c.commit(); c.close()
+
+    with TestClient(create_app(db)) as client:
+        patch_body = client.get("/agentic/jobs/j2").text
+        triage_body = client.get("/agentic/jobs/j3").text
+
+    assert 'id="worktree-pending"' in patch_body
+    assert "no diff published yet" in patch_body
+    # A triage job never writes one, so saying it is noise about work it
+    # does not do.
+    assert 'id="worktree-pending"' not in triage_body

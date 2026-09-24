@@ -1,21 +1,31 @@
 """Where the job page gets the agent's working-tree diff.
 
-Two sources, because a job has two lives (poly-qqx9.7):
+THE TRACKER READS ARTIFACTS. It does not run anything, and it must not:
+the runner may be remote (poly-fij), so reaching into a build environment
+is wrong by construction and not merely unavailable. It was also broken --
+``dev-env path`` and ``dev-env exec`` both require_root, and the tracker
+drops to an unprivileged account, so the live read failed silently on
+every job (poly-paee).
 
-RUNNING -- worker.emit_diff(env, origin, ".") reads the live overlay. Its
---intent-to-add bracket catches files the agent created but never
-committed, so a new payload file shows as ADDED rather than missing.
-Needs the env, which is on the job row since poly-qqx9.12.
+TWO ARTIFACTS, in this order:
 
-FINISHED -- analysis/rescued/<job_id>.diff, written by the rescue path
-when the job ended. The same bytes, at a path no later job overwrites,
-and already per-job. Nothing new is recorded for this case; it reads what
-is already there.
+RESCUED -- analysis/rescued/<job_id>.diff, written by the rescue path when
+the harness raises. Exact: per job, and no later job overwrites it. Rare,
+because it only exists when an attempt blew up: 4 bundles on a live
+builder.
 
-The live read is preferred when it is available and non-empty: the
-rescued artifact is a snapshot of the end, and a running job has moved on
-from it.
+CANONICAL -- analysis/changes.diff, which runner._write_changes_diff
+publishes on every patch job. 289 bundles on the same host. It is per
+BUNDLE, so on a retried bundle it may be a SIBLING job's diff rather than
+this one's, and the band says so. Preferring exactness and rendering
+nothing was the wrong trade: it cost the band 98% of the jobs it could
+have shown.
+
+Neither is live. A running job has published nothing yet, and the band
+says that rather than hiding -- poly-5tgc is the follow-up that has the
+runner publish per attempt.
 """
+
 
 from __future__ import annotations
 
@@ -39,29 +49,6 @@ def from_artifacts(
     return render.artifact_raw_text(artifact_root, relpath, ref) or ""
 
 
-def from_workspace(env: str, origin: str) -> str:
-    """The live overlay diff for this port, or "" if it cannot be read.
-
-    Never raises: the env can be gone, the runner can be on another host
-    under poly-fij, and a page that cannot show a diff shows no band
-    rather than an error where the work should be.
-    """
-    if not env or not origin:
-        return ""
-    try:
-        from dportsv3.agent import worker  # noqa: PLC0415
-
-        out = worker.emit_diff(env, origin, ".")
-    except Exception:
-        return ""
-    if not isinstance(out, dict) or not out.get("ok"):
-        return ""
-    diff = str(out.get("diff") or "")
-    # It has to BE a diff. An ok result whose body is anything else --
-    # a wrapper that answered the wrong question, a relocated env
-    # printing a path -- would otherwise count as "the live read
-    # worked", and the rescued artifact behind it would never be
-    # reached. The band would then be empty on a job that had changes
-    # recorded, which is the one failure this fallback exists to
-    # prevent.
-    return diff if "diff --git " in diff else ""
+def canonical_relpath() -> str:
+    """The diff every patch job publishes, per bundle rather than per job."""
+    return "analysis/changes.diff"

@@ -3,13 +3,27 @@
    against a sticky rail, an inline-only variant and a drawer -- the band
    won because the diff gets full width and a rail's permanent ~330px tax
    buys something you look at intermittently. #}
-{% if tree and not tree.empty %}
+{% if tree and tree.pending %}
+{# A patch job whose diff has not been published yet -- normally one
+   that is still running. An ABSENT band reads as "changed nothing",
+   which is the one thing it does not mean (poly-paee). #}
+<section class="wt-band" id="worktree-pending">
+  <h2 class="wt-head">Working tree
+    <span class="muted">no diff published yet</span>
+  </h2>
+  <p class="wt-pending">The runner publishes this job's diff when the
+    attempt ends. Nothing has arrived for this job, which is the
+    ordinary state while it is still working.</p>
+</section>
+{% elif tree and not tree.empty %}
 <section class="wt-band" id="worktree">
   <h2 class="wt-head">Working tree
     <span class="muted">{{ tree.n_files }} file{{ 's' if tree.n_files != 1 else '' }} changed ·
       <span class="wt-add">+{{ tree.added }}</span>
       <span class="wt-del">−{{ tree.removed }}</span>
-      {%- if tree.live %} · live{% else %} · as the job left it{% endif -%}
+      {%- if tree.source == 'bundle' %} ·
+      <span title="analysis/changes.diff belongs to the bundle, not the job. If this bundle was retried, these files may be a sibling attempt's.">from the bundle's diff</span>
+      {%- else %} · as the job left it{% endif -%}
     </span>
   </h2>
   <div class="wt">

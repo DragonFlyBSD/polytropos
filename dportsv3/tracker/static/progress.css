@@ -910,6 +910,13 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
 /* The rolling cap ate this job's history (poly-a162). Stated, not
    implied: an absent section reads as "nothing happened", which is the
    one thing it does not mean. */
+.wt-pending {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .activity-pruned-note {
   margin: 0 0 12px;
   padding: 8px 10px;

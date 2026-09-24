@@ -12,7 +12,6 @@ from dportsv3 import settings
 from dportsv3.tracker import (
     worktree_source,
     delivery_sync,
-    dsynth_tail,
     fix_state,
     issue_state,
     preflight_status,
@@ -222,28 +221,42 @@ def _confirm_for(conn: Any):
 
 #: How many lines of a running build the tool row shows. A screenful:
 #: the row is a status line with context, not a terminal.
-_TAIL_LINES = 40
-
-
 def _working_tree_for(conn, job, job_id, cards, artifact_root):
-    """The agent's changed files, from whichever source this job has.
+    """The agent's changed files, from the artifacts the runner published.
 
-    A running job's overlay is read live; a finished one's comes from the
-    rescued diff the run already filed. The live read wins when it has
-    anything to say, because the artifact is a snapshot of the end and a
-    running job has moved on from it (poly-qqx9.7).
+    READS, NEVER RUNS. The live overlay read this used to prefer went
+    through ``dev-env exec``, which requires root while the tracker is
+    unprivileged -- so it failed silently on every job -- and it would be
+    wrong anyway once the runner is remote (poly-paee).
+
+    Two artifacts, exact first: the per-job rescued diff, then the
+    canonical per-bundle one, which on a retried bundle may belong to a
+    SIBLING job. ``source`` says which, so the band can label it rather
+    than implying a precision it does not have.
+
+    Returns the tree, or ``{"empty": True, "pending": True}`` for a patch
+    job with neither artifact yet -- a running job, usually -- because an
+    absent band reads as "changed nothing" and that is not what it means.
     """
     raw = ""
-    live = False
-    if job.get("dev_env"):
-        raw = worktree_source.from_workspace(
-            job["dev_env"], job.get("origin") or "")
-        live = bool(raw)
-    if not raw and job.get("bundle_id"):
-        relpath = worktree_source.rescued_relpath(job_id)
-        ref = get_artifact_ref(conn, job["bundle_id"], relpath)
-        raw = worktree_source.from_artifacts(artifact_root, ref, relpath)
+    source = None
+    if job.get("bundle_id"):
+        for relpath, label in (
+            (worktree_source.rescued_relpath(job_id), "rescued"),
+            (worktree_source.canonical_relpath(), "bundle"),
+        ):
+            ref = get_artifact_ref(conn, job["bundle_id"], relpath)
+            raw = worktree_source.from_artifacts(artifact_root, ref, relpath)
+            if raw:
+                source = label
+                break
     if not raw:
+        # Only a patch job has a diff to wait for. Saying "nothing recorded
+        # yet" on a triage or verify job would be noise about work it never
+        # does.
+        if job.get("type") == "patch":
+            return {"empty": True, "pending": True, "files": [],
+                    "n_files": 0, "added": 0, "removed": 0}
         return None
 
     # The file a write tool is working on right now, so the list can mark
@@ -261,7 +274,7 @@ def _working_tree_for(conn, job, job_id, cards, artifact_root):
         raw, write_tool_calls(conn, job_id), live_path=live_path)
     for entry in tree["files"]:
         entry["html"] = render.render_diff(entry.pop("raw"))
-    tree["live"] = live
+    tree["source"] = source
     return tree
 
 
@@ -1511,22 +1524,11 @@ def register(app, ctx):
             ACTIVE_WORK_STATE_VALUES,
         )
         job_is_active = job.get("state") in ACTIVE_WORK_STATE_VALUES
-        # A running dsynth build's last lines, hung on the tool row
-        # producing them. dev_env is on the job row since poly-qqx9.12;
-        # without it there is no env to resolve the log under, and the
-        # row simply has no tail rather than a wrong one.
-        if job.get("dev_env"):
-            running = render.running_tailable_tool(activity_cards)
-            if running is not None:
-                tail = dsynth_tail.read_tail(
-                    job["dev_env"], job.get("origin") or "",
-                    flavor=job.get("flavor") or "",
-                    offset=-1, max_lines=_TAIL_LINES,
-                )
-                tail["href"] = str(request.url_for(
-                    "api_job_dsynth_tail", job_id=job_id))
-                tail["max_bytes"] = dsynth_tail.MAX_CHUNK_BYTES
-                render.attach_tool_tail(activity_cards, tail)
+        # No tail. Reading a running build's log meant resolving it through
+        # `dev-env path`, which requires root, and the tracker is not root
+        # -- so this only ever reported "no log" (poly-paee). Whether the
+        # runner publishes one instead is poly-pvs2; render.attach_tool_tail
+        # is the consumer side, waiting for a producer.
         return templates.TemplateResponse(
             request,
             "agentic_job.html",
