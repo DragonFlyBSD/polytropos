@@ -210,6 +210,14 @@
 # Rows kept in the activity log. The floor is 50.
 #activity_log_max = 5000
 
+# How the runner writes the tracker's read model: 'local' opens
+# state.db directly, 'http' posts to the tracker's /v1 vocabulary.
+# 'http' is what lets a builder stop sharing a host with the
+# tracker; 'local' stays the default until every write has crossed
+# the seam. Anything else is refused at startup rather than
+# silently treated as one of them.
+#state_transport = "local"
+
 # How old a QUEUED row whose .job file has vanished must be
 # before it is reaped. Catches a row recording a path this runner
 # never scans, which otherwise blocks every later job for that

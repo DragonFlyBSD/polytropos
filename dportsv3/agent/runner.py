@@ -451,6 +451,29 @@ def get_state_db_path(queue_root: Path) -> Path:
     return queue_root.parent / "state.db"
 
 
+def select_state_store() -> str:
+    """Install the state store ``runner.state_transport`` names.
+
+    Refuses an unrecognised value rather than falling back to 'local':
+    a typo that silently kept writing sqlite would look exactly like a
+    working remote builder until someone read the tracker and found
+    nothing (poly-fij.12).
+    """
+    from dportsv3 import settings  # noqa: PLC0415
+
+    transport = str(settings.get("runner.state_transport") or "local")
+    if transport == "local":
+        _state_store.set_store(_state_store.LocalStore())
+    elif transport == "http":
+        _state_store.set_store(_state_store.HttpStore())
+    else:
+        raise ValueError(
+            f"runner.state_transport must be 'local' or 'http'; "
+            f"got {transport!r}"
+        )
+    return transport
+
+
 def init_state_db(queue_root: Path) -> sqlite3.Connection | None:
     """Initialize connection to state.db, creating + schema-initing the
     file if it doesn't exist yet.
@@ -5158,6 +5181,17 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     init_state_db(queue_root)
+    try:
+        transport = select_state_store()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if transport != "local":
+        # state.db is still opened above, and has to be: presence is the
+        # only group across the seam so far, and ~27 statements still go
+        # straight to the file. It stops being opened when the last one
+        # crosses (poly-fij.12's "the runner holds no sqlite connection").
+        log(queue_root, "INFO", f"state transport: {transport}")
     # poly-i7y: an env store we cannot read is not an empty machine. Every
     # dev-env subcommand calls require_root(), so a runner that cannot
     # enumerate envs cannot exec into one either — it would run jobs with

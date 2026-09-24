@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .db import presence
 from .db.identifiers import require_identifier
 from .db.schema import init_db as _init_state_db
 
@@ -462,6 +463,26 @@ class ArtifactStore:
         # were never this bundle's.
         contained = contained_fs_path(self.logs_root, row["fs_path"])
         return ("fs", contained) if contained is not None else None
+
+    def apply_presence(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Server-side entry for ``POST /v1/runners/presence``.
+
+        A thin wrapper around ``db.presence.apply``, exactly as
+        ``apply_transition`` wraps ``agent.lifecycle``: the runner reaches
+        that same function directly today, and over HTTP it arrives here
+        instead. One implementation, two ways in (poly-fij.12).
+
+        NO ``emit_event``. Every other write here records itself in
+        ``events``, which is unbounded; a heartbeat every five seconds
+        would add ~17k rows a day per builder to a table nothing prunes.
+        Presence is a clock, and its current value is the whole of what
+        anyone reads.
+
+        Raises ``ValueError`` for a payload the caller got wrong, which
+        the route turns into the 400 it is.
+        """
+        with self._lock:
+            return presence.apply(self.conn, payload)
 
     def upsert_user_context(self, run_id: str, origin: str, context_text: str) -> int:
         """Set or update the operator's hint text for one (run_id, origin).

@@ -317,6 +317,15 @@ SETTINGS: list[Setting] = [
     Setting("runner.activity_log_max", "int", 5000,
             "Rows kept in the activity log. The floor is 50."),
     Setting(
+        "runner.state_transport", "str", "local",
+        "How the runner writes the tracker's read model: 'local' opens\n"
+        "state.db directly, 'http' posts to the tracker's /v1 vocabulary.\n"
+        "'http' is what lets a builder stop sharing a host with the\n"
+        "tracker; 'local' stays the default until every write has crossed\n"
+        "the seam. Anything else is refused at startup rather than\n"
+        "silently treated as one of them.",
+    ),
+    Setting(
         "runner.stale_queued_max_age_seconds", "int", 3600,
         "How old a QUEUED row whose .job file has vanished must be\n"
         "before it is reaped. Catches a row recording a path this runner\n"

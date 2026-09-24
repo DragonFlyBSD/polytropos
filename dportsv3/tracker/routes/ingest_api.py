@@ -119,6 +119,21 @@ def register(app: Any, ctx: RouteContext) -> None:
             return _error(400, result.get("error") or "transition rejected")
         return result
 
+    @app.post("/v1/runners/presence")
+    def runners_presence(body: dict[str, Any]) -> Any:
+        """Enrollment, liveness and current status for one builder.
+
+        ONE event-shaped route rather than four verb-shaped ones
+        (poly-fij.12): presence is one resource, and /v1/jobs/transition
+        already set the precedent for naming the event in the body. The
+        dsynth tail rides the heartbeat event as a field rather than
+        needing a route of its own (poly-pvs2).
+        """
+        try:
+            return _store().apply_presence(body)
+        except ValueError as exc:
+            return _error(400, str(exc))
+
     @app.post("/v1/user-context")
     def user_context(body: dict[str, Any]) -> Any:
         run_id = body.get("run_id")
