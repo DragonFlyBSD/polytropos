@@ -148,6 +148,12 @@ def group_activity_into_cards(
             "total_tokens": int(extra.get("total_tokens") or 0),
             "billable_tokens": _billable(extra) if row is not None else 0,
             "cumulative_billable_tokens": extra.get("cumulative_billable_tokens"),
+            # What the context HELD at this turn -- prompt_tokens counts the
+            # whole conversation resent each time, cached prefix included, so
+            # it is occupancy rather than cost. The now-bar divides the newest
+            # one by the declared window (poly-qqx9.20). Not billable_tokens:
+            # those two differ by 21x on a real job (poly-0g0).
+            "prompt_tokens": extra.get("prompt_tokens"),
             "tools_requested": list(extra.get("tools_requested") or []),
             # A card synthesized from tool rows alone has no sentence and
             # no cost — say so rather than printing zeros as if measured.

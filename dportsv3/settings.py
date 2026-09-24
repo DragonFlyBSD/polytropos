@@ -461,6 +461,15 @@ SETTINGS: list[Setting] = [
             "Empty falls back to the triage provider."),
     Setting("llm.patch.timeout", "int", 600, "Seconds per request."),
     Setting(
+        "llm.patch.context_window", "int", 0,
+        "The model's context window, in tokens. Purely a DENOMINATOR: it\n"
+        "is what the job page divides the newest turn's prompt tokens by to\n"
+        "say how full the context is. Nothing enforces it -- the provider\n"
+        "does that -- and 0 means undeclared, which renders no gauge rather\n"
+        "than inventing a ceiling. Per-role because triage, patch and chat\n"
+        "run different models; this is the one that runs the agent loop.",
+    ),
+    Setting(
         "llm.patch.context_keep_turns", "int", 10,
         "How many recent turns keep their tool output in full. Older\n"
         "output is replaced by a short placeholder; the calls themselves\n"

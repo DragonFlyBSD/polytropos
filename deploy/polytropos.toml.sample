@@ -346,6 +346,14 @@
 # Seconds per request.
 #timeout = 600
 
+# The model's context window, in tokens. Purely a DENOMINATOR: it
+# is what the job page divides the newest turn's prompt tokens by to
+# say how full the context is. Nothing enforces it -- the provider
+# does that -- and 0 means undeclared, which renders no gauge rather
+# than inventing a ceiling. Per-role because triage, patch and chat
+# run different models; this is the one that runs the agent loop.
+#context_window = 0
+
 # How many recent turns keep their tool output in full. Older
 # output is replaced by a short placeholder; the calls themselves
 # stay, and the session dump keeps everything. 10 was the best

@@ -2555,6 +2555,58 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   background: var(--cyan-soft); color: var(--cyan);
   border: 1px solid var(--cyan-line);
 }
+/* One value against a ceiling (poly-qqx9.20). conic-gradient, following
+   .token-pie: no chart library. The ring is the glance; the figures beside
+   it are what an operator quotes, so both stay. */
+.now-bar .nb-gauge {
+  display: flex; align-items: center; gap: 7px; white-space: nowrap;
+}
+.now-bar .nb-gauge + .nb-gauge {
+  margin-left: 4px; padding-left: 11px; border-left: 1px solid var(--line);
+}
+.now-bar .gauge-ring {
+  /* Both defaulted here, so a ring still draws if it arrives without a
+     level class or without its percentage: neutral, empty, legible --
+     rather than an unpainted disc. The level classes below set the
+     colour; the template sets --pct inline. */
+  --gauge: var(--muted);
+  --pct: 0;
+  position: relative; width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center; border-radius: 50%;
+  background: conic-gradient(var(--gauge) calc(var(--pct) * 1%),
+                             var(--track) 0);
+}
+/* The hole. Painted with the bar's own ground so the ring reads as a ring
+   rather than as a disc with a lighter middle. */
+.now-bar .gauge-ring::before {
+  content: ""; position: absolute; inset: 4px; border-radius: 50%;
+  background: var(--head-deep);
+}
+/* The number stays on screen. State is never colour alone here, and a ring
+   whose only signal is hue says nothing to a reader who cannot separate
+   green from amber. */
+.now-bar .gauge-ring b {
+  position: relative; color: var(--gauge);
+  font: 750 12px var(--mono); font-variant-numeric: tabular-nums;
+}
+.now-bar .nb-num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.now-bar .nb-num b { color: var(--text); font-weight: 750; }
+/* Which quantity: billable, total and context are three different numbers
+   and two of them are called "tokens" (poly-0g0). */
+.now-bar .nb-cap {
+  color: var(--faint); font-size: 12px; letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.now-bar .nb-gauge.ok .gauge-ring {
+  --gauge: var(--green);
+}
+.now-bar .nb-gauge.warn .gauge-ring {
+  --gauge: var(--amber);
+}
+.now-bar .nb-gauge.hot .gauge-ring {
+  --gauge: var(--red);
+}
+
 .now-bar .nb-tool {
   min-width: 0; display: flex; align-items: baseline; gap: 8px;
   overflow: hidden;

@@ -115,3 +115,26 @@
 {%- endfor -%}
 {%- endif -%}
 {%- endmacro -%}
+
+{#- One value against a ceiling, drawn as a ring (poly-qqx9.20).
+
+    The percentage stays INSIDE the ring. This console never carries state
+    by colour alone, and a ring whose only signal is hue says nothing to a
+    reader who cannot separate green from amber.
+
+    `cap` names the quantity and is not decoration: billable and total are
+    both called "tokens" and differ by 21x on a real job (poly-0g0), and
+    context occupancy is a third. An uncaptioned second ring on this line
+    would make that worse rather than adding information.
+
+    conic-gradient, following .token-pie: no chart library. -#}
+{%- macro gauge_ring(g, cap, title) -%}
+{%- if g %}
+<span class="nb-gauge {{ g.level }}" title="{{ title }}">
+  <span class="gauge-ring" style="--pct:{{ g.pct }}" role="img"
+        aria-label="{{ cap }} {{ g.pct }} percent — {{ title }}"><b>{{ g.pct }}</b></span>
+  <span class="nb-num"><b>{{ '{:,}'.format(g.value) }}</b> / {{ '{:,}'.format(g.ceiling) }}</span>
+  <span class="nb-cap">{{ cap }}</span>
+</span>
+{%- endif %}
+{%- endmacro -%}

@@ -2,7 +2,7 @@
    (poly-qqx9.3). Rendered on its own by the live fragment endpoint too,
    so it depends on nothing but `now`. Absent values render absent --
    never as a zero. #}
-{% from "_macros.html" import arg_line %}
+{% from "_macros.html" import arg_line, gauge_ring %}
 {% if now %}
 <div class="now-bar" id="now-bar">
   {% if now.attempt is not none %}
@@ -24,9 +24,31 @@
   {% endif %}
 
   <span class="nb-spacer"></span>
-  {% if now.spend is not none %}
-  <span class="nb-spend" title="billable (uncached) tokens this job has spent, against the tier budget the whole job runs under">
+  {# Two edges end an attempt and they are different quantities: what it has
+     BILLED against the tier budget, and how full the model's CONTEXT is.
+     The figures stay beside the rings -- the ring is the glance, the numbers
+     are what an operator quotes (poly-qqx9.20). #}
+  {# now.get(), not now.x: this partial is rendered from whatever dict it is
+     handed, and a key that does not exist yields Undefined, which is falsy
+     in a test but explodes inside format(). #}
+  {{ gauge_ring(now.get('spend_gauge'), "billable",
+       "billable (uncached) tokens this job has spent, against the tier budget the whole job runs under") }}
+  {# No gauge without a declared window: llm.patch.context_window defaults to
+     0, and a ceiling nobody declared is not one to divide by. #}
+  {{ gauge_ring(now.get('context_gauge'), "context",
+       "prompt tokens at the newest turn -- what the context holds now -- against the model's declared window") }}
+  {# The figures still show when a gauge cannot: a budget the tier did not
+     set, or a job whose model has no declared window. #}
+  {% if now.get('spend') is not none and not now.get('spend_gauge') %}
+  <span class="nb-spend" title="billable (uncached) tokens this job has spent">
     {{ '{:,}'.format(now.spend) }}{% if now.budget %} / {{ '{:,}'.format(now.budget) }}{% endif %}
+    <span class="nb-cap">billable</span>
+  </span>
+  {% endif %}
+  {% if now.get('context') is not none and not now.get('context_gauge') %}
+  <span class="nb-spend" title="prompt tokens at the newest turn — what the context holds now. Set llm.patch.context_window to see it as a proportion.">
+    {{ '{:,}'.format(now.context) }}
+    <span class="nb-cap">context</span>
   </span>
   {% endif %}
 </div>

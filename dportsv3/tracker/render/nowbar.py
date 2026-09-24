@@ -29,6 +29,39 @@ from typing import Any
 _NO_AGENT_TIER = "MANUAL"
 
 
+#: Where a gauge stops being green. 75 is not arbitrary for the budget: an
+#: attempt needs a quarter of it still free to be worth starting
+#: (runner.min_attempt_budget_fraction), so past this point the next attempt
+#: cannot begin at all. Red is the last stretch before the ceiling.
+GAUGE_WARN_PCT = 75
+GAUGE_HOT_PCT = 90
+
+
+def gauge(value: Any, ceiling: Any) -> dict[str, Any] | None:
+    """One value against a ceiling, as a ring's worth of state.
+
+    ``None`` when either side is missing or the ceiling is not positive --
+    a gauge with no denominator is omitted, never drawn against an
+    invented one.
+
+    Capped at 100: a provider can report a prompt larger than the window
+    we were told about, and a ring is a proportion, not a place to
+    discover that. The figures beside it still show the real numbers.
+    """
+    if value is None or ceiling is None:
+        return None
+    try:
+        value, ceiling = int(value), int(ceiling)
+    except (TypeError, ValueError):
+        return None
+    if ceiling <= 0 or value < 0:
+        return None
+    pct = min(100, round(value / ceiling * 100))
+    level = ("hot" if pct >= GAUGE_HOT_PCT
+             else "warn" if pct >= GAUGE_WARN_PCT else "ok")
+    return {"pct": pct, "level": level, "value": value, "ceiling": ceiling}
+
+
 def now_bar(
     cards: list[dict[str, Any]],
     attempt_extra: dict[str, Any] | None = None,
@@ -57,6 +90,15 @@ def now_bar(
     if newest_turn is None:
         return None            # verify, confirm: no turns, nothing to pin
 
+    spend = _spend(cards, attempt_extra)
+    budget = attempt_extra.get("budget") or None
+    # The newest turn's prompt is what the context holds NOW. A card
+    # synthesized from tool rows alone has no llm_turn behind it and so no
+    # prompt figure; fall back to the newest turn that has one rather than
+    # reporting the context as empty.
+    context = _newest_prompt(cards)
+    window = _context_window()
+
     return {
         # The attempt number comes off the turn itself (every llm_turn and
         # tool row carries it); only the denominator needs the start row.
@@ -64,10 +106,40 @@ def now_bar(
         "attempts_total": attempt_extra.get("iterations"),
         "turn": newest_turn.get("turn"),
         "tool": _running_tool(cards),
-        "spend": _spend(cards, attempt_extra),
-        "budget": attempt_extra.get("budget") or None,
+        "spend": spend,
+        "budget": budget,
         "tier": tier,
+        # How close each budget is to its edge. The figures above answer
+        # "how much"; these answer "how close", which is the question this
+        # bar could not previously answer at all (poly-qqx9.20).
+        "spend_gauge": gauge(spend, budget),
+        "context": context,
+        "context_window": window or None,
+        "context_gauge": gauge(context, window),
     }
+
+
+def _newest_prompt(cards: list[dict[str, Any]]) -> int | None:
+    """Prompt tokens at the newest turn that reported any."""
+    for card in cards:
+        if card.get("kind") != "turn":
+            continue
+        prompt = card.get("prompt_tokens")
+        if prompt is not None:
+            return int(prompt)
+    return None
+
+
+def _context_window() -> int | None:
+    """The declared window, or None. Read per render rather than cached:
+    this is a settings lookup off a table already in memory, and an
+    operator who edits the value expects the page to follow."""
+    from dportsv3 import settings  # noqa: PLC0415
+
+    try:
+        return int(settings.get("llm.patch.context_window") or 0) or None
+    except Exception:
+        return None
 
 
 def _running_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
