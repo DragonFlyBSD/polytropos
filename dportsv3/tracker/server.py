@@ -141,19 +141,31 @@ def create_app(db_path: str | Path) -> Any:
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-    # Content-hash cache-buster for progress.css. Without this, when
-    # we change rules in the file (e.g. extracting the diff renderer's
-    # styles in 2.5a), browsers keep serving the previous version from
-    # cache — so the new HTML structure looks unstyled until the
-    # operator hard-refreshes. Compute the hash once at startup
-    # (template responses can read it as ``static_v`` then). Falls back
-    # to "0" if the file isn't present so dev / packaging variants
-    # don't break.
+    # Content-hash cache-buster for EVERY static file, not just the CSS.
+    # Without it a browser keeps serving the previous version from cache,
+    # so new HTML looks unstyled or new client behaviour simply does not
+    # happen, with no error anywhere.
+    #
+    # It used to hash progress.css alone while the JS tags interpolated the
+    # same token, which made the buster a no-op for any JS-only change: the
+    # URL stayed byte-identical, every warm cache kept the old script, and
+    # the server's new payload was silently ignored by it. That shipped a
+    # whole feature invisibly once (poly-3o3o, found deploying poly-pvs2).
+    #
+    # The relative path goes into the hash as well as the bytes, so a
+    # rename or a deletion moves the token too. One directory read at
+    # startup; static/ is ~200K. Falls back to "0" when the directory is
+    # absent, so dev and packaging variants do not break.
     import hashlib as _hashlib  # noqa: PLC0415
     _static_v = "0"
-    _css_path = static_dir / "progress.css"
-    if _css_path.is_file():
-        _static_v = _hashlib.sha256(_css_path.read_bytes()).hexdigest()[:10]
+    if static_dir.is_dir():
+        _digest = _hashlib.sha256()
+        for _path in sorted(static_dir.rglob("*")):
+            if _path.is_file():
+                _digest.update(
+                    _path.relative_to(static_dir).as_posix().encode())
+                _digest.update(_path.read_bytes())
+        _static_v = _digest.hexdigest()[:10]
     templates.env.globals["static_v"] = _static_v
     # The single operator-facing status projection. Templates call it to
     # render one status pill instead of reconciling resolution +
