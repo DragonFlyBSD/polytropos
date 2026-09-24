@@ -62,6 +62,7 @@ from pathlib import Path
 # load. Other lifecycle uses stay function-local per this file's
 # convention, but this one backs a module-level constant.
 from dportsv3 import paths
+from dportsv3.agent import state_store as _state_store
 from dportsv3.agent.lifecycle import ACTIVE_WORK_STATE_VALUES
 from dportsv3.common import artifacts
 from dportsv3.common.endpoints import tracker_url
@@ -272,23 +273,7 @@ def runner_id() -> str:
 def register_runner() -> None:
     """Record this process in ``runners``. Best-effort, like every other
     write to the read model."""
-    if _state_db_conn is None:
-        return
-    ts = datetime.now(timezone.utc).isoformat()
-    try:
-        with _state_db_lock:
-            _state_db_conn.execute(
-                """INSERT INTO runners
-                   (runner_id, hostname, pid, started_at, last_heartbeat_at)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(runner_id) DO UPDATE SET
-                     last_heartbeat_at = excluded.last_heartbeat_at,
-                     stopped_at = NULL""",
-                (runner_id(), socket.gethostname(), os.getpid(), ts, ts),
-            )
-            _state_db_conn.commit()
-    except Exception as exc:
-        print(f"Warning: could not register runner: {exc}", file=sys.stderr)
+    _state_store.store().register_runner(runner_id())
 _current_job_id: str | None = None
 _current_stage: str | None = None
 
@@ -1897,59 +1882,25 @@ def update_runner_status(
     stage: str | None = None,
     extra: dict | None = None
 ):
-    """Update runner_status table (singleton row)."""
+    """Record what the runner is doing now, through the state seam."""
     global _current_job_id, _current_stage
     
     _current_job_id = job_id
     if stage is not None:
         _current_stage = stage
     
-    if _state_db_conn is None:
-        return
-    
-    ts = datetime.now(timezone.utc).isoformat()
-    extra_json = json.dumps(extra) if extra else None
-    
-    try:
-        with _state_db_lock:
-            # Upsert the singleton row
-            _state_db_conn.execute(
-                """INSERT INTO runner_status (id, status, job_id, current_stage, started_at, updated_at, extra_json)
-                   VALUES (1, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(id) DO UPDATE SET
-                     status = excluded.status,
-                     job_id = excluded.job_id,
-                     current_stage = excluded.current_stage,
-                     started_at = CASE WHEN excluded.job_id != runner_status.job_id THEN excluded.started_at ELSE runner_status.started_at END,
-                     updated_at = excluded.updated_at,
-                     extra_json = excluded.extra_json""",
-                (status, job_id, stage or _current_stage, ts, ts, extra_json)
-            )
-            _state_db_conn.commit()
-    except Exception as e:
-        print(f"Warning: Failed to update runner status: {e}", file=sys.stderr)
+    # ``_current_stage`` is the runner's own memory, not the store's, so
+    # the fallback is applied on this side of the seam.
+    _state_store.store().set_runner_status(
+        status, job_id, stage or _current_stage, extra,
+    )
 
 
 def _heartbeat_loop():
-    """Background thread that updates runner_status.updated_at every 5 seconds."""
+    """Say we are alive every 5s, from a thread that keeps ticking while
+    the main thread blocks in ``subprocess.run`` during a build."""
     while not _heartbeat_stop_event.is_set():
-        if _state_db_conn is not None:
-            try:
-                ts = datetime.now(timezone.utc).isoformat()
-                with _state_db_lock:
-                    _state_db_conn.execute(
-                        """UPDATE runner_status SET updated_at = ? WHERE id = 1""",
-                        (ts,)
-                    )
-                    _state_db_conn.execute(
-                        """UPDATE runners SET last_heartbeat_at = ?
-                           WHERE runner_id = ?""",
-                        (ts, runner_id()),
-                    )
-                    _state_db_conn.commit()
-            except Exception:
-                pass
-        
+        _state_store.store().heartbeat(runner_id())
         _heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
 
 
@@ -2062,17 +2013,7 @@ def deregister_runner() -> None:
     """Stamp ``runners.stopped_at`` on clean shutdown. A crashed runner
     leaves it NULL with a stale heartbeat, which is the distinction that
     matters."""
-    if _state_db_conn is None:
-        return
-    try:
-        with _state_db_lock:
-            _state_db_conn.execute(
-                "UPDATE runners SET stopped_at = ? WHERE runner_id = ?",
-                (datetime.now(timezone.utc).isoformat(), runner_id()),
-            )
-            _state_db_conn.commit()
-    except Exception as exc:
-        print(f"Warning: could not deregister runner: {exc}", file=sys.stderr)
+    _state_store.store().deregister_runner(runner_id())
 
 
 def start_heartbeat():
