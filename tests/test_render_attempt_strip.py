@@ -117,7 +117,18 @@ def test_outcomes_come_off_rebuild_ok():
 def test_a_job_with_no_attempts_gets_no_strip():
     """triage, verify and confirm write no boundaries at all: absent, not
     an empty chart."""
-    assert attempt_strip([], [], []) == {"attempts": [], "scale_ms": 0}
+    assert attempt_strip([], [], []) == {
+        "attempts": [], "scale_ms": 0, "attempts_total": None}
+
+
+def test_the_grant_is_carried_through_untouched():
+    """attempts_total is the panel head's "2 of 3" and nothing else.
+
+    Nothing here computes it -- it comes from the attempt row's `iterations`
+    -- so the only contract is that it arrives and leaves unchanged, including
+    on the no-attempts path where the head never renders.
+    """
+    assert attempt_strip([], [], [], attempts_total=3)["attempts_total"] == 3
 
 
 def test_an_unparseable_timestamp_does_not_crash_the_chart():

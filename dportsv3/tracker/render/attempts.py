@@ -59,10 +59,15 @@ def attempt_strip(
     tool_totals: list[dict[str, Any]],
     turn_totals: list[dict[str, Any]],
     now: datetime | None = None,
+    attempts_total: int | None = None,
 ) -> dict[str, Any]:
     """One row per attempt, each a list of proportional segments.
 
-    Returns ``{"attempts": [...], "scale_ms": int}``. Every row is scaled
+    Returns ``{"attempts": [...], "scale_ms": int, "attempts_total": ...}``.
+    ``attempts_total`` is the GRANT -- how many attempts this job was given --
+    and is carried through only so the panel head can say "2 of 3" rather
+    than "2"; nothing here computes it, and None renders as a bare count.
+    Every row is scaled
     against the same ``scale_ms`` -- the longest attempt -- so the rows
     are comparable to each other, which is the whole reason they are
     stacked. An empty ``attempts`` means this job type has no attempts
@@ -87,7 +92,8 @@ def attempt_strip(
             row["running"] = False
 
     if not rows:
-        return {"attempts": [], "scale_ms": 0}
+        return {"attempts": [], "scale_ms": 0,
+                "attempts_total": attempts_total}
 
     now = now or datetime.now(timezone.utc)
     tools_by_attempt: dict[Any, list[dict[str, Any]]] = {}
@@ -103,7 +109,8 @@ def attempt_strip(
         for seg in row["segments"]:
             seg["pct"] = (seg["ms"] / scale * 100) if scale else 0.0
             seg["label"] = seg["pct"] >= _LABEL_MIN_PCT
-    return {"attempts": rows, "scale_ms": scale}
+    return {"attempts": rows, "scale_ms": scale,
+            "attempts_total": attempts_total}
 
 
 def _fill(

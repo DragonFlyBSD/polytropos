@@ -153,6 +153,7 @@ def register(app, ctx):
                     attempt_boundaries(conn, job_id),
                     attempt_tool_totals(conn, job_id),
                     attempt_turn_totals(conn, job_id),
+                    attempts_total=attempt_extra.get("iterations"),
                 )
                 if job is not None else {"attempts": [], "scale_ms": 0})
             # The same window the page renders, or the 3s swap would replace

@@ -306,7 +306,9 @@ def test_job_page_shows_five_turns_and_links_to_the_rest(client):
     """21 turns on job-done; the page shows five and routes to the rest."""
     body = client.get("/agentic/jobs/job-done").text
     assert body.count('class="turn-card state-') <= 12   # 5 turns + structure
-    assert "last 5 of 21 turns" in body
+    # The panel head says "Turns", so the count beside it no longer repeats
+    # the word (poly-x3pg.16).
+    assert "last 5 of 21" in body
     assert "Full transcript — all 21 turns" in body
     assert "/transcript" in body
 

@@ -7,27 +7,32 @@
 {# A patch job whose diff has not been published yet -- normally one
    that is still running. An ABSENT band reads as "changed nothing",
    which is the one thing it does not mean (poly-paee). #}
-<section class="wt-band" id="worktree-pending">
-  <h2 class="wt-head">Working tree
+<section class="panel job-section wt-band" id="worktree-pending"
+         aria-labelledby="wt-head-pending">
+  <h2 class="content-head wt-head" id="wt-head-pending">Working tree
     <span class="muted">no diff published yet</span>
   </h2>
+  <div class="panel-body">
   <p class="wt-pending">The runner publishes this job's diff when the
     attempt ends. Nothing has arrived for this job, which is the
     ordinary state while it is still working.</p>
+  </div>
 </section>
 {% elif tree and tree.empty and tree.versions %}
 {# The selected attempt published an empty diff on purpose: it changed
    nothing. Distinct from "nothing published", above, and a finding in its
    own right on an attempt that then failed (poly-5tgc UI 4). #}
-<section class="wt-band" id="worktree">
-  <h2 class="wt-head">Working tree
+<section class="panel job-section wt-band" id="worktree" aria-labelledby="wt-head-empty">
+  <h2 class="content-head wt-head" id="wt-head-empty">Working tree
     <span class="muted">attempt {{ tree.selected_attempt }} changed nothing</span>
   </h2>
+  <div class="panel-body">
   {% include "_worktree_versions.html" %}
+  </div>
 </section>
 {% elif tree and not tree.empty %}
-<section class="wt-band" id="worktree">
-  <h2 class="wt-head">Working tree
+<section class="panel job-section wt-band" id="worktree" aria-labelledby="wt-head">
+  <h2 class="content-head wt-head" id="wt-head">Working tree
     <span class="muted">{{ tree.n_files }} file{{ 's' if tree.n_files != 1 else '' }} changed ·
       <span class="wt-add">+{{ tree.added }}</span>
       <span class="wt-del">−{{ tree.removed }}</span>
@@ -44,6 +49,7 @@
       {%- else %} · as the job left it{% endif -%}
     </span>
   </h2>
+  <div class="panel-body">
   {% include "_worktree_versions.html" %}
   <div class="wt">
     <div class="wt-list" role="tablist" aria-label="Changed files">
@@ -83,5 +89,6 @@
   <p class="wt-note muted">The diff was capped before it reached here;
     the file list is complete, the last file's body may not be.</p>
   {% endif %}
+  </div>
 </section>
 {% endif %}

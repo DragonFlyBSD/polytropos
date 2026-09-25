@@ -160,12 +160,27 @@ def test_api_abandon_terminal_returns_409(client):
 
 
 def test_job_detail_shows_abandon_for_queued(client):
+    # id, not label: the control moved to the page heading and lost the
+    # "(mark dead)" tail when it did (poly-x3pg.16). What the JS binds to,
+    # and what the operator needs to be able to reach, is the button.
     body = client.get("/agentic/jobs/queued-1").text
-    assert "Abandon job" in body
+    assert 'id="abandon-btn"' in body
     assert "/api/jobs/queued-1/abandon" not in body  # endpoint built by JS
     assert 'data-job-id="queued-1"' in body
 
 
+def test_abandon_sits_in_the_page_heading_not_the_facts_panel(client):
+    """Where it is matters: it was at the bottom of a facts table.
+
+    poly-qqx9.14 deletes that table, and this assertion is what stops the
+    control going with it.
+    """
+    body = client.get("/agentic/jobs/queued-1").text
+    heading = body.split('class="page-heading"', 1)[1].split("</div>\n  </div>", 1)[0]
+    assert 'id="abandon-btn"' in heading
+    assert 'id="pause-toggle"' in heading
+
+
 def test_job_detail_hides_abandon_for_terminal(client):
     body = client.get("/agentic/jobs/dead-1").text
-    assert "Abandon job" not in body
+    assert 'id="abandon-btn"' not in body

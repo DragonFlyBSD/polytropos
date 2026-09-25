@@ -31,14 +31,7 @@
         {% endif %}
       </table>
       </div>
-      {% if is_active %}
-      <div style="margin-top:12px;">
-        <button type="button" id="abandon-btn" class="btn btn-danger"
-                data-job-id="{{ job.job_id }}"
-                data-state="{{ job.state }}">
-          Abandon job (mark dead)
-        </button>
-        <span id="abandon-flash" style="margin-left:10px;"></span>
-      </div>
-      {% endif %}
+      {# Abandon moved to the page heading (poly-x3pg.16). It was the one
+         control an operator needs in a hurry and it was at the bottom of a
+         facts table, labelled "Abandon job (mark dead)". #}
     </div>

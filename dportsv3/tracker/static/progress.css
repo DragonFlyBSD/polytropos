@@ -342,12 +342,25 @@ a { color: var(--cyan); }
 .pill.violet { color: var(--violet); background: var(--violet-soft); border-color: var(--violet-line); }
 .pill.neutral{ color: var(--muted);  background: var(--surface-2);   border-color: var(--line); }
 
-/* Panel + its heading strip. */
-.panel {
+/* Panel + its heading strip.
+ *
+ * `.content-panel` is the mock's name for the same object and six drawer
+ * panels already used it, against no rule at all -- they rendered as bare
+ * content with a heading strip floating on the page background. Aliased here
+ * rather than renamed, so the mock's vocabulary keeps working (poly-x3pg.16).
+ */
+.panel, .content-panel {
   background: var(--surface);
   border: 1px solid var(--line);
 }
-.panel + .panel { margin-top: 10px; }
+.panel + .panel, .content-panel + .content-panel { margin-top: 10px; }
+/* A panel's content, inset from its edges. The head carries its own. */
+.panel-body { padding: 11px 12px; }
+/* One top-level section of the job page. The mock stacks its panels in a
+   flex column with a gap; this page is normal flow and its sections sit
+   inside live-swap slots, so the sibling selector above cannot reach across
+   them -- each section carries its own gap to the next instead. */
+.job-section { margin: 0 0 14px; }
 .content-head {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px;
@@ -2678,9 +2691,9 @@ body.tour-open .dock{opacity:0;pointer-events:none}
  * stacked (poly-qqx9.6). Colour is this sheet's AA-corrected palette,
  * not the mock's raw values.
  */
-.wf { margin: 0 0 12px; padding: 10px 12px;
-      background: var(--surface); border: 1px solid var(--line);
- }
+/* The strip's own chrome moved out to the .panel that now wraps it
+   (poly-x3pg.16); what is left is the rows' layout. */
+.wf { margin: 0; }
 .wf-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 96px;
           gap: 11px; align-items: center; margin-bottom: 7px; }
 .wf-cost { color: var(--text); font: 12px var(--mono); text-align: right;
@@ -2770,9 +2783,13 @@ body.tour-open .dock{opacity:0;pointer-events:none}
  * sticky rail costs ~330px permanently for something read
  * intermittently, and the diff wants the width (poly-qqx9.7).
  */
-.wt-band { margin: 16px 0 0; }
-.wt-head { font-size: 15px; margin: 0 0 8px; }
-.wt-head .muted { font: 12px var(--mono); font-weight: normal; }
+/* .job-section carries the gap below; this is the extra air above the
+   band, which follows the turn stream. */
+.wt-band { margin-top: 16px; }
+/* .wt-head is a .content-head now -- the band was the one section on this
+   page with no surface, no border and no header strip at all (poly-x3pg.16).
+   What stays is the subtitle beside the name. */
+.wt-head .muted { font: 12px var(--mono); font-weight: 400; color: var(--muted); }
 .wt-add { color: var(--green); }
 .wt-del { color: var(--red); }
 .wt { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr);

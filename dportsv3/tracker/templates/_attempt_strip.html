@@ -3,7 +3,17 @@
    entirely for job types that have no attempts. #}
 {% from "_macros.html" import dur_ms %}
 {% if strip and strip.attempts %}
-<div class="wf" id="attempt-strip">
+{# A panel with a head that names it: without one, nothing on screen said
+   what the bars were (poly-x3pg.16). The head is an <h2> where the mock
+   uses a div -- same look, and this console keeps its heading outline. #}
+<section class="panel job-section" id="attempt-strip"
+         aria-labelledby="attempt-strip-head">
+  <h2 class="content-head" id="attempt-strip-head">Attempts
+    <strong>{% if strip.attempts_total %}{{ strip.attempts|length }} of
+      {{ strip.attempts_total }}{% else %}{{ strip.attempts|length }}
+      attempt{{ 's' if strip.attempts|length != 1 else '' }}{% endif %}</strong>
+  </h2>
+  <div class="wf panel-body">
   {% for a in strip.attempts %}
   <div class="wf-row">
     <div class="wf-name">A{{ a.attempt }}
@@ -53,5 +63,6 @@
     <span><i class="sw fail"></i>failed tool</span>
     <span><i class="sw run"></i>in progress</span>
   </div>
-</div>
+  </div>
+</section>
 {% endif %}

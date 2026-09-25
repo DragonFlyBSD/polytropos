@@ -156,11 +156,11 @@
       ev.preventDefault();
       if (poller.isPaused()) {
         poller.resume();
-        pauseLink.textContent = "[pause]";
+        pauseLink.textContent = "Pause";
         if (statusText) statusText.textContent = "live";
       } else {
         poller.pause();
-        pauseLink.textContent = "[resume]";
+        pauseLink.textContent = "Resume";
         if (statusText) statusText.textContent = "paused";
       }
     });

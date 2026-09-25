@@ -4,34 +4,43 @@
        (poly-qqx9.11). #}
     {% set pruned = pruning and pruning.pruned %}
     {% if activity_cards %}
-    <h2 id="activity">Activity
-      <span id="activity-count" style="font-size:12px;color:var(--text-dim);font-weight:normal;">
-        {%- if total_turns > turn_window -%}
-          (last {{ turn_window }} of {{ total_turns }} turns)
-        {%- elif job_is_active -%}(live)
-        {%- else -%}(what each turn did){%- endif -%}
-      </span>
-    </h2>
+    {# A panel with a head, like the mock's: the stream was a bare column of
+       cards with no surface and nothing naming it (poly-x3pg.16). The head
+       is "Turns", which is what the cards are -- the page already has an
+       Activity elsewhere and the two were not the same thing. #}
+    <section class="panel job-section" id="activity" aria-labelledby="activity-head">
+      <h2 class="content-head" id="activity-head">Turns
+        <span class="muted" id="activity-count">
+          {%- if total_turns > turn_window -%}
+            last {{ turn_window }} of {{ total_turns }}
+          {%- elif job_is_active -%}live
+          {%- else -%}what each turn did{%- endif -%}
+        </span>
+        <strong>newest first</strong>
+      </h2>
+      <div class="panel-body">
 
-    {# The last five turns, newest first: the reading view. Everything
-       else — the older turns and the sortable raw table — is one route
-       away, because at 442 events in one attempt a full stream is the
-       mess the cards replaced (poly-qqx9.5). #}
-    {% if pruned %}
-      {% with full = false %}{% include "_activity_pruned.html" %}{% endwith %}
-    {% endif %}
-    <div id="turn-cards" class="turn-stream">
-      {% with cards = activity_cards %}{% include "_turn_cards.html" %}{% endwith %}
-    </div>
+      {# The last five turns, newest first: the reading view. Everything
+         else — the older turns and the sortable raw table — is one route
+         away, because at 442 events in one attempt a full stream is the
+         mess the cards replaced (poly-qqx9.5). #}
+      {% if pruned %}
+        {% with full = false %}{% include "_activity_pruned.html" %}{% endwith %}
+      {% endif %}
+      <div id="turn-cards" class="turn-stream">
+        {% with cards = activity_cards %}{% include "_turn_cards.html" %}{% endwith %}
+      </div>
 
-    {% if activity %}
-    <p class="transcript-link">
-      <a href="{{ request.url_for('agentic_job_transcript', job_id=job.job_id) }}">
-        {%- if total_turns > turn_window -%}
-          Full transcript — all {{ total_turns }} turns
-        {%- else -%}Full transcript{%- endif %} →</a>
-    </p>
-    {% endif %}
+      {% if activity %}
+      <p class="transcript-link">
+        <a href="{{ request.url_for('agentic_job_transcript', job_id=job.job_id) }}">
+          {%- if total_turns > turn_window -%}
+            Full transcript — all {{ total_turns }} turns
+          {%- else -%}Full transcript{%- endif %} →</a>
+      </p>
+      {% endif %}
+      </div>
+    </section>
 
     {% elif pruned %}
       {% with full = true %}{% include "_activity_pruned.html" %}{% endwith %}

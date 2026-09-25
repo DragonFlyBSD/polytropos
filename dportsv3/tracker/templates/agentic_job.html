@@ -50,13 +50,27 @@
 
 {% block body %}
 
-  <div class="tracker-page">
-    <h1>{{ job.job_id }}
-      {# is_active comes from the server (lifecycle.ACTIVE_WORK_STATES)
-         so the live-poll set can't drift from the runner's retriage
-         guard / dashboard count. `triaged` is NOT active (resting
-         after handoff to a spawned job); `verifying_fix` IS. #}
-      {% set is_active = job_is_active %}
+  {# is_active comes from the server (lifecycle.ACTIVE_WORK_STATES) so the
+     live-poll set can't drift from the runner's retriage guard / dashboard
+     count. `triaged` is NOT active (resting after handoff to a spawned
+     job); `verifying_fix` IS. #}
+  {% set is_active = job_is_active %}
+
+  {# The heading strip every other page in this console already had
+     (poly-x3pg.16). What it replaces: an <h1> holding the raw queue
+     filename with the live badge inside it, a "[pause]" text link, and an
+     Abandon button buried at the bottom of the facts panel. The two
+     controls an operator reaches for now sit where the eye goes.
+     Pause is the LIVE-POLL toggle, not an operator pause on the work --
+     poly-0e02.8 established there is no such thing to offer. #}
+  <div class="page-heading">
+    <div>
+      <h1>{{ job.job_id }}</h1>
+      <p>{{ job.type or 'job' }} job{% if job.origin %} for
+        <code>{{ job.origin }}{% if job.flavor %}@{{ job.flavor }}{% endif %}</code>
+        {%- endif %}{% if job.target %} on <code>{{ job.target }}</code>{% endif %}</p>
+    </div>
+    <div class="heading-actions">
       <span id="live-indicator"
             class="live-indicator{% if is_active %} active{% endif %}"
             data-job-id="{{ job.job_id }}"
@@ -67,16 +81,24 @@
         <span class="dot"></span><span class="status-text">{% if is_active %}live{% else %}idle{% endif %}</span>
         {% if is_active %}
           · <span class="last-update">just now</span>
-          · <a href="#" id="pause-toggle">[pause]</a>
         {% endif %}
       </span>
-    </h1>
+      {% if is_active %}
+      <button type="button" class="control" id="pause-toggle">Pause</button>
+      <button type="button" class="control action danger" id="abandon-btn"
+              data-job-id="{{ job.job_id }}"
+              data-state="{{ job.state }}">Abandon</button>
+      <span id="abandon-flash"></span>
+      {% endif %}
+    </div>
+  </div>
 
+  <div class="tracker-page">
     <nav class="jump-links">
       Jump to:
       {% if handoff %}<a href="#handoff">Handoff</a> · {% endif %}
       {% if transitions %}<a href="#transitions">Transitions</a> · {% endif %}
-      {% if activity %}<a href="#activity">Activity</a>{% endif %}
+      {% if activity %}<a href="#activity">Turns</a>{% endif %}
       {% if token_usage and token_usage.has_data %} · <a href="#tokens">Token usage</a>{% endif %}
       {% if prior_attempts %} · <a href="#prior-attempts">Prior attempts</a>{% endif %}
     </nav>
