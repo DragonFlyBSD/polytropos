@@ -2760,7 +2760,15 @@ body.tour-open .dock{opacity:0;pointer-events:none}
    design source (poly-qqx9.17). Height rather than max-height, so the
    pane does not resize under the reader as lines arrive and so
    scroll-to-bottom has a stable frame to sit in. */
-.turn-stream .tool-tail {
+/* THE `pre` AND THE .tool-call ARE LOAD-BEARING (poly-atq9). The tail is a
+   <pre class="tool-tail"> inside a .tool-call, so `.turn-stream .tool-call
+   pre` two hundred lines up (0,2,1) beat the `.turn-stream .tool-tail`
+   (0,2,0) this rule used to be, and the tail rendered as a light code
+   block -- the exact treatment poly-qqx9.17 was filed to replace -- from
+   the day it was written. Source order is not the fix: .tool-tail already
+   sat later in the file and still lost. A rule matching this element with
+   an element selector in it has to be answered with specificity. */
+.turn-stream .tool-call pre.tool-tail {
   margin: 0; height: 132px; overflow: auto; padding: 8px 10px;
   border-top: 1px solid var(--line);
   color: var(--term-fg); background: var(--term-bg);

@@ -31,15 +31,35 @@ STRIP_TMPL = (REPO / "dportsv3" / "tracker" / "templates"
 # --- poly-qqx9.17: a terminal, not a code block --------------------------
 
 
+#: The tail's rule, spelled exactly as the sheet spells it. The full
+#: selector and a comment-free sheet are both load-bearing (poly-atq9): a
+#: `.turn-stream .tool-tail` prefix match lands on `.tool-tailbar`, whose
+#: block names no --term-* at all, and the same prefix appears in prose in
+#: the comment above the rule, where it passed this test for two days
+#: without reading the rule.
+TAIL_SELECTOR = ".turn-stream .tool-call pre.tool-tail"
+
+
+def _rule(selector: str) -> str:
+    """The declarations of one rule, comments stripped."""
+    css = re.sub(r"/\*.*?\*/", " ", CSS, flags=re.S)
+    m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert m, f"no rule for {selector}"
+    return m.group(1)
+
+
 def test_the_tail_uses_the_terminal_tokens() -> None:
-    block = CSS[CSS.index(".turn-stream .tool-tail"):]
-    block = block[:block.index("}")]
+    block = _rule(TAIL_SELECTOR)
 
     assert "var(--term-fg)" in block and "var(--term-bg)" in block
     assert "--code-" not in block, (
         "--code-* is the tool-output treatment; the design distinguishes "
         "the two deliberately"
     )
+    # Naming the right tokens is not the same as being painted with them --
+    # this rule named them for two days while losing the cascade. That the
+    # winning declaration on the rendered page is this one is asserted in
+    # tests/test_tail_terminal_cascade.py.
 
 
 def test_the_terminal_tokens_are_dark_in_every_theme() -> None:
