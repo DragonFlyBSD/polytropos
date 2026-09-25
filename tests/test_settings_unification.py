@@ -299,6 +299,130 @@ def test_a_key_nobody_reads_is_reported() -> None:
     assert "elsewhere" not in s.unknown_keys(claimed={"elsewhere"})
 
 
+def test_claiming_a_section_does_not_claim_what_is_under_it() -> None:
+    """``claimed`` is exact paths. This assertion is the one the test
+    above was missing: it checked only the section header, which is the
+    single case that works, so both callers passing ``{"dev_env"}`` and
+    getting every dev-env setting reported went unnoticed (poly-bqth).
+
+    Pinned rather than "fixed" by making a claim own its subtree. A
+    subtree claim would silence ``elsewhere.typo`` too, and a key no
+    schema declares is a typo whoever owns the section it sits in.
+    """
+    s = _schema()
+    s.load_from({"a": {"n": 1}, "elsewhere": {"x": 1, "typo": 2}})
+
+    by_section = s.unknown_keys(claimed={"elsewhere"})
+    by_path = s.unknown_keys(claimed={"elsewhere", "elsewhere.x"})
+
+    assert "elsewhere.x" in by_section, (
+        "a section claim must not reach under itself -- if it does, the "
+        "typo below goes silent with it"
+    )
+    assert "elsewhere.x" not in by_path
+    assert "elsewhere.typo" in by_path
+
+
+# --- the two packages sharing one file (poly-bqth) --------------------------
+
+
+def _polytropos_schema(document: dict) -> Schema:
+    s = Schema(settings.SETTINGS, name="polytropos")
+    s.load_from(document)
+    return s
+
+
+def test_a_dev_env_setting_is_not_reported_as_a_key_nobody_reads() -> None:
+    """Measured on the builder, 2026-09-26: ``dportsv3 config check``
+    exited 1 with
+
+        warning: dev_env.dsynth_ccache is not a setting anything reads
+                 (check the spelling)
+
+    against a correctly spelled setting that dsynth.py reads, set to true
+    on purpose, pointing at a 30 GB warm compiler cache. The obvious way
+    to make the check pass was to delete the line, which turns ccache off
+    and puts chromium back to ~13 h a round (poly-dei7).
+    """
+    s = _polytropos_schema({"dev_env": {"dsynth_ccache": True}})
+
+    assert s.unknown_keys(claimed=settings.dev_env_claimed_paths()) == []
+
+
+def test_a_misspelled_dev_env_key_is_still_reported() -> None:
+    """The half that claiming the section would have thrown away: it fixes
+    the false positive by giving up the true one, and a silently ignored
+    key is the whole reason this machinery exists."""
+    s = _polytropos_schema({"dev_env": {"dsynth_cache": True}})
+
+    assert s.unknown_keys(claimed=settings.dev_env_claimed_paths()) == [
+        "dev_env.dsynth_cache"
+    ]
+
+
+def test_the_claim_is_the_dev_env_table_itself() -> None:
+    """Derived, not transcribed -- a hand-kept list would drift from the
+    table the moment a dev-env setting is added, and the drift would look
+    exactly like poly-bqth again."""
+    declared = {item.path for item in dev_env_config.SETTINGS}
+
+    assert declared, "the dev-env table came back empty"
+    assert settings.dev_env_claimed_paths() == declared
+
+
+def test_config_check_passes_with_a_dev_env_setting_in_the_file(
+    set_setting, capsys,
+) -> None:
+    """End to end, because that is the surface that failed: the rc scripts
+    run ``config check`` at service start and a deploy's verify step reads
+    its exit code, so a false warning there is a FAIL row a human has to
+    reason about. It was reported as pre-existing host drift once already.
+    """
+    from argparse import Namespace
+
+    set_setting("dev_env.dsynth_ccache", True)
+    settings.reset()
+
+    rc = config_cmd.cmd_config(Namespace(config_action="check"))
+    err = capsys.readouterr().err
+
+    assert "dsynth_ccache" not in err, err
+    assert rc == 0, err
+
+
+def test_config_check_still_fails_on_a_misspelled_dev_env_key(
+    set_setting, capsys,
+) -> None:
+    from argparse import Namespace
+
+    set_setting("dev_env.dsynth_cache", True)
+    settings.reset()
+
+    rc = config_cmd.cmd_config(Namespace(config_action="check"))
+    err = capsys.readouterr().err
+
+    assert "dev_env.dsynth_cache is not a setting anything reads" in err
+    assert rc == 1
+
+
+def test_no_dev_env_setting_owns_a_free_form_table() -> None:
+    """Tripwire, not a rule about how to write settings.
+
+    A ``table`` setting owns every key beneath it, and ``unknown_keys``
+    knows that only for the schema the setting belongs to -- a claimed
+    path is matched exactly. So the first table-kind setting in the
+    dev-env table would have its children reported as unknown, which is
+    poly-bqth wearing a different hat.
+
+    If this fails: teach ``unknown_keys`` about the other schema's tables.
+    Do not widen the claim back to the section.
+    """
+    tables = [item.path for item in dev_env_config.SETTINGS
+              if item.kind == "table"]
+
+    assert tables == [], tables
+
+
 def test_a_missing_file_is_not_an_error() -> None:
     """Every setting has a default, so no file is a working install."""
     s = _schema()

@@ -356,6 +356,16 @@ class Schema:
         change had no effect. ``claimed`` lets a caller pass the paths
         another schema owns, so sharing one file does not make every key
         look unknown to everybody.
+
+        ``claimed`` IS EXACT PATHS, NOT SECTIONS. "dev_env" claims a key
+        spelled exactly ``dev_env`` and nothing under it; the other
+        schema's own table is what to pass (see
+        ``settings.dev_env_claimed_paths``). Both callers once passed the
+        section name, which reported every dev-env setting in the file as
+        a key nothing reads (poly-bqth). Claiming the subtree instead
+        would have fixed that by making a genuine typo under ``dev_env``
+        silent again — the exact thing this method exists to catch — so
+        the paths are the point, not a convenience.
         """
         known = set(self._by_path) | (claimed or set())
         # A setting of kind "table" owns everything beneath it.

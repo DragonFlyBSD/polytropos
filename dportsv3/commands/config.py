@@ -152,7 +152,7 @@ def _check(args: Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             problems += 1
 
-    for key in sch.unknown_keys(claimed={"dev_env"}):
+    for key in sch.unknown_keys(claimed=settings.dev_env_claimed_paths()):
         print(f"warning: {key} is not a setting anything reads "
               f"(check the spelling)", file=sys.stderr)
         problems += 1

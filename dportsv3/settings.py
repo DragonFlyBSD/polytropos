@@ -46,6 +46,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dports_dev_env.config import SETTINGS as _DEV_ENV_SETTINGS
 from dports_dev_env.confschema import (  # noqa: F401 — re-exported
     ConfigError,
     Resolved,
@@ -758,11 +759,31 @@ def config_path() -> Path | None:
     return None if directory is None else directory / CONFIG_FILENAME
 
 
+def dev_env_claimed_paths() -> set[str]:
+    """The settings the dev-env owns in the file both packages share.
+
+    EVERY DECLARED PATH, not the ``dev_env`` section name. Claiming the
+    bare section told ``unknown_keys`` about the string "dev_env" and
+    nothing beneath it, so every dev-env setting an operator actually set
+    was reported as a key nothing reads — on the builder that was
+    ``dev_env.dsynth_ccache``, correctly spelled, read by dsynth.py, and
+    holding a 30 GB compiler cache that the warning's own advice
+    ("check the spelling") argued for deleting (poly-bqth).
+
+    Claiming the paths keeps the other half working: a key under
+    ``dev_env`` that no schema declares is still a typo, and is still
+    reported. Suppressing the whole section would have made
+    ``dev_env.dsynth_cache`` silent, which is the failure this machinery
+    exists to prevent.
+    """
+    return {s.path for s in _DEV_ENV_SETTINGS}
+
+
 def _warn_about_unknown_keys(sch: Schema) -> None:
     """A misspelled key is otherwise perfectly silent — the file parses,
     the setting keeps its default, and nothing says why the edit had no
     effect."""
-    unknown = sch.unknown_keys(claimed={"dev_env"})
+    unknown = sch.unknown_keys(claimed=dev_env_claimed_paths())
     if not unknown:
         return
     _LOG.warning(
