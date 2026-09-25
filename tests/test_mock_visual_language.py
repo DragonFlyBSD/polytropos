@@ -88,3 +88,77 @@ def test_every_template_uses_one_of_the_known_page_containers() -> None:
             f"{path.name} wraps its content in a page container that "
             f"{PAGE_CONTAINERS} does not cover, so the width rule above "
             f"does not reach it")
+
+
+# --------------------------------------------------------------- corners
+
+# The only things on this console that may be round, because each one IS a
+# circle. Anything else with a corner radius is a regression against the mock.
+ROUND_BY_SHAPE = {
+    ".now-bar .gauge-ring",       # the token gauges -- the mock's own circles
+    ".now-bar .gauge-ring::before",  # the ring's hole
+    ".token-pie",                 # a pie chart
+    ".t-gates li::before",        # a list bullet
+    ".notes li::before",          # a list bullet
+    ".t-dots i",                  # the tour's page dots
+}
+
+
+def _radius_rules() -> list[tuple[str, str, str]]:
+    """(file, selector, value) for every border-radius, comments stripped.
+
+    Templates carry inline <style> blocks, so the stylesheet alone is not the
+    whole surface -- 17 of the 80 corners this bead removed were in templates.
+    """
+    out: list[tuple[str, str, str]] = []
+    sources = [(CSS.name, CSS.read_text())]
+    for path in sorted(TEMPLATES.rglob("*.html")):
+        text = path.read_text()
+        for m in re.finditer(r"<style>(.*?)</style>", text, re.S):
+            sources.append((path.name, m.group(1)))
+    for name, text in sources:
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        for m in re.finditer(r"([^{}@][^{}]*?)\{([^{}]*)\}", text):
+            for value in re.findall(r"border-radius:\s*([^;}\n]+)", m.group(2)):
+                out.append((name, " ".join(m.group(1).split()), value.strip()))
+    return out
+
+
+def test_nothing_is_round_unless_it_is_a_circle() -> None:
+    """poly-x3pg.15: the console's language is square.
+
+    Not a style preference -- it is the single biggest reason a screenshot of
+    this console did not look like a screenshot of the mock even where the
+    structure matched. 74 radii in the stylesheet, 18 more in template styles,
+    against three in the whole mock.
+    """
+    for name, selector, value in _radius_rules():
+        assert value == "50%", (
+            f"{name}: {selector!r} rounds its corners ({value}). The console "
+            f"is square -- the mock uses border-radius three times in 220KB "
+            f"(poly-x3pg.15)."
+        )
+        assert selector in ROUND_BY_SHAPE, (
+            f"{name}: {selector!r} is a new circle. Only a shape that IS a "
+            f"circle may be round; state markers are square in the mock "
+            f"(.live-dot, .status, .health-item, .wt-sub .dot are all squares, "
+            f"and .occ-dot is a square rotated into a diamond)."
+        )
+
+
+def test_state_markers_are_square() -> None:
+    """The correction the side-by-side forced on the bead as filed.
+
+    poly-x3pg.15 listed dots as "legitimately round and must stay". The mock
+    draws every one of them square, and .occ-dot as a diamond -- shape is
+    carrying meaning there, which is also why this console never lets colour
+    carry state alone.
+    """
+    css = CSS.read_text()
+    for selector in [".live-dot::before", ".live-indicator .dot",
+                     ".status-pill .pill-dot", ".health-item .dot",
+                     ".worklist .wl-dot", ".wt-sub .dot.run"]:
+        block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert block, f"{selector} is gone"
+        assert "border-radius" not in block.group(1), (
+            f"{selector} is a state marker and the mock draws it square")

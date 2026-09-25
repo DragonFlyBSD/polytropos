@@ -308,12 +308,30 @@ a { color: var(--cyan); }
 /* --- primitives ------------------------------------------------------------
  * The vocabulary every view composes from. Named for what they mean, not for
  * where they first appeared.
- */
+ *
+ * SQUARE (poly-x3pg.15). Nothing here has a corner radius, and nothing
+ * downstream should add one. The mock this console is drawn from uses
+ * border-radius three times in 220KB -- one 2px pill of its own annotation
+ * chrome, and the two circles of the token gauges -- and that squareness is
+ * what makes it read as an instrument rather than as a web app. The build had
+ * 92 rounded corners across the stylesheet and the templates' inline styles;
+ * all 80 non-circular ones are gone.
+ *
+ * ROUND ONLY WHERE THE SHAPE IS A CIRCLE. Six survive: the gauge ring and its
+ * hole, the token pie, and three typographic marks the mock has no counterpart
+ * for (two list bullets and the tour's page dots).
+ *
+ * STATE MARKERS ARE SQUARE. This is the correction the side-by-side forced:
+ * the bead had assumed dots were "legitimately round and must stay", and the
+ * mock draws every one of them square -- .live-dot::before 8x8, .status::before
+ * 7x7, .health-item::before 7x7, .wt-sub .dot 6x6, and .occ-dot as a 9x9 square
+ * rotated 45 degrees into a diamond. Shape is doing work there, so our six
+ * state markers follow it. */
 
 /* Status pill. State is carried by text AND colour, never colour alone. */
 .pill {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 8px; border-radius: 2px;
+  padding: 2px 8px;
   font: 600 12px/1.6 var(--mono);
   border: 1px solid transparent; white-space: nowrap;
 }
@@ -328,7 +346,6 @@ a { color: var(--cyan); }
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 3px;
 }
 .panel + .panel { margin-top: 10px; }
 .content-head {
@@ -368,7 +385,7 @@ select, option { background: var(--surface); color: var(--text); }
 .action {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 30px; padding: 0 12px;
-  border: 1px solid var(--line-hot); border-radius: 3px;
+  border: 1px solid var(--line-hot);
   background: var(--surface); color: var(--text);
   font: 600 13px/1 var(--sans); cursor: pointer;
 }
@@ -389,7 +406,7 @@ select, option { background: var(--surface); color: var(--text); }
 /* Live indicator. */
 .live-dot { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--mono); color: var(--muted); }
 .live-dot::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  content: ""; width: 7px; height: 7px;
   background: var(--faint);
 }
 .live-dot.on::before { background: var(--green); animation: live-blip 1.8s ease-in-out infinite; }
@@ -479,7 +496,7 @@ select, option { background: var(--surface); color: var(--text); }
   display: inline-flex; align-items: center; justify-content: center;
   appearance: none; min-height: 32px; padding: 0 10px;
   color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--line-hot); border-radius: 3px;
+  border: 1px solid var(--line-hot);
   font: 500 13px/1 var(--sans); text-decoration: none; white-space: nowrap;
 }
 .control:hover { border-color: var(--cyan); }
@@ -544,7 +561,7 @@ table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow:
    only how far along the run is. */
 .pbar {
   display: flex; height: 7px; margin: 5px 0;
-  background: var(--track); border-radius: 2px; overflow: hidden;
+  background: var(--track); overflow: hidden;
 }
 .pbar i { display: block; height: 100%; }
 .pbar .seg-success { background: var(--green); }
@@ -568,7 +585,7 @@ table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow:
 .result-search {
   width: 220px; min-width: 150px; min-height: 32px; padding: 0 10px;
   color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--line-hot); border-radius: 3px;
+  border: 1px solid var(--line-hot);
   font: 13px var(--mono);
 }
 .result-search:focus { outline: 2px solid var(--cyan); outline-offset: 1px; }
@@ -579,8 +596,7 @@ table.data-table tr.is-selected > td { background: var(--surface-3); box-shadow:
   border: 1px solid var(--line-hot); border-left: 0;
   font: 700 12px/1 var(--sans); text-decoration: none;
 }
-.result-filter:first-child { border-left: 1px solid var(--line-hot); border-radius: 3px 0 0 3px; }
-.result-filter:last-child { border-radius: 0 3px 3px 0; }
+.result-filter:first-child { border-left: 1px solid var(--line-hot); }
 .result-filter:hover { color: var(--text); }
 .result-filter.active { color: var(--on-accent); background: var(--cyan); border-color: var(--cyan); }
 .result-filter .n { margin-left: 6px; font-family: var(--mono); opacity: .75; }
@@ -823,7 +839,6 @@ a:hover { color: var(--cyan); text-decoration: underline; }
 .tracker-card {
   background: var(--bg-card);
   border: 1px solid var(--amber-border);
-  border-radius: 4px;
   padding: 12px 16px;
   margin-bottom: 16px;
 }
@@ -836,7 +851,6 @@ a:hover { color: var(--cyan); text-decoration: underline; }
 .target-card {
   background: var(--bg-card);
   border: 1px solid var(--amber-border);
-  border-radius: 4px;
   padding: 12px 14px;
   text-decoration: none;
   color: inherit;
@@ -865,7 +879,6 @@ a:hover { color: var(--cyan); text-decoration: underline; }
 }
 .target-card .stat-pill {
   padding: 2px 6px;
-  border-radius: 3px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -928,7 +941,6 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
   vertical-align: middle;
   margin-right: 4px;
   background: var(--surface-3);
@@ -947,7 +959,6 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   max-height: 240px;
   overflow: auto;
   border: 1px dashed var(--amber-border);
-  border-radius: 4px;
   padding: 4px 6px;
   background: var(--bg);
 }
@@ -990,7 +1001,6 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   font-variant-numeric: tabular-nums;
   padding: 2px 8px;
   border: 1px solid var(--line);
-  border-radius: 3px;
   color: var(--text-dim);
   text-decoration: none;
 }
@@ -1025,7 +1035,6 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   color: var(--text-dim);
   background: var(--bg-card);
   border-left: 3px solid var(--amber-border);
-  border-radius: 3px;
 }
 
 .empty-state {
@@ -1034,7 +1043,6 @@ table.tracker-table td.tok-empty { color: var(--text-dim); }
   text-align: center;
   background: var(--bg-card);
   border: 1px dashed var(--amber-border);
-  border-radius: 4px;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────
@@ -1062,7 +1070,6 @@ button.btn {
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  border-radius: 4px;
   border: 1px solid var(--amber-border);
   background: var(--bg-card);
   color: var(--text);
@@ -1191,7 +1198,6 @@ button.btn:disabled {
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--panel-bg, var(--surface));
   border: 1px solid var(--border, var(--line));
-  border-radius: 6px;
   padding: 0;
   overflow-x: auto;
   /* Bundle-page inline preview caps height; standalone artifact view
@@ -1308,7 +1314,6 @@ button.btn:disabled {
   grid-template-columns: 288px 1fr;
   height: 588px;
   border: 1px solid var(--border-strong, var(--line));
-  border-radius: 10px;
   overflow: hidden;
   background: var(--bg-card);
   box-shadow: var(--shadow);
@@ -1359,7 +1364,7 @@ button.btn:disabled {
   font-size: 12px; font-weight: 700; letter-spacing: .04em;
   color: var(--text-dim);
   background: var(--c-neutral-bg, var(--surface-2));
-  border-radius: 3px; padding: 1px 4px;
+ padding: 1px 4px;
 }
 .reader .a-row .a-meta {
   grid-column: 1 / -1; grid-row: 2;
@@ -1397,7 +1402,7 @@ button.btn:disabled {
   font-size: 12px; font-weight: 550; text-decoration: none;
   color: var(--amber-dim, var(--amber));
   border: 1px solid var(--amber-border, rgba(180, 100, 0, .22));
-  border-radius: 5px; padding: 3px 9px; background: transparent;
+ padding: 3px 9px; background: transparent;
   white-space: nowrap;
 }
 .reader .dh-btn:hover { background: rgba(196, 112, 0, .07); }
@@ -1432,11 +1437,11 @@ button.btn:disabled {
   font-size: 12px; font-weight: 700; letter-spacing: .06em;
   color: var(--text-dim);
   border: 1.5px solid var(--border-strong, var(--line));
-  border-radius: 8px; padding: 14px 18px; background: var(--bg, var(--surface));
+ padding: 14px 18px; background: var(--bg, var(--surface));
 }
 .reader .a-fallback .fb-msg { font-size: 13px; max-width: 42ch; line-height: 1.5; }
 .reader .a-fallback .fb-msg strong { color: var(--text); font-weight: 600; }
-.reader .a-fallback .dh-btn { font-size: 12px; padding: 6px 14px; border-radius: 6px; }
+.reader .a-fallback .dh-btn { font-size: 12px; padding: 6px 14px; }
 
 @media (max-width: 760px) {
   .reader { grid-template-columns: 1fr; height: auto; }
@@ -1470,15 +1475,13 @@ details.section-collapse > summary .muted {
    claimed -- one view with the queue beside the work is a split, not a
    composed column -- so the rule is gone rather than revived (poly-x3pg.14). */
 
-/* Bundle summary bar: a single rounded strip of status + facts, sitting
-   above the artifact reader. Overrides .tracker-card's tight 4px corners
-   and lays the facts out as a flex row so the pills + labels align. */
+/* Bundle summary bar: one strip of status + facts above the artifact reader,
+   laid out as a flex row so the pills + labels align. */
 .bundle-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
-  border-radius: 10px;
   padding: 12px 16px;
   font-size: 12.5px;
 }
@@ -1486,10 +1489,10 @@ details.section-collapse > summary .muted {
   color: var(--text-dim, var(--muted)); font-size: 12px; text-transform: uppercase;
   letter-spacing: .05em; margin-right: 3px;
 }
-/* Facts pills (result / dops) inside the bar: small rounded pills. */
+/* Facts pills (result / dops) inside the bar. */
 .bundle-header .stat-pill:not(.status-pill) {
   display: inline-flex; align-items: center;
-  padding: 2px 9px; border-radius: 2px;
+  padding: 2px 9px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
 }
 
@@ -1497,11 +1500,11 @@ details.section-collapse > summary .muted {
    wherever it renders: worklist, bundles list, and this bar. */
 .status-pill {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 10px; border-radius: 2px;
+  padding: 3px 10px;
   font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
 }
 .status-pill .pill-dot {
-  width: 6px; height: 6px; border-radius: 50%;
+  width: 6px; height: 6px;
   background: currentColor; opacity: .85; flex: none;
 }
 
@@ -1517,7 +1520,7 @@ details.section-collapse > summary .muted {
 .worklist .wl-focus {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 14px 18px; margin: 14px 0 10px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg-card); border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
 .worklist .wl-focus-num {
@@ -1529,7 +1532,7 @@ details.section-collapse > summary .muted {
 .worklist .wl-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-left: auto; }
 .worklist .wl-chip {
   display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
-  font-size: 12px; padding: 5px 11px; border-radius: 3px;
+  font-size: 12px; padding: 5px 11px;
   border: 1px solid var(--border-strong, var(--line)); color: var(--text-dim); background: var(--bg-card);
 }
 .worklist .wl-chip:hover { border-color: var(--line-hot); }
@@ -1550,7 +1553,7 @@ details.section-collapse > summary .muted {
 .worklist .wl-ops {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px;
   padding: 8px 18px; margin-bottom: 26px; font-size: 12px; color: var(--text-dim);
-  border: 1px solid var(--border); border-radius: 3px; background: var(--bg-sunk, var(--surface-2));
+  border: 1px solid var(--border); background: var(--bg-sunk, var(--surface-2));
 }
 .worklist .wl-ops b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .worklist .wl-ops a { color: var(--amber-dim); text-decoration: none; }
@@ -1560,7 +1563,7 @@ details.section-collapse > summary .muted {
    the dot centers via vertical-align. */
 .worklist .wl-ops-item { white-space: nowrap; }
 .worklist .wl-ops-spacer { margin-left: auto; }
-.worklist .wl-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; position: relative; top: -1px; }
+.worklist .wl-dot { width: 7px; height: 7px; display: inline-block; margin-right: 6px; vertical-align: middle; position: relative; top: -1px; }
 .worklist .wl-dot.ok { background: var(--c-built, var(--green)); }
 .worklist .wl-dot.bad { background: var(--c-failed, var(--red)); }
 
@@ -1570,12 +1573,12 @@ details.section-collapse > summary .muted {
 .worklist .wl-band-head h2 { font-size: 14px; font-weight: 680; margin: 0; }
 .worklist .wl-band-meta { font-size: 12px; color: var(--text-dim); font-weight: normal; }
 .worklist .wl-list {
-  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--border); overflow: hidden;
   background: var(--bg-card); box-shadow: var(--shadow);
 }
 .worklist .wl-empty {
   padding: 9px 16px; margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint, var(--muted));
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border);
 }
 .worklist .wl-empty .lbl { font-weight: 600; color: var(--text-dim); }
 
@@ -1634,14 +1637,14 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-x {
   flex: none; white-space: nowrap;
   font-size: 12px; font-weight: 700; color: var(--c-failed, var(--red));
-  background: var(--c-failed-bg, var(--red-soft)); border-radius: 3px; padding: 1px 8px;
+  background: var(--c-failed-bg, var(--red-soft)); padding: 1px 8px;
   font-variant-numeric: tabular-nums;
 }
 .worklist .wl-recur {
   flex: none; white-space: nowrap;
   font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--c-failed, var(--red)); border: 1px solid var(--c-failed, var(--red-line));
-  border-radius: 4px; padding: 0 4px; opacity: .8;
+ padding: 0 4px; opacity: .8;
 }
 .worklist .wl-subid { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--text-faint, var(--muted)); }
 
@@ -1649,7 +1652,7 @@ a.wl-port:hover { color: var(--amber-dim); }
 
 .worklist .wl-pill {
   display: inline-flex; align-items: center; font-size: 12px; font-weight: 600;
-  padding: 2px 9px; border-radius: 3px; white-space: nowrap;
+  padding: 2px 9px; white-space: nowrap;
 }
 .worklist .wl-pill.sm { padding: 1px 8px; font-size: 12px; }
 .worklist .wl-pill.built   { background: var(--c-built-bg, var(--surface-2));  color: var(--c-built, var(--green)); }
@@ -1664,12 +1667,12 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-actions { grid-column: 5; grid-row: 1; display: flex; align-items: center; gap: 6px; justify-self: end; }
 .worklist .wl-btn {
   font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
-  border-radius: 7px; padding: 5px 13px; white-space: nowrap; border: 1px solid transparent;
+ padding: 5px 13px; white-space: nowrap; border: 1px solid transparent;
 }
 .worklist .wl-btn-review {
   background: var(--bg-card); color: var(--text-dim);
   border-color: var(--border-strong, var(--line));
-  border-radius: 4px; padding: 3px 9px;
+ padding: 3px 9px;
 }
 .worklist .wl-btn-review:hover { color: var(--cyan); border-color: var(--cyan); }
 
@@ -1679,7 +1682,7 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist .wl-search input[type="search"] {
   flex: 1; min-width: 0; height: 32px; padding: 0 10px; font-size: 13px;
   color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--border-strong, var(--line)); border-radius: 3px;
+  border: 1px solid var(--border-strong, var(--line));
 }
 .worklist .wl-search input[type="search"]:focus {
   outline: none; border-color: var(--cyan);
@@ -1714,12 +1717,12 @@ a.wl-port:hover { color: var(--amber-dim); }
 .worklist #env-health { font-size: 15px; font-weight: 680; margin-top: 30px; margin-bottom: 10px; }
 .worklist .env-active-banner {
   padding: 11px 16px; margin-bottom: 12px;
-  background: var(--bg-sunk, var(--surface-2)); border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg-sunk, var(--surface-2)); border: 1px solid var(--border);
   font-size: 12.5px;
 }
 .worklist .env-active-banner strong { color: var(--text); }
 .worklist .wl-tablecard {
-  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--border); overflow: hidden;
   background: var(--bg-card); box-shadow: var(--shadow);
 }
 .worklist .wl-tablecard table.tracker-table { border: none; }
@@ -1736,7 +1739,7 @@ a.wl-port:hover { color: var(--amber-dim); }
 /* The status/check words become real pills (base .stat-pill carries no shape). */
 .worklist .wl-tablecard .stat-pill {
   display: inline-flex; align-items: center; margin: 1px 3px 1px 0;
-  padding: 2px 9px; border-radius: 3px; font-size: 12px; font-weight: 600;
+  padding: 2px 9px; font-size: 12px; font-weight: 600;
 }
 
 /* --- Repairs cockpit -------------------------------------------------------
@@ -2025,7 +2028,7 @@ a.pipe-node:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px;
 /* .wl-dot is scoped to .worklist, so the strip carries its own. Same two
    states, same tokens. */
 .health-item .dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--track);
+  width: 7px; height: 7px; background: var(--track);
   align-self: center;
 }
 .health-item .dot.ok  { background: var(--green); }
@@ -2250,7 +2253,7 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
   width:min(980px,100%); max-height:min(760px,92vh);
   display:grid; grid-template-columns:214px 1fr; grid-template-rows:1fr auto;
   background:var(--bg-card); color:var(--text);
-  border:1px solid var(--border-strong); border-radius:14px; overflow:hidden;
+  border:1px solid var(--border-strong); overflow:hidden;
   box-shadow:0 24px 70px rgba(0,0,0,.34), 0 3px 10px rgba(0,0,0,.16);
   animation:t-rise .26s cubic-bezier(.2,.7,.3,1) both;
 }
@@ -2271,7 +2274,7 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
 .t-rail-list{list-style:none;display:flex;flex-direction:column;gap:1px}
 .t-rail-btn{
   width:100%;display:grid;grid-template-columns:20px 1fr;gap:8px;align-items:baseline;
-  text-align:left;background:none;border:0;border-radius:7px;padding:7px 8px;cursor:pointer;
+  text-align:left;background:none;border:0;padding:7px 8px;cursor:pointer;
   font-family:var(--sans);font-size:12.5px;line-height:1.35;color:var(--text-dim);
 }
 .t-rail-btn .num{font-family:var(--mono);font-size:12px;color:var(--text-faint);font-variant-numeric:tabular-nums}
@@ -2289,7 +2292,7 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
 .t-pane p{font-size:13.5px;line-height:1.62;color:var(--text);max-width:62ch;margin-bottom:13px}
 .t-pane p.t-lead{font-size:14.5px;color:var(--text)}
 .t-pane strong{font-weight:600;color:var(--text)}
-.t-pane code,.t-k{font-family:var(--mono);font-size:12.5px;background:var(--c-neutral-bg);border-radius:4px;padding:1px 5px;color:var(--text)}
+.t-pane code,.t-k{font-family:var(--mono);font-size:12.5px;background:var(--c-neutral-bg);padding:1px 5px;color:var(--text)}
 .t-pane h3{font-family:var(--slab);font-weight:600;font-size:14.5px;margin:22px 0 8px}
 
 .t-defs{display:flex;flex-direction:column;gap:10px;margin:4px 0 16px}
@@ -2304,7 +2307,7 @@ a.stage-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px;
   display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;
   font-size:12.5px;line-height:1.55;color:var(--text);
   background:var(--c-ignored-bg);border:1px solid var(--amber-line, var(--border-strong));border-left:3px solid var(--c-skipped);
-  border-radius:0 8px 8px 0;padding:10px 14px;margin:14px 0;max-width:64ch;
+padding:10px 14px;margin:14px 0;max-width:64ch;
 }
 .t-note .lbl{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--c-skipped);padding-top:2px}
 
@@ -2315,14 +2318,14 @@ svg.t-svg{display:block;max-width:100%;height:auto;color:var(--text-dim)}
 
 /* fingerprint strip */
 .t-fp{display:flex;flex-direction:column;gap:0;font-family:var(--mono);font-size:12.5px}
-.t-fp-row{border:1px solid var(--border);background:var(--bg-sunk);border-radius:8px;padding:9px 12px;line-height:1.55;overflow-x:auto}
+.t-fp-row{border:1px solid var(--border);background:var(--bg-sunk);padding:9px 12px;line-height:1.55;overflow-x:auto}
 .t-fp-row.out{background:var(--bg-card)}
 .t-fp-lbl{font-family:var(--mono);font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-faint);margin:0 0 4px 2px}
 .t-fp-arrow{color:var(--text-faint);font-size:12px;text-align:center;padding:5px 0 3px}
-.t-fp mark{background:var(--c-failed-bg);color:var(--c-failed);border-radius:3px;padding:0 2px}
-.t-fp ins{background:var(--c-built-bg);color:var(--c-built);text-decoration:none;border-radius:3px;padding:0 2px}
+.t-fp mark{background:var(--c-failed-bg);color:var(--c-failed);padding:0 2px}
+.t-fp ins{background:var(--c-built-bg);color:var(--c-built);text-decoration:none;padding:0 2px}
 .t-rules{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 2px}
-.t-rules span{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--bg-card);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+.t-rules span{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--bg-card);border:1px solid var(--border);padding:2px 8px}
 .t-digest{font-family:var(--mono);font-size:12px;color:var(--amber-dim);font-weight:600}
 
 /* band + status tables */
@@ -2336,19 +2339,19 @@ svg.t-svg{display:block;max-width:100%;height:auto;color:var(--text-dim)}
 .t-table tr:last-child td{border-bottom:0}
 .t-table td.k{font-family:var(--mono);font-size:12.5px;color:var(--text);white-space:nowrap}
 .t-band-name{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text);white-space:nowrap}
-.t-band-name i{width:3px;height:15px;border-radius:2px;display:inline-block;flex:none}
+.t-band-name i{width:3px;height:15px;display:inline-block;flex:none}
 .t-band-name i.ready{background:var(--c-built)}
 .t-band-name i.verify{background:var(--c-skipped)}
 .t-band-name i.decide{background:var(--c-failed)}
 .t-band-name i.owned{background:var(--text-dim)}
 .t-band-name i.delivering{background:var(--c-built);opacity:.45}
 .t-band-name i.archive{background:var(--border-strong)}
-.t-pill{display:inline-flex;align-items:center;font-family:var(--mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.t-pill{display:inline-flex;align-items:center;font-family:var(--mono);font-size:12px;font-weight:600;padding:2px 8px;white-space:nowrap}
 .t-pill.built{background:var(--c-built-bg);color:var(--c-built)}
 .t-pill.failed{background:var(--c-failed-bg);color:var(--c-failed)}
 .t-pill.skipped{background:var(--c-skipped-bg);color:var(--c-skipped)}
 .t-pill.total{background:var(--c-neutral-bg);color:var(--text)}
-.t-btnghost{font-family:var(--mono);font-size:12.5px;border:1px solid var(--amber-border);border-radius:5px;padding:1px 7px;color:var(--amber-dim);white-space:nowrap}
+.t-btnghost{font-family:var(--mono);font-size:12.5px;border:1px solid var(--amber-border);padding:1px 7px;color:var(--amber-dim);white-space:nowrap}
 
 /* gates */
 .t-gates{list-style:none;display:flex;flex-direction:column;gap:9px;margin:6px 0 4px;max-width:64ch}
@@ -2377,7 +2380,7 @@ svg.t-svg{display:block;max-width:100%;height:auto;color:var(--text-dim)}
 .t-check input{accent-color:var(--amber);width:13px;height:13px}
 .t-btn{
   font-family:var(--sans);font-size:12.5px;font-weight:500;cursor:pointer;
-  display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;
+  display:inline-flex;align-items:center;gap:6px;padding:6px 14px;
   border:1px solid var(--amber-border);background:var(--bg-card);color:var(--text);
   transition:background-color 90ms ease,border-color 90ms ease,color 90ms ease;
 }
@@ -2388,7 +2391,7 @@ svg.t-svg{display:block;max-width:100%;height:auto;color:var(--text-dim)}
 .t-btn.quiet{border-color:transparent;background:transparent;color:var(--text-dim)}
 .t-btn.quiet:hover{background:var(--c-neutral-bg);color:var(--text)}
 .t-close{
-  position:absolute;top:14px;right:16px;z-index:2;width:26px;height:26px;border-radius:6px;
+  position:absolute;top:14px;right:16px;z-index:2;width:26px;height:26px;
   border:1px solid transparent;background:transparent;color:var(--text-dim);cursor:pointer;font-size:15px;line-height:1;
 }
 .t-close:hover{background:var(--c-neutral-bg);color:var(--text)}
@@ -2408,7 +2411,7 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 .notes ul{list-style:none;display:flex;flex-direction:column;gap:7px}
 .notes li{padding-left:15px;position:relative}
 .notes li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:var(--amber);opacity:.5}
-.notes code{font-family:var(--mono);font-size:12.5px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+.notes code{font-family:var(--mono);font-size:12.5px;background:var(--bg-card);border:1px solid var(--border);padding:1px 5px}
 
 @media (max-width:820px){
   .t-dialog{grid-template-columns:1fr;grid-template-rows:auto 1fr auto;max-height:94vh}
@@ -2452,7 +2455,6 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px;
   padding: 10px 12px; background: var(--surface);
   border: 1px solid var(--line); border-left-width: 3px;
-  border-radius: 4px;
 }
 .turn-stream .turn-card.state-ok   { border-left-color: var(--green); }
 .turn-stream .turn-card.state-bad  { border-left-color: var(--red); }
@@ -2466,7 +2468,7 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 
 .turn-stream .turn-glyph {
   display: grid; place-items: center; width: 28px; height: 28px;
-  align-self: start; border: 1px solid; border-radius: 3px;
+  align-self: start; border: 1px solid;
 }
 .turn-stream .turn-glyph svg { width: 16px; height: 16px; display: block; }
 .turn-stream .turn-glyph.state-ok {
@@ -2513,7 +2515,7 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   display: flex; flex-direction: column; gap: 4px; margin-top: 9px;
 }
 .turn-stream .tool-call {
-  border: 1px solid var(--line); border-radius: 3px; background: var(--head);
+  border: 1px solid var(--line); background: var(--head);
 }
 .turn-stream .tool-call > summary,
 .turn-stream .tool-call-line {
@@ -2589,10 +2591,10 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 0 0 12px; padding: 8px 12px;
   background: var(--head-deep); border: 1px solid var(--line);
-  border-radius: 4px; font: 12.5px var(--mono);
+ font: 12.5px var(--mono);
 }
 .now-bar .nb-pill {
-  padding: 2px 8px; border-radius: 3px; font-weight: 700;
+  padding: 2px 8px; font-weight: 700;
   background: var(--surface-3); color: var(--muted);
 }
 .now-bar .nb-pill.cyan {
@@ -2678,7 +2680,7 @@ body.tour-open .dock{opacity:0;pointer-events:none}
  */
 .wf { margin: 0 0 12px; padding: 10px 12px;
       background: var(--surface); border: 1px solid var(--line);
-      border-radius: 4px; }
+ }
 .wf-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 96px;
           gap: 11px; align-items: center; margin-bottom: 7px; }
 .wf-cost { color: var(--text); font: 12px var(--mono); text-align: right;
@@ -2780,7 +2782,7 @@ body.tour-open .dock{opacity:0;pointer-events:none}
   display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
   gap: 8px; align-items: baseline; text-align: left; cursor: pointer;
   padding: 7px 9px; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 3px;
+  border: 1px solid var(--line);
   font: 12px var(--mono); color: var(--muted);
 }
 .wt-file:hover { border-color: var(--line-hot); }
@@ -2797,9 +2799,8 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 .wt-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .wt-sub { grid-column: 2 / -1; color: var(--faint); }
 .wt-sub .dot.run { display: inline-block; width: 6px; height: 6px;
-                   margin-right: 5px; border-radius: 50%;
-                   background: var(--cyan); }
-.wt-diff { border: 1px solid var(--line); border-radius: 3px;
+                   margin-right: 5px; background: var(--cyan); }
+.wt-diff { border: 1px solid var(--line);
            background: var(--surface); overflow: hidden; }
 .wt-diff-head { display: flex; gap: 10px; align-items: baseline;
                 padding: 7px 10px; background: var(--head);
@@ -2827,12 +2828,12 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 /* The note composer, docked at the foot of the job page. */
 .note-composer { margin: 18px 0 0; padding: 12px;
                  background: var(--surface); border: 1px solid var(--line);
-                 border-radius: 4px; }
+ }
 .nc-head { font-size: 15px; margin: 0 0 8px; }
 .nc-head .muted { font: 12px var(--mono); font-weight: normal; }
 .note-composer textarea {
   width: 100%; padding: 8px 10px; background: var(--bg);
-  border: 1px solid var(--line-hot); border-radius: 3px;
+  border: 1px solid var(--line-hot);
   color: var(--text); font: 13px var(--sans); resize: vertical;
 }
 .note-composer textarea:focus-visible { outline: 2px solid var(--cyan);
