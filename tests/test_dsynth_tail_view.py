@@ -226,3 +226,73 @@ def test_the_swap_follows_the_newest_line_unless_scrolled_away() -> None:
     assert "scrollHeight" in block
     assert "scrollTop" in block
     assert "startTailClock()" in block
+
+
+# --- the anchor exists before the first tail (poly-qdy7) ------------------
+#
+# Reported by the operator 2026-09-25T09:30Z: "i have to reload the job detail
+# page to see the tail. when the dsynth_build starts, it's not showing the
+# tail." The client swaps BY ID into #tool-tail-slot and drops the payload
+# when the id is absent, and the slot was rendered only `{% if t.tail %}` --
+# so a page opened before the build started had no anchor, every tail the poll
+# sent was discarded, and only a reload could show one. The whole feature,
+# invisible, for the case it exists to serve.
+#
+# test_the_slot_wrapper_is_always_present above asserts this property on
+# tail_html, where it was never broken. These assert it where it was.
+
+
+def test_the_page_carries_the_slot_before_anything_is_published(live) -> None:
+    """A page opened while dsynth is starting must already have the anchor."""
+    client, _ = live
+
+    body = client.get(f"/agentic/jobs/{JOB}").text
+
+    assert 'id="tool-tail-slot"' in body
+    # empty, though: an anchor, not a stale build
+    assert 'class="tool-tail"' not in body
+
+
+def test_a_card_swap_re_creates_the_slot(live) -> None:
+    """The slot lives inside the card stream, so every cards_html render
+    has to carry it -- otherwise the swap that runs after it has nothing to
+    target, which is the same bug one poll later."""
+    client, db = live
+
+    payload = _fragment(client, 0)
+
+    assert payload["cards_html"], "no cards to check"
+    assert 'id="tool-tail-slot"' in payload["cards_html"]
+
+
+def test_a_card_swap_does_not_carry_the_tail_itself(live) -> None:
+    """The anchor, not the bytes. Putting the tail in cards_html would
+    recreate its <pre> on every poll that has rows and throw away the scroll
+    position of the one element a reader may be inside (poly-pvs2)."""
+    client, db = live
+    _publish(db, "configure: done\n")
+
+    payload = _fragment(client, 0)
+
+    assert "configure: done" not in payload["cards_html"]
+    assert "configure: done" in payload["tail_html"]
+
+
+def test_no_slot_when_no_tailable_tool_is_running(live) -> None:
+    """An anchor on a job that is not building would be a permanent empty
+    strip under the newest turn."""
+    client, db = live
+    # The completion row's stage is "tool:<name>" -- only tool_start
+    # carries the name in extra (render.activity._TOOL_PREFIX).
+    db.execute(
+        "INSERT INTO activity_log (ts, stage, message, job_id, extra_json) "
+        "VALUES ('2026-09-24T10:00:02+00:00', 'tool:dsynth_build', "
+        "'dsynth_build done', ?, "
+        "'{\"attempt\": 1, \"turn\": 1, \"call_id\": \"c1\", "
+        "\"ok\": true}')", (JOB,),
+    )
+    db.commit()
+
+    body = client.get(f"/agentic/jobs/{JOB}").text
+
+    assert 'id="tool-tail-slot"' not in body

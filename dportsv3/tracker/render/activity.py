@@ -438,11 +438,10 @@ def running_tailable_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
     serially -- and only dsynth takes long enough for a tail to mean
     anything.
 
-    NO PRODUCER TODAY. The tracker used to read the build log itself, which
-    needed a root-only `dev-env path` while it runs unprivileged, so it
-    never worked and was removed (poly-paee). This and ``attach_tool_tail``
-    are the consumer side, kept because any publisher would feed exactly
-    them; poly-pvs2 decides whether one arrives or the feature goes.
+    The producer is the RUNNER, on its heartbeat. The tracker cannot read
+    a build log itself -- resolving one needs a root-only `dev-env path`
+    while it runs unprivileged -- which is why the first version of this
+    rendered nothing (poly-paee, resolved by poly-pvs2).
     """
     newest = next((c for c in cards if c.get("kind") == "turn"), None)
     for tool in (newest or {}).get("tools") or []:
@@ -452,19 +451,30 @@ def running_tailable_tool(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def attach_tool_tail(
-    cards: list[dict[str, Any]], tail: dict[str, Any] | None,
+    cards: list[dict[str, Any]], tail: dict[str, Any] | None = None,
 ) -> None:
     """Hang a build's last lines on the tool row that is producing them.
-
-    Has no caller in production -- see ``running_tailable_tool``.
 
     In the row, not in a pane: a tail only exists while one tool runs,
     and when the tool finishes the row collapses to its duration and rc
     (poly-qqx9.8). Mutates the card so the template still depends on
     nothing but ``cards``.
+
+    THE SLOT IS MARKED EVEN WITH NO TAIL, and that is not a detail: the
+    live poll swaps its tail into ``#tool-tail-slot`` BY ID, so a card
+    stream rendered without one silently drops every tail the poll sends.
+    A page opened before the build started therefore never showed one
+    until it was reloaded -- the whole feature, invisible, for the case it
+    exists to serve (poly-qdy7). Call with no tail to mark the slot alone,
+    which is what the fragment does: it keeps the bytes out of
+    ``cards_html`` so a 3s card swap cannot recreate the <pre> a reader
+    may be scrolled inside.
     """
     tool = running_tailable_tool(cards)
-    if tool is not None and tail:
+    if tool is None:
+        return
+    tool["tail_slot"] = True
+    if tail:
         tool["tail"] = tail
 
 

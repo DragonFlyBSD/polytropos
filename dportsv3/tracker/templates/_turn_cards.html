@@ -69,7 +69,10 @@
             {%- if t.running %}running{% else %}{{ dur_ms(t.duration_ms) }}{% endif -%}
           </span>
         </div>
-        {% if t.tail %}{% with tail = t.tail %}{% include "_tool_tail.html" %}{% endwith %}{% endif %}
+        {# The slot whenever a tailable tool is running, tail or not: the live
+           poll swaps into it by id and drops what it sends when it is absent
+           (poly-qdy7). #}
+        {% if t.tail_slot or t.tail %}{% with tail = t.tail %}{% include "_tool_tail.html" %}{% endwith %}{% endif %}
       </div>
       {% endif %}
       {% endfor %}

@@ -180,6 +180,11 @@ def register(app, ctx):
             # (poly-qqx9.16's defect, one surface over). One indexed row.
             tail = job_tail(conn, job_id) if job is not None else None
         html = "".join(row_tmpl.render(a=row) for row in rows)
+        # Mark the tail's slot but do NOT put the bytes in the card stream:
+        # the swap below has to have something to target, and a card stream
+        # rendered without the slot drops every tail this endpoint sends
+        # (poly-qdy7).
+        render.attach_tool_tail(cards)
         cards_html = (
             cards_tmpl.render(cards=render.window_cards(cards))
             if rows else ""
