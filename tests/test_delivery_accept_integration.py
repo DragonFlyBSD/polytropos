@@ -461,6 +461,50 @@ def test_provider_failure_records_create_failed_row(
 # =====================================================================
 
 
+def test_failed_delivery_retries_without_reaccepting(client, deployment):
+    """poly-86t: exercise the actual provider, persistence, and rendered action."""
+    conn = _open(deployment)
+    _seed_bundle(conn, "b-recover")
+    sha = _seed_diff_artifact(deployment["artifact_root"], "b-recover", _SAMPLE_DIFF)
+    _insert_artifact_ref(conn, "b-recover", "analysis/changes.diff", sha)
+    conn.close()
+    deployment["outbox"].rmdir()
+
+    accepted = client.post("/api/bundles/b-recover/accept", json={})
+    assert accepted.status_code == 200
+    assert accepted.json()["delivery"]["status"] == "create_failed"
+    assert 'id="op-deliver"' in client.get("/agentic/bundles/b-recover").text
+
+    # A repeated failure is recorded, and leaves recovery available.
+    failed = client.post("/api/bundles/b-recover/deliver", json={})
+    assert failed.status_code == 200
+    assert failed.json()["delivery"]["status"] == "create_failed"
+    deployment["outbox"].mkdir()
+    recovered = client.post("/api/bundles/b-recover/deliver", json={})
+    assert recovered.status_code == 200
+    assert recovered.json()["delivery"]["status"] == "created"
+    patches = list(deployment["outbox"].rglob("*.patch"))
+    assert len(patches) == 1
+    assert patches[0].read_text() == _SAMPLE_DIFF
+
+    conn = _open(deployment)
+    bundle = conn.execute(
+        "SELECT resolution, accepted_at FROM bundles WHERE bundle_id='b-recover'"
+    ).fetchone()
+    rows = conn.execute(
+        "SELECT status FROM bundle_review_requests WHERE bundle_id='b-recover' ORDER BY id"
+    ).fetchall()
+    events = [r[0] for r in conn.execute("SELECT type FROM events")]
+    conn.close()
+    assert bundle["resolution"] == "accepted"
+    assert bundle["accepted_at"] == accepted.json()["accepted_at"]
+    assert [r[0] for r in rows] == ["create_failed", "create_failed", "created"]
+    assert events.count("bundle_accepted") == 1
+    assert events.count("bundle_delivery_retried") == 2
+    assert 'id="op-deliver"' not in client.get("/agentic/bundles/b-recover").text
+    assert client.post("/api/bundles/b-recover/deliver", json={}).status_code == 409
+
+
 def test_second_accept_returns_updated_status(client, deployment):
     """LocalPatchProvider's same-content idempotency surfaces as
     status='updated' on a re-Accept of the same bundle."""
