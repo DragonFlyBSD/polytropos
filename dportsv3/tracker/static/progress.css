@@ -787,10 +787,21 @@ a:hover { color: var(--cyan); text-decoration: underline; }
 .ignored { background: var(--c-ignored-bg); color: var(--c-ignored); }
 .meta    { background: var(--c-meta-bg);    color: var(--c-meta);    }
 
+/* The page body fills the shell (poly-x3pg.14).
+ *
+ * This carried `max-width: 1400px; margin: 0 auto` and the 13 pages built on
+ * `.page-body` never did, so above 1400px the console was inconsistent with
+ * ITSELF: Builds filled the monitor while Job detail sat in the middle with
+ * ~260px of dead gutter each side. The mock caps nothing at page level -- its
+ * .app is a 100vh grid and its only px measure is 900px on one paragraph.
+ *
+ * The cap was there to stop prose running 2560px wide, and that job is already
+ * done one level in: .pipeline-note (74ch/108ch), .notes-in (820px) and
+ * .t-pane p (62ch) all measure their own text. A console's tables,
+ * panels, diffs and turn cards want the width; only paragraphs do not, and
+ * paragraphs already say so. */
 .tracker-page {
   padding: 16px 24px 40px;
-  max-width: 1400px;
-  margin: 0 auto;
 }
 .tracker-page h1 {
   font-size: 18px;
@@ -1453,10 +1464,11 @@ details.section-collapse > summary .muted {
   font-size: 12px; font-weight: normal; color: var(--text-dim, var(--muted));
 }
 
-/* The bundle detail page reads as a composed column rather than a
-   full-bleed stretch — narrower than the data-table pages so the reader
-   and summary bar don't sprawl on wide monitors. */
-.tracker-page.bundle-page { max-width: 1180px; }
+/* `.tracker-page.bundle-page { max-width: 1180px }` stood here and had
+   matched nothing since 1a1f9cc moved the cockpit into the full-bleed shell as
+   `.page-body bundle-page`. That commit decided the opposite of what the rule
+   claimed -- one view with the queue beside the work is a split, not a
+   composed column -- so the rule is gone rather than revived (poly-x3pg.14). */
 
 /* Bundle summary bar: a single rounded strip of status + facts, sitting
    above the artifact reader. Overrides .tracker-card's tight 4px corners
