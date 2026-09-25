@@ -127,6 +127,54 @@ def read_tail(
     }
 
 
+#: Slack on the freshness test below. A log dsynth is writing right now can
+#: still stat a shade older than the moment the tool call was dispatched --
+#: coarse filesystem mtimes, and the two clocks are read a beat apart. Two
+#: seconds cannot admit a previous run's log, which is minutes or hours old.
+FRESH_SLACK_SECONDS = 2.0
+
+
+def building_origin(
+    env: str,
+    origins: list[str],
+    flavor: str = "",
+    since: float | None = None,
+) -> str | None:
+    """Which of these ports dsynth is writing a log for right now.
+
+    ONE dsynth INVOCATION CAN BUILD SEVERAL PORTS. dsynth_build adds the
+    port's patch origin -- for a slave, the master whose ``dragonfly/``
+    the fix was written into -- so a job for ``print/qt6-pdf`` runs
+    ``dsynth test print/qt6-pdf www/qt6-webengine`` (poly-lt5q). Tailing
+    the job's own origin then follows whichever port finishes FIRST and
+    sits on its completed log for the rest of the run, which is how a
+    healthy two-hour build came to read as hung (poly-quu3).
+
+    dsynth builds the list serially, so "the log written most recently"
+    is "the port dsynth is on", and the tail moves across by itself when
+    one port finishes and the next starts.
+
+    ``since`` is when the tool call started. A log older than that
+    belongs to an earlier run and is not this build's -- returning None
+    rather than the newest stale one, because showing last week's
+    SUCCEEDED as though it were now is the confusion this exists to end.
+    """
+    newest: tuple[float, str] | None = None
+    for origin in origins:
+        path = log_path(env, origin, flavor)
+        if path is None:
+            continue
+        try:
+            mtime = os.stat(path).st_mtime
+        except OSError:
+            continue
+        if since is not None and mtime < since - FRESH_SLACK_SECONDS:
+            continue
+        if newest is None or mtime > newest[0]:
+            newest = (mtime, origin)
+    return newest[1] if newest else None
+
+
 def log_path(env: str, origin: str, flavor: str = "") -> Any:
     """The log dsynth is writing for this port, or None.
 

@@ -1640,10 +1640,25 @@ class PatchAttemptStep:
         def _set_tail_target(tool: str | None) -> None:
             if tool is None:
                 _runner_mod.clear_tail_target()
-            else:
-                _runner_mod.set_tail_target(
-                    env, origin, _tail_flavor, ctx.job_id, tool,
-                )
+                return
+            # EVERY port the build will run, not just the job's own.
+            # dsynth_build's own set is origin_set(origin, also) with
+            # `also = invariant_origins(...)[1:]`, which is this exact
+            # list -- resolved from the same function so the tail cannot
+            # drift from what dsynth is handed (poly-quu3).
+            #
+            # Costs nothing in practice: materialize_dports forgets the
+            # relation for each origin (compose rewrites the Makefile it
+            # is derived from), so the cache is cold here and the tool's
+            # own call would pay the same `make -V` seconds later. This
+            # pays it first and warms the cache for it.
+            try:
+                origins = _worker.invariant_origins(env, origin)
+            except Exception:
+                origins = [origin]
+            _runner_mod.set_tail_target(
+                env, origins, _tail_flavor, ctx.job_id, tool,
+            )
 
         dispatcher = PatchEventDispatcher(
             queue_root=queue_root,

@@ -358,7 +358,7 @@ def job_tail(conn: Any, job_id: str) -> dict[str, Any] | None:
     """
     row = conn.execute(
         """SELECT tool, text, lines, total_bytes, skipped, max_bytes,
-                  log_mtime, updated_at
+                  log_mtime, origin, n_origins, updated_at
            FROM runner_tail
            WHERE job_id = ? AND text IS NOT NULL
            ORDER BY updated_at DESC LIMIT 1""",
@@ -377,5 +377,10 @@ def job_tail(conn: Any, job_id: str) -> dict[str, Any] | None:
         # The template's ticker reads this to say "last line 35s ago": the
         # LOG's clock, not the poll's.
         "mtime": row["log_mtime"],
+        # Which port of the run this log belongs to, and how many the call
+        # covers. Both absent on a row written before poly-quu3, and the
+        # template omits the line rather than guessing.
+        "origin": row["origin"],
+        "n_origins": int(row["n_origins"] or 0),
         "updated_at": row["updated_at"],
     }

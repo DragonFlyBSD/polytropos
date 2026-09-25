@@ -173,6 +173,18 @@
 // The bar names the tool running right now; without a clock beside it a
 // 44-minute dsynth build and a wedged runner look identical, which is
 // the whole reason tool_start exists (poly-qqx9.2, poly-qqx9.3).
+// One duration format for both live clocks on this page. Two units, never
+// three: at 1h53m the seconds are noise, and at 42s the minutes are a lie
+// about precision. Shaped like _macros.dur_ms so the ticking figure and a
+// rendered one never disagree about the same span.
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+function shortDuration(s) {
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? h + "h" + pad(m) + "m"
+    : m ? m + "m" + pad(s % 60) + "s"
+    : s + "s";
+}
+
 function startElapsedClock() {
   if (window._dpElapsedTimer) clearInterval(window._dpElapsedTimer);
   var el = document.getElementById("nb-elapsed");
@@ -180,15 +192,9 @@ function startElapsedClock() {
   if (!el || !host) return;
   var since = Date.parse(host.dataset.since);
   if (isNaN(since)) return;
-  function pad(n) { return (n < 10 ? "0" : "") + n; }
   function tick() {
-    // Two units, never three: at 1h53m the seconds are noise, and at
-    // 42s the minutes are a lie about precision.
-    var s = Math.max(0, Math.round((Date.now() - since) / 1000));
-    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-    el.textContent = h ? h + "h" + pad(m) + "m"
-      : m ? m + "m" + pad(s % 60) + "s"
-      : s + "s";
+    el.textContent = shortDuration(
+      Math.max(0, Math.round((Date.now() - since) / 1000)));
   }
   tick();
   window._dpElapsedTimer = setInterval(tick, 1000);
@@ -315,9 +321,11 @@ function startTailClock() {
       var badge = el.parentNode.querySelector(".tail-ago");
       var mtime = parseFloat(el.dataset.mtime);
       if (!badge || isNaN(mtime)) return;
-      var s = Math.max(0, Math.round(Date.now() / 1000 - mtime));
-      badge.textContent = s < 60 ? s + "s"
-        : Math.floor(s / 60) + "m" + (s % 60 < 10 ? "0" : "") + (s % 60) + "s";
+      // shortDuration, not a second format: this one stopped at minutes
+      // and a build that had printed nothing for two and a half hours read
+      // "161m39s" -- a number an operator has to stop and decode.
+      badge.textContent = shortDuration(
+        Math.max(0, Math.round(Date.now() / 1000 - mtime)));
     });
   }
   tick();

@@ -285,6 +285,13 @@ CREATE TABLE IF NOT EXISTS runner_tail (
     -- When the LOG last grew, not when we read it. "last line 35s ago" is
     -- about the build; the live badge already reports the poll.
     log_mtime REAL,
+    -- WHOSE log this is, and how many ports the dsynth call covers. One
+    -- invocation can build several -- a slave plus the master its patch
+    -- was written into -- and the page cannot learn that from the tool
+    -- call, because the sibling is resolved inside the tool and the model
+    -- never wrote it (poly-quu3).
+    origin TEXT,
+    n_origins INTEGER,
     updated_at TEXT
 );
 
@@ -630,6 +637,9 @@ MIGRATIONS: tuple[str, ...] = (
     # deployment-wide default when set. NULL means "use the default", which
     # is every row until an operator picks per builder (poly-fij.13).
     "ALTER TABLE runners ADD COLUMN active_env TEXT",
+    # Which port of the run the published tail belongs to (poly-quu3).
+    "ALTER TABLE runner_tail ADD COLUMN origin TEXT",
+    "ALTER TABLE runner_tail ADD COLUMN n_origins INTEGER",
 )
 
 # One-shot data repair for a state.db written before C3 removed `regressed`

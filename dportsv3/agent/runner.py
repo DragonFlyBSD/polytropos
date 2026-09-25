@@ -54,6 +54,7 @@ import urllib.request
 import uuid
 import urllib.error
 import urllib.parse
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -462,21 +463,35 @@ _tail_target: dict | None = None
 
 def set_tail_target(
     env: str | None,
-    origin: str,
+    origins: Sequence[str] | str,
     flavor: str,
     job_id: str,
     tool: str,
 ) -> None:
     """Start publishing this build's last lines on every heartbeat.
 
+    ``origins`` is EVERY port this dsynth invocation will build, not just
+    the job's own. One call can build several -- dsynth_build adds the
+    port's patch origin, which for a slave is the master the fix was
+    actually written into -- and tailing only the job's origin follows
+    whichever finishes first and then sits on its completed log for the
+    rest of the run (poly-quu3).
+
     Without an env there is nothing to resolve the log under, so the row
     simply has no tail rather than a wrong one -- the same rule the first
     version of this feature used.
     """
     global _tail_target
+    # A bare string is the obvious mistake here and iterating its
+    # characters would be silent, so it is accepted and wrapped.
+    if isinstance(origins, str):
+        origins = [origins]
     _tail_target = (
-        {"env": env, "origin": origin, "flavor": flavor,
-         "job_id": job_id, "tool": tool}
+        {"env": env, "origins": list(origins), "flavor": flavor,
+         "job_id": job_id, "tool": tool,
+         # When the call started. Any log older than this belongs to an
+         # earlier run, not to the build now on screen.
+         "since": time.time()}
         if env else None
     )
 
@@ -504,9 +519,16 @@ def _heartbeat_tail() -> dict | None:
     try:
         from dportsv3.agent import dsynth_tail  # noqa: PLC0415
 
+        origins = target["origins"]
+        flavor = target.get("flavor") or ""
+        # Which port dsynth is on, not which port the job is named after.
+        origin = dsynth_tail.building_origin(
+            target["env"], origins, flavor, target.get("since"),
+        )
+        if origin is None:
+            return None
         read = dsynth_tail.read_tail(
-            target["env"], target["origin"],
-            flavor=target.get("flavor") or "",
+            target["env"], origin, flavor=flavor,
             offset=-1, max_lines=dsynth_tail.DEFAULT_MAX_LINES,
         )
         if not read.get("ok"):
@@ -520,6 +542,11 @@ def _heartbeat_tail() -> dict | None:
             "skipped": read.get("skipped") or 0,
             "max_bytes": dsynth_tail.MAX_CHUNK_BYTES,
             "log_mtime": read.get("mtime"),
+            # Whose log this is, and how many ports the run covers. The
+            # page cannot say either from the tool call: the sibling was
+            # resolved inside the tool, so the model never wrote it.
+            "origin": origin,
+            "n_origins": len(origins),
         }
     except Exception:
         return None

@@ -2368,6 +2368,14 @@ def forget_port_relation(env: str, origin: str) -> None:
     _RELATION_CACHE.pop((env, origin), None)
 
 
+#: Bound on the relation probe (poly-quu3). `make -V` is a seconds-long
+#: read of the port's own Makefile, and this now runs on the MAIN thread at
+#: tool_start to resolve the tail's origin set -- inside a try/except that
+#: catches raises and not hangs. A build gets no timeout and should not; a
+#: probe gets one and must.
+RELATION_PROBE_TIMEOUT = 60
+
+
 def probe_port_relation(
     env: str, origin: str, *, use_cache: bool = True,
 ) -> dict:
@@ -2402,7 +2410,8 @@ def probe_port_relation(
         f'  2>/dev/null'
     )
     try:
-        p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts")
+        p = _exec(env, "/bin/sh", "-c", cmd, cwd="/work/DeltaPorts",
+                  timeout=RELATION_PROBE_TIMEOUT)
     except Exception as exc:  # pragma: no cover - transport failure
         return _unresolved_relation(origin, f"probe failed: {exc}")
 

@@ -11,6 +11,18 @@
   {%- if tail and tail.ok %}
   <pre class="tool-tail" data-mtime="{{ tail.mtime }}">{{ tail.text }}</pre>
   <div class="tool-tailbar">
+    {#- Whose log this is. One dsynth call can build several ports -- a
+        slave plus the master its patch was written into -- and the tool
+        call cannot say so, because the sibling is resolved inside the tool
+        and the model never wrote it. Without this the page shows a
+        finished port's log and reads as a hung build (poly-quu3). -#}
+    {%- if tail.origin %}
+    <span class="tail-origin"><b>{{ tail.origin }}</b>
+      {%- if tail.n_origins and tail.n_origins > 1 %}
+      <span class="muted">· {{ tail.n_origins }} ports in this run</span>
+      {%- endif -%}
+    </span>
+    {%- endif %}
     <span>last line <b class="tail-ago">—</b> ago</span>
     <span class="muted">{{ tail.lines }} line{{ 's' if tail.lines != 1 else '' }} ·
       newest {{ (tail.max_bytes or 32768) // 1024 }} KiB of

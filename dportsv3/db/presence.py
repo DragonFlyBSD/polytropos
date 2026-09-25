@@ -108,15 +108,16 @@ def set_tail(
                ON CONFLICT(runner_id) DO UPDATE SET
                  job_id = NULL, tool = NULL, text = NULL, lines = NULL,
                  total_bytes = NULL, skipped = NULL, max_bytes = NULL,
-                 log_mtime = NULL, updated_at = excluded.updated_at""",
+                 log_mtime = NULL, origin = NULL, n_origins = NULL,
+                 updated_at = excluded.updated_at""",
             (runner_id, ts),
         )
         return
     conn.execute(
         """INSERT INTO runner_tail
            (runner_id, job_id, tool, text, lines, total_bytes, skipped,
-            max_bytes, log_mtime, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            max_bytes, log_mtime, origin, n_origins, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(runner_id) DO UPDATE SET
              job_id = excluded.job_id,
              tool = excluded.tool,
@@ -126,6 +127,8 @@ def set_tail(
              skipped = excluded.skipped,
              max_bytes = excluded.max_bytes,
              log_mtime = excluded.log_mtime,
+             origin = excluded.origin,
+             n_origins = excluded.n_origins,
              updated_at = excluded.updated_at""",
         (
             runner_id,
@@ -137,6 +140,8 @@ def set_tail(
             int(tail.get("skipped") or 0),
             int(tail.get("max_bytes") or 0),
             float(tail["log_mtime"]) if tail.get("log_mtime") else None,
+            tail.get("origin"),
+            int(tail["n_origins"]) if tail.get("n_origins") else None,
             ts,
         ),
     )

@@ -2777,6 +2777,11 @@ body.tour-open .dock{opacity:0;pointer-events:none}
 }
 .turn-stream .tool-tailbar .spacer { flex: 1 1 auto; }
 .turn-stream .tool-tailbar b { color: var(--text); font-variant-numeric: tabular-nums; }
+/* Whose log is on screen. First in the bar because it is the thing that
+   was missing: one dsynth call can build a slave and its master, and a
+   tail with no port on it reads as the job's own (poly-quu3). */
+.turn-stream .tool-tailbar .tail-origin { color: var(--text); }
+.turn-stream .tool-tailbar .tail-origin .muted { color: var(--faint); }
 
 /* ── Working tree: what the agent changed ─────────────────────────────
  * A band below the turn cards. Placement was decided by comparison: a
