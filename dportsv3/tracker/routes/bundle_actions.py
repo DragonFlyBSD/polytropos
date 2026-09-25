@@ -83,7 +83,7 @@ def register(app, ctx):
         Always returns a dict carrying the outcome for the accept
         response. ``status`` is one of:
           - ``created`` / ``updated`` — provider succeeded.
-          - ``create_failed`` — provider raised; a create_failed row
+          - ``create_failed`` — preparation or provider failed; a create_failed row
             is also written for operator visibility.
           - ``skipped`` — delivery wasn't attempted; ``skip_reason``
             names which gate fired (``operator_optout``,
@@ -109,19 +109,37 @@ def register(app, ctx):
         )
         from dportsv3.delivery import DeliveryConfigError  # noqa: PLC0415
 
+        bundle_id = bundle.get("bundle_id") or ""
+        operator = (
+            (request_body.get("operator") or "operator").strip()
+            or "operator"
+        )
+
+        def record_failure(error: str, provider: str = "unknown") -> dict[str, Any]:
+            # These failures precede the orchestrator's own failure record.
+            # Without a row, acceptance is terminal and /deliver cannot retry.
+            # Invalid configuration may not identify a provider at all.
+            from dportsv3.tracker.agentic_queries import insert_review_request
+
+            request_id = insert_review_request(
+                write_conn, bundle_id=bundle_id, provider=provider,
+                status="create_failed", error=error, operator=operator,
+                error_signature=bundle.get("error_signature"),
+            )
+            return {
+                "status": "create_failed", "error": error,
+                "provider": provider, "request_id": request_id,
+            }
+
         try:
             cfg = resolve_config(target=bundle.get("target") or None)
         except DeliveryConfigError as exc:
             # Config exists but is malformed — surface as a delivery
             # error rather than silently skipping.
-            return {
-                "status": "create_failed",
-                "error": f"DeliveryConfigError: {exc}",
-            }
+            return record_failure(f"DeliveryConfigError: {exc}")
         if cfg is None:
             return {"status": "skipped", "skip_reason": "no_config"}
 
-        bundle_id = bundle.get("bundle_id") or ""
         diff_ref = get_artifact_ref(
             write_conn, bundle_id, "analysis/changes.diff",
         )
@@ -139,20 +157,14 @@ def register(app, ctx):
         try:
             diff_text = diff_path.read_text()
         except OSError as exc:
-            return {
-                "status": "create_failed",
-                "error": f"changes.diff read failed: {exc}",
-            }
+            return record_failure(
+                f"changes.diff read failed: {exc}", cfg.provider_type,
+            )
         if not diff_text.strip():
             return {
                 "status": "skipped",
                 "skip_reason": "changes_diff_empty",
             }
-
-        operator = (
-            (request_body.get("operator") or "operator").strip()
-            or "operator"
-        )
 
         # Read artifact text best-effort for the PR body. triage.md
         # supplies the Problem section (Root Cause / Evidence /
@@ -215,10 +227,9 @@ def register(app, ctx):
             # writes a create_failed row. Any exception that escapes
             # here is a bug in orchestrator.deliver itself; surface
             # without crashing the accept.
-            return {
-                "status": "create_failed",
-                "error": f"deliver() raised: {type(exc).__name__}: {exc}",
-            }
+            return record_failure(
+                f"deliver() raised: {type(exc).__name__}: {exc}", cfg.provider_type,
+            )
 
         from dportsv3.artifact_store import emit_event  # noqa: PLC0415
         emit_event(write_conn, "bundle_delivered", {

@@ -505,6 +505,67 @@ def test_failed_delivery_retries_without_reaccepting(client, deployment):
     assert client.post("/api/bundles/b-recover/deliver", json={}).status_code == 409
 
 
+@pytest.mark.parametrize("failure", ["config", "read", "orchestrator"])
+def test_early_delivery_failure_can_recover(client, deployment, monkeypatch, failure):
+    """Failures before the provider must leave the same recovery path."""
+    from dportsv3.delivery import orchestrator
+
+    conn = _open(deployment)
+    _seed_bundle(conn, "b-early")
+    sha = _seed_diff_artifact(deployment["artifact_root"], "b-early", _SAMPLE_DIFF)
+    _insert_artifact_ref(conn, "b-early", "analysis/changes.diff", sha)
+    conn.close()
+
+    with monkeypatch.context() as broken:
+        if failure == "config":
+            config = deployment["config_dir"] / "delivery.toml"
+            valid_config = config.read_text()
+            config.write_text('[provider]\ntype = "github"\nrepo = "example/ports"\n')
+            broken.setenv("DPORTSV3_DELIVERY_TOKEN", "test-token")
+        elif failure == "orchestrator":
+            def broken_deliver(**kwargs):
+                raise RuntimeError("provider setup failed")
+            broken.setattr(orchestrator, "deliver", broken_deliver)
+        else:
+            original_read = Path.read_text
+            def unreadable_diff(path, *args, **kwargs):
+                if path.name == sha:
+                    raise PermissionError("diff temporarily unreadable")
+                return original_read(path, *args, **kwargs)
+            broken.setattr(Path, "read_text", unreadable_diff)
+        accepted = client.post("/api/bundles/b-early/accept", json={"operator": "alice"})
+        assert accepted.status_code == 200
+        assert accepted.json()["delivery"]["status"] == "create_failed"
+        if failure == "config":
+            assert "clone_dir" in accepted.json()["delivery"]["error"]
+            config.write_text(valid_config)
+
+    conn = _open(deployment)
+    failed = latest_review_request_for_bundle(conn, "b-early")
+    conn.close()
+    assert failed is not None
+    assert failed["status"] == "create_failed"
+    assert failed["error"] == accepted.json()["delivery"]["error"]
+    assert failed["operator"] == "alice"
+    assert failed["provider"] == ("unknown" if failure == "config" else "local-patch")
+    assert 'id="op-deliver"' in client.get("/agentic/bundles/b-early").text
+
+    retry = client.post("/api/bundles/b-early/deliver", json={})
+    assert retry.status_code == 200
+    assert retry.json()["delivery"]["status"] == "created"
+    conn = _open(deployment)
+    row = latest_review_request_for_bundle(conn, "b-early")
+    bundle = conn.execute("SELECT * FROM bundles WHERE bundle_id='b-early'").fetchone()
+    events = [r[0] for r in conn.execute("SELECT type FROM events")]
+    conn.close()
+    assert row["id"] > failed["id"]
+    assert row["status"] == "created"
+    assert bundle["resolution"] == "accepted"
+    assert bundle["accepted_at"] == accepted.json()["accepted_at"]
+    assert events.count("bundle_accepted") == 1
+    assert events.count("bundle_delivery_retried") == 1
+
+
 def test_second_accept_returns_updated_status(client, deployment):
     """LocalPatchProvider's same-content idempotency surfaces as
     status='updated' on a re-Accept of the same bundle."""
