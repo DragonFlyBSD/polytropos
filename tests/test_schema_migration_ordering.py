@@ -226,8 +226,16 @@ def test_init_db_is_idempotent():
 
 def test_migrations_run_before_the_schema_script():
     """Ordering is the fix, so pin it: a SCHEMA index over a migrated
-    column is only buildable if the ALTERs already ran."""
+    column is only buildable if the ALTERs already ran.
+
+    The ALTERs moved into ``_migrate`` when the phase was put under one
+    write lock (poly-5d58), so the order to read is init_db's two calls.
+    The loop itself is checked where it now lives, which is what kept
+    this from passing on a _migrate that had quietly stopped running
+    them.
+    """
     import inspect
 
     src = inspect.getsource(schema_mod.init_db)
-    assert src.index("for stmt in MIGRATIONS") < src.index("executescript(SCHEMA)")
+    assert src.index("_migrate(conn)") < src.index("executescript(SCHEMA)")
+    assert "for stmt in MIGRATIONS" in inspect.getsource(schema_mod._migrate)

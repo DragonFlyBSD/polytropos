@@ -756,6 +756,84 @@ def _add_build_flavor_dimension(conn: sqlite3.Connection) -> None:
         raise
 
 
+#: How long the migration phase will wait for the OTHER process to finish
+#: migrating before giving up. Deliberately far above the 5s the rest of
+#: the connection uses: a rebuild copies whole tables, and the thing being
+#: waited on is a one-off that either finishes or fails loudly. Five
+#: seconds is a sensible ceiling for a query and a poor one for a table
+#: copy on a bigger database than today's (poly-5d58).
+MIGRATION_LOCK_TIMEOUT_MS = 30_000
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """The pre-SCHEMA migrations, under the write lock, as one transaction.
+
+    TAKEN UP FRONT WITH ``BEGIN IMMEDIATE``, WHICH IS THE WHOLE POINT.
+    Both services run init_db at startup and `deploy install` restarts
+    them back to back, so on a deploy carrying a migration they race. The
+    loser used to raise ``database is locked`` and, in the tracker, that
+    raise is inside the uvicorn startup lifespan -- the service did not
+    degrade, it exited, and stayed down until restarted by hand
+    (poly-5d58, 2026-09-26, deploying the flavor rebuild).
+
+    ``busy_timeout`` was already set and could not help. The old shape was
+    SAVEPOINT, then a ``PRAGMA table_info`` READ, then a ``CREATE TABLE``
+    WRITE -- a LOCK UPGRADE, and sqlite returns SQLITE_BUSY for an upgrade
+    IMMEDIATELY without invoking the busy handler, because waiting on one
+    can deadlock. Measured on a WAL database with busy_timeout=5000 and
+    another writer holding the lock: the upgrade raised at 0.000s, while
+    BEGIN IMMEDIATE waited for the other writer and then succeeded.
+
+    So the lock is taken before anything is read, and the whole phase
+    rides it: every migration here is protected, not just the one that
+    happened to fail. The loser now waits for the winner, finds the work
+    already done, and skips it -- which is what "idempotent" was supposed
+    to buy and could not, because idempotent is not concurrent-safe.
+
+    NOT EXTENDED OVER ``executescript(SCHEMA)``: executescript commits any
+    pending transaction before it runs, so an outer transaction held
+    across it would be committed halfway and silently. SCHEMA is
+    CREATE TABLE/INDEX IF NOT EXISTS, which takes its locks cleanly and is
+    covered by the ordinary busy handler.
+
+    A CALLER THAT ALREADY HOLDS A TRANSACTION KEEPS IT, and keeps
+    responsibility for the lock with it: BEGIN IMMEDIATE cannot nest, and
+    raising on it would turn a caller's own choice into a failed start.
+    Every caller in this tree opens a fresh connection, so the branch
+    exists to be predictable rather than to be used -- but a caller that
+    began with a read and has not written is back in the upgrade case
+    this function exists to avoid, and should take its own lock with
+    BEGIN IMMEDIATE.
+    """
+    began = not conn.in_transaction
+    conn.execute(f"PRAGMA busy_timeout={MIGRATION_LOCK_TIMEOUT_MS}")
+    try:
+        if began:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Migrations run BEFORE the schema script. SCHEMA builds indexes,
+            # and an index over a column that only MIGRATIONS adds
+            # (idx_bundles_issue_key) cannot be built until the column is
+            # there — running SCHEMA first aborts init on any DB predating
+            # that column. On a fresh DB every ALTER here raises "no such
+            # table" and is caught; SCHEMA then creates the columns inline
+            # anyway.
+            for stmt in MIGRATIONS:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass  # fresh DB, or the column is already there
+            _add_build_flavor_dimension(conn)
+        except Exception:
+            if began:
+                conn.execute("ROLLBACK")
+            raise
+        if began:
+            conn.execute("COMMIT")
+    finally:
+        conn.execute("PRAGMA busy_timeout=5000")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     """Run schema + seeds on an open connection.
 
@@ -768,18 +846,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     # cross-table references (jobs.bundle_id, bundles.issue_key) are
     # plain indexed columns, not declared FKs, so they're unaffected.
     conn.execute("PRAGMA foreign_keys=ON")
-    # Migrations run BEFORE the schema script. SCHEMA builds indexes, and an
-    # index over a column that only MIGRATIONS adds (idx_bundles_issue_key)
-    # cannot be built until the column is there — running SCHEMA first aborts
-    # init on any DB predating that column. On a fresh DB every ALTER here
-    # raises "no such table" and is caught; SCHEMA then creates the columns
-    # inline anyway.
-    for stmt in MIGRATIONS:
-        try:
-            conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass  # fresh DB (no such table), or the column is already there
-    _add_build_flavor_dimension(conn)
+    _migrate(conn)
     conn.executescript(SCHEMA)
     conn.executemany(
         "INSERT OR IGNORE INTO build_types(name) VALUES (?)",
