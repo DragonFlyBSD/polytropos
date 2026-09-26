@@ -6,10 +6,20 @@ two endpoints:
 - ``summary.json``      — profile + kickoff + stats + active builders
 - ``<NN>_history.json`` — array of build entries, paginated into chunks
 
-Entries carry one field dsynth-progress never had: ``bundle_id``, the
-evidence bundle a failed port produced. The lifted UI linked each row to
-a ``.log`` file sitting beside the static report; there is no such file
-here, so the link is built from the bundle instead.
+Entries carry two fields dsynth-progress never had, and no more than
+two: ``bundle_id``, the evidence bundle a failed port produced, and
+``recorded_at``, when the row was written (poly-0e02.4). The lifted UI
+linked each row to a ``.log`` file sitting beside the static report;
+there is no such file here, so the link is built from the bundle
+instead.
+
+A FLAVOUR IS NOT A THIRD ONE. It reaches the payload inside ``origin``
+as ``devel/glib20@bootstrap`` -- dsynth's spelling, the one the port
+query already parses (``db.py``: the ``"@" in origin`` branch) and the
+one the lifted progress.js renders and searches. It was also briefly
+emitted as its own key, unread by anything, which broke the exact-shape
+test that exists to keep this payload from growing fields nobody asked
+for (poly-223m).
 
 This module maps the tracker's ``state.db`` rows (``build_runs``,
 ``build_results``, ``port_status``) into that shape so the lifted UI
@@ -224,8 +234,12 @@ def run_history_chunk(
             "result": _RESULT_TO_DSYNTH.get(
                 str(row["result"] or ""), str(row["result"] or "")
             ),
+            # dsynth's own spelling for a flavoured port, which is what
+            # this shape is for. A separate "flavor" key would be a
+            # SECOND copy of it in a payload that documents its extra
+            # fields one by one, and the lifted progress.js never reads
+            # one -- it renders and searches origin (poly-223m).
             "origin": str(row["origin"]) + ("@" + row["flavor"] if row["flavor"] else ""),
-            "flavor": row["flavor"],
             "info": str(row["version"] or ""),
             "duration": "",
             # Selected all along and then dropped on the floor, which left a
@@ -297,7 +311,6 @@ def _active_builders(
                 "elapsed": " --:--:--",
                 "phase": "build",
                 "origin": str(row["origin"]) + ("@" + row["flavor"] if row["flavor"] else ""),
-                "flavor": row["flavor"],
                 "lines": "",
                 "version": str(row["version"] or "") or None,
             }

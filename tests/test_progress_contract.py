@@ -61,6 +61,83 @@ def test_a_history_entry_carries_when_it_was_recorded(run) -> None:
     assert entries["devel/beta"]["recorded_at"] == "2026-09-06T06:20:00Z"
 
 
+# --- a flavour, in dsynth's spelling and nowhere else (poly-223m) --------
+
+
+@pytest.fixture
+def flavored() -> tuple[sqlite3.Connection, int]:
+    conn = init_db(":memory:")
+    run_id = create_build_run(conn, TARGET, "release", "2026-09-06T06:00:00Z")
+    record_results(conn, run_id, TARGET, [
+        {"origin": "devel/glib20", "flavor": "bootstrap", "version": "2.80",
+         "result": "success", "recorded_at": "2026-09-06T06:10:00Z"},
+        {"origin": "devel/glib20", "flavor": "default", "version": "2.80",
+         "result": "failure", "recorded_at": "2026-09-06T06:11:00Z"},
+        {"origin": "editors/vim", "version": "9.2", "result": "success",
+         "recorded_at": "2026-09-06T06:12:00Z"},
+    ])
+    # A separate port for the in-flight row: a 'building' result is
+    # excluded from the history chunk by design, so reusing glib20 here
+    # would take one of the two flavours back out of the payload the
+    # test above is about.
+    enqueue_ports(conn, run_id, [
+        {"origin": "x11/delta", "flavor": "gtk3", "version": "4.0"},
+    ], total_expected=4)
+    update_port_status(conn, run_id, "x11/delta", "building", "gtk3")
+    conn.commit()
+    yield conn, run_id
+    conn.close()
+
+
+def test_two_flavors_of_one_port_are_two_entries(flavored) -> None:
+    """The reason the flavour is in this payload at all: keyed by origin
+    alone they overwrite each other and one of the two builds vanishes."""
+    conn, run_id = flavored
+
+    origins = [e["origin"] for e in run_history_chunk(conn, run_id, 1)]
+
+    assert "devel/glib20@bootstrap" in origins
+    assert "devel/glib20@default" in origins
+
+
+def test_an_unflavored_port_keeps_a_bare_origin(flavored) -> None:
+    """No trailing @, and no "@default" invented for a port that has no
+    flavour -- the lifted UI turns this string into a port link."""
+    conn, run_id = flavored
+
+    origins = [e["origin"] for e in run_history_chunk(conn, run_id, 1)]
+
+    assert "editors/vim" in origins
+    assert not any(o.endswith("@") for o in origins)
+
+
+def test_the_flavor_is_not_also_its_own_field(flavored) -> None:
+    """It was, briefly, and nothing read it: the lifted progress.js
+    renders and searches `origin`. A second copy in a payload whose extra
+    fields are documented one by one is how that documentation stops
+    being true -- and the exact-shape assertion in
+    test_progress_logfile_link is what noticed (poly-223m)."""
+    conn, run_id = flavored
+
+    entries = run_history_chunk(conn, run_id, 1)
+    builders = run_summary(conn, run_id)["builders"]
+
+    assert entries, "fixture produced no entries"
+    assert all("flavor" not in e for e in entries)
+    assert builders, "fixture produced no builders"
+    assert all("flavor" not in b for b in builders)
+
+
+def test_a_flavored_builder_row_names_the_flavor_it_is_building(
+    flavored,
+) -> None:
+    conn, run_id = flavored
+
+    builders = run_summary(conn, run_id)["builders"]
+
+    assert [b["origin"] for b in builders] == ["x11/delta@gtk3"]
+
+
 def test_a_builder_row_carries_the_version_it_was_queued_with(run) -> None:
     conn, run_id = run
 
