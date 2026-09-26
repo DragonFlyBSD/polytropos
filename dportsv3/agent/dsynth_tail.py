@@ -60,9 +60,16 @@ def read_tail(
     """
     path = log_path(env, origin, flavor)
     if path is None:
+        # Name the flavour when there is a real one: "no log for
+        # devel/glib20" and "no log for devel/glib20@bootstrap" are
+        # different facts, and only the second explains a page that stays
+        # empty while a build is plainly running (poly-1v7l).
+        wanted = origin
+        if real_flavor(origin, flavor):
+            wanted = f"{origin}@{real_flavor(origin, flavor)}"
         return {
             "ok": False,
-            "error": f"dsynth has written no log for {origin} yet",
+            "error": f"dsynth has written no log for {wanted} yet",
             "path": "", "offset": 0, "text": "", "eof": True,
             "total_bytes": 0, "skipped": 0, "mtime": None, "lines": 0,
         }
@@ -175,6 +182,30 @@ def building_origin(
     return newest[1] if newest else None
 
 
+def real_flavor(origin: str, flavor: str) -> str:
+    """``flavor`` with dsynth's unflavored sentinel removed.
+
+    DSYNTH EXPORTS ``FLAVOR=$ORIGIN`` FOR A PORT THAT HAS NO FLAVOR, so a
+    job for ``print/qt6-pdf`` arrives carrying flavor ``print/qt6-pdf``
+    and a row reading ``origin print/qt6-pdf, flavor print/qt6-pdf`` is
+    correct data, not a field filled from the wrong variable. The hooks
+    state the rule -- hook_common.sh: "dsynth sets FLAVOR=$ORIGIN when no
+    flavor; only add @ when different" -- and honour it in both places
+    they build a name from it, ``logfile_for_origin`` and the bundle id
+    in ``hook_pkg_failure``. ``enqueue_job`` then passes the raw value
+    on, which is how it reaches the queue file and ``jobs.flavor``.
+
+    This side never learned the rule, and a "flavor" with a ``/`` in it
+    can never match a log filename, so the match in ``log_path`` fell
+    through to "newest" and tailed whatever had been built last
+    (poly-1v7l). The sentinel may arrive with or without an ``@`` and
+    with or without the origin's own ``@suffix``; the tracker's
+    ``_port_identity`` normalises the same shapes for the same reason.
+    """
+    flavor = (flavor or "").strip().lstrip("@")
+    return "" if flavor in (origin, origin.partition("@")[0]) else flavor
+
+
 def log_path(env: str, origin: str, flavor: str = "") -> Any:
     """The log dsynth is writing for this port, or None.
 
@@ -189,11 +220,20 @@ def log_path(env: str, origin: str, flavor: str = "") -> Any:
     candidates = worker._dsynth_log_candidates(env, origin)
     if not candidates:
         return None
+    flavor = real_flavor(origin, flavor)
     if flavor:
         stem = worker._dsynth_log_stem(origin)
-        wanted = f"{stem}@{flavor.lstrip('@')}.log"
+        wanted = f"{stem}@{flavor}.log"
         for path in candidates:
             if path.name == wanted:
                 return path
+        # A FLAVOUR THAT MATCHES NOTHING IS NOT A LICENCE TO SHOW ANOTHER
+        # ONE'S BUILD. Falling through to "newest" here is what made
+        # poly-1v7l invisible: the page showed an operator the last lines
+        # of a build they were not looking at, with nothing saying so,
+        # and during an incident it had to be ruled out by hand before
+        # the real cause could be named. None is a fact the caller can
+        # report; read_tail names the flavour it could not find.
+        return None
     # Newest first, which is what a running build is.
     return candidates[0]

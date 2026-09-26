@@ -486,8 +486,22 @@ def set_tail_target(
     # characters would be silent, so it is accepted and wrapped.
     if isinstance(origins, str):
         origins = [origins]
+    origins = list(origins)
+    # RESOLVE dsynth's UNFLAVORED SENTINEL HERE, ONCE, AGAINST THE JOB'S
+    # OWN PORT. FLAVOR=$ORIGIN means "no flavor" and is only recognisable
+    # next to the origin it was reported for, which is origins[0]; every
+    # other entry is a sibling this invocation also builds. Normalising
+    # per-origin further down would leave the sentinel looking like a
+    # real flavour beside the master -- no master___port@slave.log can
+    # exist, so the master would be skipped and the tail would sit on the
+    # finished slave, which is precisely the freeze poly-quu3 fixed
+    # (poly-1v7l).
+    if origins:
+        from dportsv3.agent import dsynth_tail  # noqa: PLC0415
+
+        flavor = dsynth_tail.real_flavor(origins[0], flavor)
     _tail_target = (
-        {"env": env, "origins": list(origins), "flavor": flavor,
+        {"env": env, "origins": origins, "flavor": flavor,
          "job_id": job_id, "tool": tool,
          # When the call started. Any log older than this belongs to an
          # earlier run, not to the build now on screen.

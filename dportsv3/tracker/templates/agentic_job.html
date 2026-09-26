@@ -66,8 +66,13 @@
   <div class="page-heading">
     <div>
       <h1>{{ job.job_id }}</h1>
+      {#- The flavour is suppressed when it repeats the origin: dsynth
+          exports FLAVOR=$ORIGIN for a port that has no flavour, so the
+          row is correct data and "print/qt6-pdf@print/qt6-pdf" is this
+          page failing to read it (poly-1v7l). Same rule the hooks apply
+          in logfile_for_origin and the tracker in _port_identity. -#}
       <p>{{ job.type or 'job' }} job{% if job.origin %} for
-        <code>{{ job.origin }}{% if job.flavor %}@{{ job.flavor }}{% endif %}</code>
+        <code>{{ job.origin }}{% if job.flavor and job.flavor != job.origin %}@{{ job.flavor }}{% endif %}</code>
         {%- endif %}{% if job.target %} on <code>{{ job.target }}</code>{% endif %}</p>
     </div>
     <div class="heading-actions">
