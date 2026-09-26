@@ -263,6 +263,7 @@ def test_get_failures_and_get_diff_compare_current_target_status(
     assert diff["only_a"] == [
         {
             "origin": "editors/bar",
+            "flavor": "",
             "target": "@main",
             "version": "2.0",
             "result": "success",
@@ -271,6 +272,7 @@ def test_get_failures_and_get_diff_compare_current_target_status(
     assert diff["only_b"] == [
         {
             "origin": "lang/baz",
+            "flavor": "",
             "target": "@2026Q1",
             "version": "3.0",
             "result": "failure",
@@ -279,6 +281,7 @@ def test_get_failures_and_get_diff_compare_current_target_status(
     assert diff["differ"] == [
         {
             "origin": "devel/foo",
+            "flavor": "",
             "version_a": "1.0",
             "result_a": "failure",
             "version_b": "1.0",

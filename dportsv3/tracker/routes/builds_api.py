@@ -116,7 +116,7 @@ def register(app, ctx):
     ) -> dict[str, bool]:
         try:
             with _conn() as conn:
-                update_port_status(conn, run_id, origin, payload.status)
+                update_port_status(conn, run_id, origin, payload.status, payload.flavor)
         except Exception as exc:
             _raise_http_error(exc)
         return {"ok": True}

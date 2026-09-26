@@ -569,17 +569,19 @@ CREATE TABLE IF NOT EXISTS build_runs (
 CREATE TABLE IF NOT EXISTS build_results (
     build_run_id INTEGER NOT NULL REFERENCES build_runs(id),
     origin TEXT NOT NULL,
+    flavor TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL,
     result TEXT NOT NULL,
     log_url TEXT,
     recorded_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'recorded',
-    PRIMARY KEY (build_run_id, origin)
+    PRIMARY KEY (build_run_id, origin, flavor)
 );
 
 CREATE TABLE IF NOT EXISTS port_status (
     target TEXT NOT NULL,
     origin TEXT NOT NULL,
+    flavor TEXT NOT NULL DEFAULT '',
     last_attempt_version TEXT,
     last_attempt_result TEXT,
     last_attempt_at TEXT,
@@ -587,7 +589,7 @@ CREATE TABLE IF NOT EXISTS port_status (
     last_success_version TEXT,
     last_success_at TEXT,
     last_success_run_id INTEGER REFERENCES build_runs(id),
-    PRIMARY KEY (target, origin)
+    PRIMARY KEY (target, origin, flavor)
 );
 
 CREATE TABLE IF NOT EXISTS tracker_active_env (
@@ -722,6 +724,38 @@ def _add_env_health_runner_dimension(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def _add_build_flavor_dimension(conn: sqlite3.Connection) -> None:
+    """Preserve legacy rows as flavor-unknown (''); rebuild both primary keys.
+
+    Overwritten flavors cannot be recovered. Do not infer a flavor from a
+    package version or silently discard historical results. A savepoint keeps
+    both table replacements atomic, including on migration failure.
+    """
+    conn.execute("SAVEPOINT build_flavors")
+    try:
+        for table in ("build_results", "port_status"):
+            columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if not columns or "flavor" in columns:
+                continue
+            start = SCHEMA.index(f"CREATE TABLE IF NOT EXISTS {table} (")
+            end = SCHEMA.index(";", start) + 1
+            definition = SCHEMA[start:end].replace(
+                f"IF NOT EXISTS {table}", f"{table}_flavored", 1,
+            )
+            conn.execute(definition)
+            names = ", ".join(columns)
+            conn.execute(
+                f"INSERT INTO {table}_flavored ({names}) SELECT {names} FROM {table}"
+            )
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_flavored RENAME TO {table}")
+        conn.execute("RELEASE build_flavors")
+    except Exception:
+        conn.execute("ROLLBACK TO build_flavors")
+        conn.execute("RELEASE build_flavors")
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     """Run schema + seeds on an open connection.
 
@@ -745,6 +779,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
         except sqlite3.OperationalError:
             pass  # fresh DB (no such table), or the column is already there
+    _add_build_flavor_dimension(conn)
     conn.executescript(SCHEMA)
     conn.executemany(
         "INSERT OR IGNORE INTO build_types(name) VALUES (?)",

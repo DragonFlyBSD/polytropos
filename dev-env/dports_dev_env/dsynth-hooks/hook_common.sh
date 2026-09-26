@@ -521,7 +521,7 @@ tracker_enqueue_one() {
 	tmp_json=$(mktemp "$DPORTSV3_TRACKER_STATE_DIR/enqueue.${PROFILE}.XXXXXX") || \
 		tracker_fail_soft "failed to allocate temp json file"
 	cat > "$tmp_json" <<EOF
-[{"origin":"$origin","version":"$version"}]
+[{"origin":"$origin","flavor":"${FLAVOR:-}","version":"$version"}]
 EOF
 
 	if [ -n "${PORTS_QUEUED:-}" ] && [ "$PORTS_QUEUED" -gt 0 ] 2>/dev/null; then
@@ -593,6 +593,7 @@ tracker_mark_building() {
 		dportsv3_cli tracker mark-building \
 			--run "$RUN_ID" \
 			--origin "$ORIGIN" \
+			--flavor "${FLAVOR:-}" \
 			--server "$DPORTSV3_TRACKER_URL" 2>&1
 	) || tracker_fail_soft "mark-building failed for $ORIGIN: $output"
 
@@ -622,6 +623,7 @@ tracker_record_result() {
 			dportsv3_cli tracker record-result \
 				--run "$RUN_ID" \
 				--origin "$ORIGIN" \
+			--flavor "${FLAVOR:-}" \
 				--version "$version" \
 				--result "$result_arg" \
 				--log-url "$log_url" \
@@ -632,6 +634,7 @@ tracker_record_result() {
 			dportsv3_cli tracker record-result \
 				--run "$RUN_ID" \
 				--origin "$ORIGIN" \
+			--flavor "${FLAVOR:-}" \
 				--version "$version" \
 				--result "$result_arg" \
 				--server "$DPORTSV3_TRACKER_URL" 2>&1

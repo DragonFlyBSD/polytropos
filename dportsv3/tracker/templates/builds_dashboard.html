@@ -161,7 +161,7 @@
               <td>{{ build_state_pill(row.status if row.status in inflight_statuses else row.result) }}</td>
               <td>
                 {%- set href = port_link(selected_run.target, row.origin) -%}
-                {% if href %}<a href="{{ href }}">{{ row.origin }}</a>{% else %}{{ row.origin }}{% endif %}
+                {% if href %}<a href="{{ href }}">{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}</a>{% else %}{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}{% endif %}
               </td>
               <td class="tabular">{{ row.version or '—' }}</td>
               <td class="tabular">{{ row.recorded_at or '—' }}</td>

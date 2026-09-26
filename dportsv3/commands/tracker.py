@@ -232,7 +232,8 @@ def _cmd_enqueue_ports(args: Namespace) -> int:
 def _cmd_mark_building(args: Namespace) -> int:
     try:
         server = _resolve_server_url(args)
-        mark_port_building(server, int(args.run), str(args.origin))
+        mark_port_building(server, int(args.run), str(args.origin),
+                           **({"flavor": args.flavor} if getattr(args, "flavor", "") else {}))
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -247,6 +248,7 @@ def _cmd_record_result(args: Namespace) -> int:
             server,
             int(args.run),
             origin=str(args.origin),
+            **({"flavor": args.flavor} if getattr(args, "flavor", "") else {}),
             version=str(args.version),
             result=str(args.result),
             log_url=str(args.log_url) if getattr(args, "log_url", None) else None,
@@ -289,7 +291,7 @@ def _cmd_failures(args: Namespace) -> int:
     else:
         print(f"Failures for {args.target}: {len(payload)}")
         for row in payload:
-            print(f"- {row['origin']} {row['last_attempt_version']}")
+            print(f"- {_display_origin(row)} {row['last_attempt_version']}")
     return 0
 
 
@@ -309,7 +311,7 @@ def _cmd_diff(args: Namespace) -> int:
         )
         for row in payload["differ"]:
             print(
-                f"- {row['origin']}: {row['result_a']} {row['version_a']} vs "
+                f"- {_display_origin(row)}: {row['result_a']} {row['version_a']} vs "
                 f"{row['result_b']} {row['version_b']}"
             )
     return 0
@@ -575,11 +577,15 @@ def _resolve_server_url(args: Namespace) -> str:
     return str(getattr(args, "server", None) or tracker_url())
 
 
+def _display_origin(row: dict[str, Any]) -> str:
+    return str(row["origin"]) + ("@" + row["flavor"] if row.get("flavor") else "")
+
+
 def _format_status_rows(rows: list[dict[str, Any]]) -> list[str]:
     if not rows:
         return ["No matching status rows."]
     return [
-        f"- {row['target']} {row['origin']}: {row['last_attempt_result']} {row['last_attempt_version']}"
+        f"- {row['target']} {_display_origin(row)}: {row['last_attempt_result']} {row['last_attempt_version']}"
         + _format_last_success_suffix(row)
         for row in rows
     ]
@@ -617,7 +623,7 @@ def _format_build(payload: dict[str, Any]) -> list[str]:
         )
     for row in results:
         suffix = f" log={row['log_url']}" if row.get("log_url") else ""
-        lines.append(f"- {row['origin']} {row['version']} {row['result']}{suffix}")
+        lines.append(f"- {_display_origin(row)} {row['version']} {row['result']}{suffix}")
     return lines
 
 
@@ -644,7 +650,7 @@ def _format_build_compare(payload: dict[str, Any]) -> list[str]:
     lines.append(f"New failures (regressions): {summary['new_failures']:>4}")
     if payload["new_failures"]:
         inline = ", ".join(
-            f"{row['origin']} {row['version_b']}" for row in payload["new_failures"]
+            f"{_display_origin(row)} {row['version_b']}" for row in payload["new_failures"]
         )
         lines.append(f"  {inline}")
     lines.append(f"Still failing:              {summary['still_failing']:>4}")

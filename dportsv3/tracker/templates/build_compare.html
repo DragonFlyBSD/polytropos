@@ -75,7 +75,7 @@
     <section class="panel">
       <div class="content-head">
         <span class="delta {{ delta }}">{{ label }}</span>
-        <strong>{{ compare[key]|length }} origins</strong>
+        <strong>{{ compare[key]|length }} port flavors</strong>
       </div>
       {% if compare[key] %}
       <div class="table-scroll-x">
@@ -84,7 +84,7 @@
           <tbody>
             {% for row in compare[key] %}
             <tr>
-              <td>{{ row.origin }}</td>
+              <td>{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}</td>
               <td>{% if row.result_a %}{{ build_state_pill(row.result_a) }} <span class="num">{{ row.version_a or '' }}</span>{% else %}<span style="color:var(--faint)">absent</span>{% endif %}</td>
               <td>{% if row.result_b %}{{ build_state_pill(row.result_b) }} <span class="num">{{ row.version_b or '' }}</span>{% else %}<span style="color:var(--faint)">absent</span>{% endif %}</td>
             </tr>

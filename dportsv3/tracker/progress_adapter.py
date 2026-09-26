@@ -205,12 +205,12 @@ def run_history_chunk(
     # 'building' and 'queued' rows are in-flight — they belong in
     # summary.builders, not in the historical record.
     rows = conn.execute(
-        f"""SELECT br.origin, br.version, br.result, br.recorded_at, br.status,
+        f"""SELECT br.origin, br.flavor, br.version, br.result, br.recorded_at, br.status,
                    {BUNDLE_FOR_RESULT_SQL} AS bundle_id
            FROM build_results br
            WHERE br.build_run_id = ?
              AND br.status NOT IN ('building', 'queued')
-           ORDER BY br.recorded_at ASC, br.origin ASC
+           ORDER BY br.recorded_at ASC, br.origin ASC, br.flavor ASC
            LIMIT ? OFFSET ?""",
         (run_id, CHUNK_SIZE, offset),
     ).fetchall()
@@ -224,7 +224,8 @@ def run_history_chunk(
             "result": _RESULT_TO_DSYNTH.get(
                 str(row["result"] or ""), str(row["result"] or "")
             ),
-            "origin": str(row["origin"]),
+            "origin": str(row["origin"]) + ("@" + row["flavor"] if row["flavor"] else ""),
+            "flavor": row["flavor"],
             "info": str(row["version"] or ""),
             "duration": "",
             # Selected all along and then dropped on the floor, which left a
@@ -279,10 +280,10 @@ def _active_builders(
     table shape without claiming we have N physical builder slots.
     """
     rows = conn.execute(
-        """SELECT origin, version
+        """SELECT origin, flavor, version
            FROM build_results
            WHERE build_run_id = ? AND status = 'building'
-           ORDER BY origin ASC""",
+           ORDER BY origin ASC, flavor ASC""",
         (run_id,),
     ).fetchall()
     out: list[dict[str, Any]] = []
@@ -295,7 +296,8 @@ def _active_builders(
                 "ID": _two_digit(i),
                 "elapsed": " --:--:--",
                 "phase": "build",
-                "origin": str(row["origin"]),
+                "origin": str(row["origin"]) + ("@" + row["flavor"] if row["flavor"] else ""),
+                "flavor": row["flavor"],
                 "lines": "",
                 "version": str(row["version"] or "") or None,
             }

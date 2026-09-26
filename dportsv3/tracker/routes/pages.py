@@ -1879,7 +1879,7 @@ def register(app, ctx):
             # times_seen, so the first row is the problem this port is best
             # known for. Its stored state only -- `regressed` is derived
             # from occurrences this page does not load.
-            issues = list_issues(conn, target=target, origin=origin, limit=5)
+            issues = list_issues(conn, target=target, origin=origin.split("@", 1)[0], limit=5)
             return templates.TemplateResponse(
                 request,
                 "port_detail.html",
@@ -1887,7 +1887,7 @@ def register(app, ctx):
                     "title": f"{origin} {target}",
                     "target": target,
                     "origin": origin,
-                    "status": rows[0],
+                    "statuses": rows,
                     "history": get_port_history(conn, target, origin, limit=20),
                     "issues": issues,
                 },

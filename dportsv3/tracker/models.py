@@ -74,6 +74,7 @@ class FinishBuildRequest(TrackerModel):
 
 
 class ResultItem(TrackerModel):
+    flavor: str = ""
     origin: str
     version: str
     result: BuildResultLiteral
@@ -108,6 +109,7 @@ class BuildRunOut(TrackerModel):
 
 
 class PortStatusOut(TrackerModel):
+    flavor: str = ""
     target: str
     origin: str
     last_attempt_version: str | None = None
@@ -120,6 +122,7 @@ class PortStatusOut(TrackerModel):
 
 
 class BuildResultRow(TrackerModel):
+    flavor: str = ""
     # `result` is not BuildResultLiteral: a queued or building row has no
     # result yet and carries the empty string.
     build_run_id: int
@@ -140,6 +143,7 @@ class BuildResultsPage(TrackerModel):
 
 
 class DiffEntry(TrackerModel):
+    flavor: str = ""
     origin: str
     version_a: str | None = None
     result_a: str | None = None
@@ -148,6 +152,7 @@ class DiffEntry(TrackerModel):
 
 
 class DiffSideEntry(TrackerModel):
+    flavor: str = ""
     origin: str
     target: str
     version: str | None = None
@@ -161,6 +166,7 @@ class DiffOut(TrackerModel):
 
 
 class BuildCompareEntry(TrackerModel):
+    flavor: str = ""
     origin: str
     version_a: str | None = None
     result_a: str | None = None
@@ -191,6 +197,7 @@ class BuildCompareOut(TrackerModel):
 
 
 class QueueItem(TrackerModel):
+    flavor: str = ""
     origin: str
     version: str
 
@@ -205,6 +212,7 @@ class EnqueueResponse(TrackerModel):
 
 
 class UpdatePortStatusRequest(TrackerModel):
+    flavor: str = ""
     status: Literal["building"]
 
 

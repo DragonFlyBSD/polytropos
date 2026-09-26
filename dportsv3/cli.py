@@ -545,6 +545,7 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     record = tracker_sub.add_parser("record-result", help="Record one build result")
     record.add_argument("--run", type=int, required=True, help="Build run ID")
     record.add_argument("--origin", type=str, required=True, help="Port origin")
+    record.add_argument("--flavor", default="", help="Port flavor")
     record.add_argument("--version", type=str, required=True, help="Port version")
     record.add_argument(
         "--result", type=str, required=True,
@@ -568,6 +569,7 @@ def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     mark_building.add_argument("--run", type=int, required=True, help="Build run ID")
     mark_building.add_argument("--origin", type=str, required=True, help="Port origin")
+    mark_building.add_argument("--flavor", default="", help="Port flavor")
     mark_building.add_argument("--server", type=str, help="Tracker base URL")
 
     status = tracker_sub.add_parser("status", help="Query current port status")

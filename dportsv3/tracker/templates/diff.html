@@ -57,21 +57,21 @@
           <tbody>
             {% for row in diff.differ %}
             <tr>
-              <td>{{ row.origin }}</td>
+              <td>{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}</td>
               <td>{{ build_state_pill(row.result_a) }} <span class="num">{{ row.version_a or '' }}</span></td>
               <td>{{ build_state_pill(row.result_b) }} <span class="num">{{ row.version_b or '' }}</span></td>
             </tr>
             {% endfor %}
             {% for row in diff.only_a %}
             <tr>
-              <td>{{ row.origin }}</td>
+              <td>{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}</td>
               <td>{{ build_state_pill(row.result) }} <span class="num">{{ row.version or '' }}</span></td>
               <td><span style="color:var(--faint)">absent</span></td>
             </tr>
             {% endfor %}
             {% for row in diff.only_b %}
             <tr>
-              <td>{{ row.origin }}</td>
+              <td>{{ row.origin }}{% if row.flavor %}@{{ row.flavor }}{% endif %}</td>
               <td><span style="color:var(--faint)">absent</span></td>
               <td>{{ build_state_pill(row.result) }} <span class="num">{{ row.version or '' }}</span></td>
             </tr>

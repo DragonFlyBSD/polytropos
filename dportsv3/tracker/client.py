@@ -54,6 +54,7 @@ def record_result(
     result: str,
     *,
     log_url: str | None = None,
+    flavor: str = "",
 ) -> int:
     """Record one build result and return the recorded count."""
     item: dict[str, Any] = {
@@ -61,6 +62,8 @@ def record_result(
         "version": version,
         "result": result,
     }
+    if flavor:
+        item["flavor"] = flavor
     if log_url is not None:
         item["log_url"] = log_url
     payload = record_results_batch(server_url, run_id, [item])
@@ -100,13 +103,13 @@ def enqueue_ports(
     return int(result["queued"])
 
 
-def mark_port_building(server_url: str, run_id: int, origin: str) -> None:
+def mark_port_building(server_url: str, run_id: int, origin: str, flavor: str = "") -> None:
     """Mark one port as building."""
     _request_json(
         server_url,
         f"/api/builds/{run_id}/ports/{origin}/status",
         method="PATCH",
-        payload={"status": "building"},
+        payload={"status": "building", **({"flavor": flavor} if flavor else {})},
     )
 
 

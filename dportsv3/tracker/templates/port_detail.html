@@ -29,9 +29,11 @@
       <div class="content-head">Current status</div>
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th scope="col">Last attempt</th><th scope="col">Version</th><th scope="col">Run</th><th scope="col">When</th></tr></thead>
+          <thead><tr><th scope="col">Flavor</th><th scope="col">Last attempt</th><th scope="col">Version</th><th scope="col">Run</th><th scope="col">When</th></tr></thead>
           <tbody>
+            {% for status in statuses %}
             <tr>
+              <td rowspan="2">{{ status.flavor or 'unflavored / unknown' }}</td>
               <td>{{ build_state_pill(status.last_attempt_result) }}</td>
               <td class="tabular">{{ status.last_attempt_version or '—' }}</td>
               <td>{% if status.last_attempt_run_id %}<a href="{{ request.url_for('dashboard_index') }}?run={{ status.last_attempt_run_id }}">#{{ status.last_attempt_run_id }}</a>{% else %}—{% endif %}</td>
@@ -44,6 +46,7 @@
               <td>{% if status.last_success_run_id %}<a href="{{ request.url_for('dashboard_index') }}?run={{ status.last_success_run_id }}">#{{ status.last_success_run_id }}</a>{% else %}—{% endif %}</td>
               <td class="tabular">{{ status.last_success_at or '—' }}</td>
             </tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -72,15 +75,16 @@
     {% endif %}
 
     <section class="panel">
-      <div class="content-head">Build history<strong>{{ history|length }} runs</strong></div>
+      <div class="content-head">Build history<strong>{{ history|length }} results</strong></div>
       {% if history %}
       <div class="table-scroll-x">
         <table class="data-table">
-          <thead><tr><th scope="col">Run</th><th scope="col">Type</th><th scope="col">State</th><th scope="col">Version</th><th scope="col">Recorded</th><th scope="col">Log</th></tr></thead>
+          <thead><tr><th scope="col">Run</th><th scope="col">Flavor</th><th scope="col">Type</th><th scope="col">State</th><th scope="col">Version</th><th scope="col">Recorded</th><th scope="col">Log</th></tr></thead>
           <tbody>
             {% for row in history %}
             <tr>
               <td><a href="{{ request.url_for('dashboard_index') }}?run={{ row.build_run_id }}">#{{ row.build_run_id }}</a></td>
+              <td>{{ row.flavor or 'unflavored / unknown' }}</td>
               <td>{{ row.build_type }}</td>
               <td>{{ build_state_pill(row.result) }}</td>
               <td class="tabular">{{ row.version }}</td>

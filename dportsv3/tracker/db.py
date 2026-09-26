@@ -46,9 +46,23 @@ BUNDLE_FOR_RESULT_SQL = """(
           JOIN runs r ON r.run_id = b.run_id
          WHERE r.build_run_id = br.build_run_id
            AND b.origin = br.origin
+           AND CASE WHEN COALESCE(b.flavor, '') = b.origin THEN ''
+                    ELSE LTRIM(COALESCE(b.flavor, ''), '@') END = br.flavor
          ORDER BY b.ts_utc DESC
          LIMIT 1
     )"""
+
+
+def _port_identity(origin: str, flavor: str = "") -> tuple[str, str]:
+    """Accept origin@flavor and dsynth's FLAVOR=ORIGIN unflavored sentinel."""
+    origin, flavor = origin.strip(), flavor.strip()
+    base, _, suffix = origin.partition("@")
+    if flavor in (origin, base):
+        flavor = ""
+    flavor = flavor.lstrip("@")
+    if suffix and flavor and suffix != flavor:
+        raise ValueError("Origin suffix and flavor disagree")
+    return base, flavor or suffix
 
 
 def open_db(db_path: str | Path) -> sqlite3.Connection:
@@ -298,6 +312,7 @@ def record_results(
     with conn:
         for result in results:
             origin = str(result.get("origin", "")).strip()
+            origin, flavor = _port_identity(origin, str(result.get("flavor") or ""))
             version = str(result.get("version", "")).strip()
             outcome = str(result.get("result", "")).strip()
             log_url = result.get("log_url")
@@ -313,20 +328,21 @@ def record_results(
                 INSERT INTO build_results(
                     build_run_id,
                     origin,
+                    flavor,
                     version,
                     result,
                     log_url,
                     recorded_at,
                     status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(build_run_id, origin) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(build_run_id, origin, flavor) DO UPDATE SET
                     version = excluded.version,
                     result = excluded.result,
                     log_url = excluded.log_url,
                     recorded_at = excluded.recorded_at,
                     status = excluded.status
                 """,
-                (run_id, origin, version, outcome, log_url, recorded_at, outcome),
+                (run_id, origin, flavor, version, outcome, log_url, recorded_at, outcome),
             )
 
             success_version = version if outcome == "success" else None
@@ -337,6 +353,7 @@ def record_results(
                 INSERT INTO port_status(
                     target,
                     origin,
+                    flavor,
                     last_attempt_version,
                     last_attempt_result,
                     last_attempt_at,
@@ -344,8 +361,8 @@ def record_results(
                     last_success_version,
                     last_success_at,
                     last_success_run_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(target, origin) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(target, origin, flavor) DO UPDATE SET
                     last_attempt_version = excluded.last_attempt_version,
                     last_attempt_result = excluded.last_attempt_result,
                     last_attempt_at = excluded.last_attempt_at,
@@ -369,6 +386,7 @@ def record_results(
                 (
                     target,
                     origin,
+                    flavor,
                     version,
                     outcome,
                     recorded_at,
@@ -393,16 +411,17 @@ def enqueue_ports(
     with conn:
         for port in ports:
             origin = str(port.get("origin", "")).strip()
+            origin, flavor = _port_identity(origin, str(port.get("flavor") or ""))
             version = str(port.get("version", "")).strip()
             if not origin or not version:
                 continue
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO build_results(
-                    build_run_id, origin, version, result, log_url, recorded_at, status
-                ) VALUES (?, ?, ?, '', NULL, '', 'queued')
+                    build_run_id, origin, flavor, version, result, log_url, recorded_at, status
+                ) VALUES (?, ?, ?, ?, '', NULL, '', 'queued')
                 """,
-                (run_id, origin, version),
+                (run_id, origin, flavor, version),
             )
             inserted += cursor.rowcount
         if total_expected is not None:
@@ -418,16 +437,18 @@ def update_port_status(
     run_id: int,
     origin: str,
     status: str,
+    flavor: str = "",
 ) -> None:
-    """Update the status of one port in a build run (e.g. queued -> building)."""
+    """Update exactly one flavor in a build run (e.g. queued -> building)."""
+    origin, flavor = _port_identity(origin, flavor)
     _require_build_run(conn, run_id)
     with conn:
         cursor = conn.execute(
             """
             UPDATE build_results SET status = ?
-            WHERE build_run_id = ? AND origin = ?
+            WHERE build_run_id = ? AND origin = ? AND flavor = ?
             """,
-            (status, run_id, origin),
+            (status, run_id, origin, flavor),
         )
     if cursor.rowcount == 0:
         raise ValueError(f"No result row for run {run_id}, origin {origin}")
@@ -555,7 +576,7 @@ def get_build_results(conn: sqlite3.Connection, run_id: int) -> list[dict[str, A
     _require_build_run(conn, run_id)
     rows = conn.execute(
         """
-        SELECT build_run_id, origin, version, result, log_url, recorded_at, status
+        SELECT build_run_id, origin, flavor, version, result, log_url, recorded_at, status
         FROM build_results
         WHERE build_run_id = ?
         ORDER BY
@@ -564,7 +585,7 @@ def get_build_results(conn: sqlite3.Connection, run_id: int) -> list[dict[str, A
                 WHEN 'queued' THEN 1
                 ELSE 2
             END,
-            origin ASC
+            origin ASC, flavor ASC
         """,
         (run_id,),
     ).fetchall()
@@ -609,7 +630,7 @@ def get_build_results_page(
     ``_`` finds an underscore rather than everything.
 
     Ordered by origin, which is free: build_results is keyed
-    (build_run_id, origin), so the WHERE is a primary-key prefix scan already
+    (build_run_id, origin, flavor), so the WHERE is a primary-key prefix scan already
     in that order. ``get_build_results`` orders by a CASE over status
     instead, which costs a temp b-tree over the whole run before LIMIT
     applies -- 5.94 ms against 0.26 ms at offset 13000. In-flight rows are
@@ -628,7 +649,7 @@ def get_build_results_page(
         clauses.append(f"{column} = ?")
         params.append(state)
     if search:
-        clauses.append(r"br.origin LIKE ? ESCAPE '\'")
+        clauses.append(r"(br.origin || CASE WHEN br.flavor != '' THEN '@' || br.flavor ELSE '' END) LIKE ? ESCAPE '\'")
         params.append(like_contains(search))
     where_sql = " AND ".join(clauses)
 
@@ -643,6 +664,7 @@ def get_build_results_page(
         SELECT
             br.build_run_id,
             br.origin,
+            br.flavor,
             br.version,
             br.result,
             br.log_url,
@@ -651,7 +673,7 @@ def get_build_results_page(
             {BUNDLE_FOR_RESULT_SQL} AS bundle_id
         FROM build_results br
         WHERE {where_sql}
-        ORDER BY br.origin ASC
+        ORDER BY br.origin ASC, br.flavor ASC
         LIMIT ? OFFSET ?
         """,
         (*params, limit, offset),
@@ -692,9 +714,12 @@ def get_port_history(
     origin: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Return recent build history for one origin on one target."""
+    """Return recent build history, optionally restricted by origin@flavor."""
+    base, flavor = _port_identity(origin)
+    flavor_filter = " AND build_results.flavor = ?" if "@" in origin else ""
+    params = (target, base, flavor) if flavor_filter else (target, base)
     rows = conn.execute(
-        """
+        f"""
         SELECT
             build_runs.id AS build_run_id,
             build_runs.target,
@@ -702,17 +727,18 @@ def get_port_history(
             build_runs.started_at,
             build_runs.finished_at,
             build_results.origin,
+            build_results.flavor,
             build_results.version,
             build_results.result,
             build_results.log_url,
             build_results.recorded_at
         FROM build_results
         JOIN build_runs ON build_runs.id = build_results.build_run_id
-        WHERE build_runs.target = ? AND build_results.origin = ?
-        ORDER BY build_runs.started_at DESC, build_runs.id DESC
+        WHERE build_runs.target = ? AND build_results.origin = ?{flavor_filter}
+        ORDER BY build_runs.started_at DESC, build_runs.id DESC, build_results.flavor ASC
         LIMIT ?
         """,
-        (target, origin, max(1, int(limit))),
+        (*params, max(1, int(limit))),
     ).fetchall()
     return [_row_dict_required(row) for row in rows]
 
@@ -729,8 +755,12 @@ def get_port_status(
         clauses.append("target = ?")
         params.append(target)
     if origin is not None:
+        base, flavor = _port_identity(origin)
         clauses.append("origin = ?")
-        params.append(origin)
+        params.append(base)
+        if "@" in origin:
+            clauses.append("flavor = ?")
+            params.append(flavor)
     where_sql = ""
     if clauses:
         where_sql = "WHERE " + " AND ".join(clauses)
@@ -739,7 +769,7 @@ def get_port_status(
         SELECT *
         FROM port_status
         {where_sql}
-        ORDER BY target ASC, origin ASC
+        ORDER BY target ASC, origin ASC, flavor ASC
         """,
         params,
     ).fetchall()
@@ -766,22 +796,23 @@ def get_diff(
     target_b: str,
 ) -> dict[str, list[dict[str, Any]]]:
     """Return current per-port differences between two targets."""
-    statuses_a = {row["origin"]: row for row in get_port_status(conn, target=target_a)}
-    statuses_b = {row["origin"]: row for row in get_port_status(conn, target=target_b)}
+    statuses_a = {(row["origin"], row["flavor"]): row for row in get_port_status(conn, target=target_a)}
+    statuses_b = {(row["origin"], row["flavor"]): row for row in get_port_status(conn, target=target_b)}
 
     only_a: list[dict[str, Any]] = []
     only_b: list[dict[str, Any]] = []
     differ: list[dict[str, Any]] = []
 
-    for origin in sorted(set(statuses_a) | set(statuses_b)):
-        row_a = statuses_a.get(origin)
-        row_b = statuses_b.get(origin)
+    for origin, flavor in sorted(set(statuses_a) | set(statuses_b)):
+        row_a = statuses_a.get((origin, flavor))
+        row_b = statuses_b.get((origin, flavor))
         if row_a is None:
             assert row_b is not None
             row_b_required = row_b
             only_b.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "target": target_b,
                     "version": row_b_required["last_attempt_version"],
                     "result": row_b_required["last_attempt_result"],
@@ -794,6 +825,7 @@ def get_diff(
             only_a.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "target": target_a,
                     "version": row_a_required["last_attempt_version"],
                     "result": row_a_required["last_attempt_result"],
@@ -807,6 +839,7 @@ def get_diff(
             differ.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["last_attempt_version"],
                     "result_a": row_a["last_attempt_result"],
                     "version_b": row_b["last_attempt_version"],
@@ -884,8 +917,8 @@ def compare_builds(
     """Compare two build runs and categorize origin deltas."""
     run_a = get_build_run(conn, run_id_a)
     run_b = get_build_run(conn, run_id_b)
-    results_a = {row["origin"]: row for row in get_build_results(conn, run_id_a)}
-    results_b = {row["origin"]: row for row in get_build_results(conn, run_id_b)}
+    results_a = {(row["origin"], row["flavor"]): row for row in get_build_results(conn, run_id_a)}
+    results_b = {(row["origin"], row["flavor"]): row for row in get_build_results(conn, run_id_b)}
 
     new_successes: list[dict[str, Any]] = []
     new_failures: list[dict[str, Any]] = []
@@ -895,14 +928,15 @@ def compare_builds(
     version_changes: list[dict[str, Any]] = []
     still_succeeding = 0
 
-    for origin in sorted(set(results_a) | set(results_b)):
-        row_a = results_a.get(origin)
-        row_b = results_b.get(origin)
+    for origin, flavor in sorted(set(results_a) | set(results_b)):
+        row_a = results_a.get((origin, flavor))
+        row_b = results_b.get((origin, flavor))
         if row_a is None:
             assert row_b is not None
             added.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_b": row_b["version"],
                     "result_b": row_b["result"],
                 }
@@ -912,6 +946,7 @@ def compare_builds(
             removed.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["version"],
                     "result_a": row_a["result"],
                 }
@@ -922,6 +957,7 @@ def compare_builds(
             version_changes.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["version"],
                     "result_a": row_a["result"],
                     "version_b": row_b["version"],
@@ -935,6 +971,7 @@ def compare_builds(
             new_successes.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["version"],
                     "result_a": result_a,
                     "version_b": row_b["version"],
@@ -945,6 +982,7 @@ def compare_builds(
             new_failures.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["version"],
                     "result_a": result_a,
                     "version_b": row_b["version"],
@@ -955,6 +993,7 @@ def compare_builds(
             still_failing.append(
                 {
                     "origin": origin,
+                    "flavor": flavor,
                     "version_a": row_a["version"],
                     "result_a": result_a,
                     "version_b": row_b["version"],
