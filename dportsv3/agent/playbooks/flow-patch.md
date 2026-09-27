@@ -187,18 +187,19 @@ Scope is also a **disambiguation lever**: when an op refuses as ambiguous
 because the same line/block exists under both `@any` and a quarterly
 section, placing the op under the specific section targets exactly one.
 
-PORTREVISION is an exception: it's part of the port's package identity,
-so a bump scoped to one build line ships an un-bumped package on the
-others. Keep PORTREVISION bumps in `@any`.
+PORTREVISION is the exception, and it goes the OTHER way: scope it to
+the build line you are building, never `@any`. A revision number counts
+rebuilds of a specific PORTVERSION, and branches carry different versions —
+so one absolute number cannot be right for both. See "Bumping
+PORTREVISION" below.
 
 ## Order is by scope, not by position
 
 For a build on target `T` the engine executes **every `@any` op first, in
 file order, then every `T` op, in file order.** File position does not
 decide what runs last — scope does. `mk` and `text` ops are last-wins, so
-this changes results. Assume the port's Makefile already assigns `FOO`
-(otherwise the `@any` op fails outright under the default
-`on-missing error`, which is its own hazard):
+this changes results (`mk set` inserts when the variable is absent, so
+the example works either way):
 
 ```
 target @main
@@ -268,9 +269,12 @@ produce the diff rather than hand-writing one:
    the prior `make_extract` automatically.) Because the `.orig` baseline
    is post-`do-patch`, the hunk context matches what `do-patch` sees at
    build time and the patch applies cleanly.
-6. `install_patches(origin)` — copies the generated patch into
-   `ports/<origin>/dragonfly/`, then add the `file materialize` line to
-   `overlay.dops` so compose stages it.
+6. `install_patches(origin)` — copies the generated patch into the
+   port's payload lane for this build line. **Read `installed` for the
+   path and `scope_note` for what to do next**; do not assume
+   `dragonfly/<name>`, and do not add a `file materialize` line the note
+   says is already there. When a line IS needed, put it inside the block
+   for your target — see "Order is by scope, not by position".
 
 **`dupe` is only one step of this flow.** It exists solely to support
 patch generation — it is not an investigation tool, not a "before"
@@ -311,12 +315,16 @@ overwrite in place** — in that order:
 
 1. Regenerate a correct patch via the dupe→genpatch flow above, or stage
    a corrected hand-written diff.
-2. Write it over the broken one, at the same `dragonfly/` path.
+2. Write it over the broken one, at the path its own `file materialize`
+   op reads — which is **not** necessarily `dragonfly/<name>`: on a port
+   that scopes this patch the source is `dragonfly/@<target>/<name>`.
+   `install_patches` resolves that from the overlay and reports it in
+   `installed`.
 
 **`overlay.dops` needs no edit at all.** Its `file materialize` line
-already names that path, so overwriting the file is the whole swap: one
-write, and no moment where the port is staged without a patch. Only if
-the replacement must take a *different* filename do you touch
+already names that source, so overwriting the file there is the whole
+swap: one write, and no moment where the port is staged without a patch.
+Only if the replacement must take a *different* filename do you touch
 `overlay.dops`, and then only after the new file exists.
 
 **Never leave `overlay.dops` with the install line removed and no
@@ -373,3 +381,45 @@ revision). Make the bump the **last** edit of the attempt: bumping
 before you've confirmed the behavior change works leaves a stray
 revision an operator has to walk back. PORTREVISION is not for the
 first time a port is touched — that's an introduction, not a rebuild.
+
+### Scope it to the build line you are on
+
+**Put the bump in the block for the target you are building** — the one
+`get_effective_overlay` reports — and never in `@any`. This is the one place
+the "most fixes are universal" rule inverts, and the reason is that a
+revision number is meaningless without the PORTVERSION it counts against.
+`graphics/gdal` today:
+
+| | `main` | `2026Q3` |
+|---|---|---|
+| PORTVERSION | 3.13.3 | 3.13.1 |
+| upstream PORTREVISION | absent (→ 0) | 2 |
+
+Revision 3 of 3.13.1 and revision 3 of 3.13.3 are unrelated packages. There
+is no single number that is correct for both, in principle.
+
+**An absolute value in `@any` is a permanent pin, and that is what makes it
+worse than the alternative.** `mk set` never fails because the variable is
+absent — it inserts — so the op silently rewrites every other build line's
+PORTREVISION to your number, and goes on rewriting it on every compose
+forever. Every *future* upstream bump on those lines is reverted, silently,
+indefinitely. gdal's `@any` op does exactly this: it overwrites `2026Q3`'s
+upstream `2` with `3` right now.
+
+Nothing catches it. An env builds one target, so no build sees the other
+line; and because `mk set` inserts rather than failing on a missing subject,
+even composing the other target comes out clean.
+
+**The cost of scoping, stated honestly:** the other build lines still
+*rebuild* the port — dsynth's change detector folds mtime, size and path, so
+any overlay change forces a rebuild everywhere — but they ship the changed
+contents under an **unchanged version string**, which `pkg` will never
+install. That is a real and quiet failure. It is also *bounded*: one missed
+upgrade signal per line, ended by the next bump on that line. The `@any` pin
+is unbounded. That asymmetry is the whole argument.
+
+**If the port already has an `@any` `mk set PORTREVISION`, adding a scoped
+one does not help** — `@any` runs first and the scoped op only wins on your
+line, leaving the pin in place everywhere else. Move the existing op into a
+target block rather than layering on top of it.
+

@@ -179,10 +179,20 @@ def test_the_safe_swap_needs_no_overlay_edit_at_all() -> None:
     """Strongest form of the fix: overwriting the broken patch at its
     existing path is the entire swap, because the file materialize line
     already names it. A procedure that never opens overlay.dops cannot
-    leave it half-edited."""
-    sec = _recovery_section()
+    leave it half-edited.
+
+    The path is deliberately NOT described as "the same `dragonfly/`
+    path" any more: for a port that scopes this patch the source is
+    `dragonfly/@<target>/<name>`, so that phrasing was a false precision
+    that sent a re-cut somewhere no op reads (poly-7pwa.13). The invariant
+    the test exists for -- overwrite in place, do not touch the overlay --
+    is unchanged, so it is pinned by the op instead of by a literal path.
+    """
+    sec = " ".join(_recovery_section().split())
     assert "`overlay.dops` needs no edit at all" in sec
-    assert re.search(r"same `dragonfly/` path", sec)
+    # Whitespace-collapsed: the phrase spans a line wrap, and a literal
+    # match would fail on a reflow for no reason.
+    assert "`file materialize` op reads" in sec
 
 
 def test_the_green_window_is_named_as_the_hazard() -> None:

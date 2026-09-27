@@ -246,6 +246,7 @@ branches).
 | Inserting a whole `.if DragonFly ... .endif` block | `mk block set condition "..."` |
 | Framework patch logic that doesn't reduce to mk/text | `patch apply diffs/X.diff` (only for `diffs/`, not `dragonfly/`) |
 | Upstream-source patch (anything under `dragonfly/`) | `file materialize dragonfly/X -> dragonfly/X` (stage, do NOT patch) |
+| …whose content differs per build line | `file materialize dragonfly/@<target>/X -> dragonfly/X` — source scoped, destination flat, op inside that `target` block |
 | Dropping pkg-plist entries for an option you disabled | `text line-remove file pkg-plist exact "<line>"`, one per entry |
 | Adding a pkg-plist entry | `text line-insert-after file pkg-plist anchor "<line>" line "<new>"` |
 

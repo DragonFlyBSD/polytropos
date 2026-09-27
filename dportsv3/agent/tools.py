@@ -161,8 +161,15 @@ _TOOLS: list[dict] = [
           "Produce a unified diff for a duped+edited file. Output: /work/genpatch-out/patch-*.",
           {"path": _STR}, ["path"]),
     _tool("install_patches",
-          "Copy patches from /work/genpatch-out/ into DeltaPorts/ports/<origin>/dragonfly/. "
-          "Then call materialize_dports.",
+          "Copy patches from /work/genpatch-out/ into the port's dragonfly "
+          "payload lane, then call materialize_dports. DO NOT ASSUME THE "
+          "PATH: the lane is decided per file from the port's own overlay — "
+          "`dragonfly/` for a flat patch, `dragonfly/@<target>/` where this "
+          "build line's `file materialize` op reads from there. `installed` "
+          "gives the real paths and `scope_note` explains any that are not "
+          "flat, including whether an op still has to be written. Read them "
+          "rather than a path you inferred. For a slave port the destination "
+          "is redirected into the master's tree (`note` says so).",
           {"origin": _STR, "patches": {"type": "array", "items": {"type": "string"}}},
           ["origin"]),
     _tool("dsynth_build",
