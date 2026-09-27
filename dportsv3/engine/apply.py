@@ -50,6 +50,7 @@ from dportsv3.engine.models import (
     Diagnostic,
     Plan,
     PlanOp,
+    order_ops_for_target,
 )
 from dportsv3.engine.oracle import (
     literal_expectations,
@@ -272,9 +273,7 @@ def apply_plan(
     txn = FileTransaction(dry_run=dry_run)
 
     try:
-        ordered_ops = [op for op in plan.ops if op.target == "@any"]
-        ordered_ops.extend(op for op in plan.ops if op.target == target)
-        ordered_ops.extend(op for op in plan.ops if op.target not in {"@any", target})
+        ordered_ops = order_ops_for_target(plan.ops, target)
 
         for op in ordered_ops:
             if not is_scoped_target(op.target):

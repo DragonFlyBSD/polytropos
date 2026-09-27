@@ -32,8 +32,10 @@ about what compose will actually do. It runs the file through the engine
 and returns:
 
 - `target` — the env's compose target (the build line you're on).
-- `effective_ops` — ops that **will** apply on this build, in
-  declaration order, each tagged with `scope` and its engine `kind`
+- `effective_ops` — ops that **will** apply on this build, **in the
+  order the engine executes them** (`apply_index` is the ordinal — see
+  "Order is by scope, not by position" below; it is *not* file order),
+  each tagged with `scope` and its engine `kind`
   (`mk.var.set`, `mk.var.token_add`, `patch.apply`, …). For `mk.var.*`
   the variable is in `name`, the value in `value`.
 - `filtered_out` — ops scoped to *other* build lines, each with a
@@ -133,8 +135,9 @@ want `unset`, not `remove`.
   — the engine won't guess which to rewrite. Narrow it with scope (see
   below) or hand-resolve. (`add` does not refuse on multi-assignment.)
 - Re-emitting `mk set VAR` for the same key **accumulates** lines in the
-  overlay. The composed Makefile is still correct (ops play in
-  declaration order, last-wins), but the file carries every copy. To
+  overlay. The composed Makefile is still correct (ops play last-wins —
+  within one scope that is declaration order; across scopes see "Order is
+  by scope, not by position"), but the file carries every copy. To
   drop a superseded `mk` line, edit `overlay.dops` and delete that exact
   line (whole-token key match — `USE` won't match `USES`).
 
@@ -187,6 +190,39 @@ section, placing the op under the specific section targets exactly one.
 PORTREVISION is an exception: it's part of the port's package identity,
 so a bump scoped to one build line ships an un-bumped package on the
 others. Keep PORTREVISION bumps in `@any`.
+
+## Order is by scope, not by position
+
+For a build on target `T` the engine executes **every `@any` op first, in
+file order, then every `T` op, in file order.** File position does not
+decide what runs last — scope does. `mk` and `text` ops are last-wins, so
+this changes results. Assume the port's Makefile already assigns `FOO`
+(otherwise the `@any` op fails outright under the default
+`on-missing error`, which is its own hazard):
+
+```
+target @main
+mk set FOO "from-main"
+target @any
+mk set FOO "from-any"      # reads last in the file
+```
+
+On `@main`: `@any` runs first, then `@main` → **`FOO= from-main`**.
+On `@2026Q3`: only the `@any` op runs → **`FOO= from-any`**.
+
+One edit, two different composed Makefiles, and **you can only build one
+of them** — an env has exactly one target. So an op that must beat an
+`@any` op has to live in that target's own block; putting it *below* the
+`@any` op is not enough and does the opposite of what reading the file
+suggests.
+
+Two consequences worth holding onto:
+
+- `get_effective_overlay`'s `effective_ops` is already in this order, and
+  `apply_index` is the position. Trust that ordinal over the file.
+- It also decides which op wins when two `file materialize` ops name the
+  same destination — the scoped one wins on its own target and loses on
+  every other.
 
 ## Creating a static source patch (`dragonfly/*`)
 

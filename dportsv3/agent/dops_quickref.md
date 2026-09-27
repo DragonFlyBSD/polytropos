@@ -23,6 +23,14 @@ reason "<one-line why this overlay exists>"
 - One origin per file. `port` directive is required exactly once.
 - `target` sets the active scope. Multiple `target` directives are
   allowed; operations inherit the most recently named scope.
+- **Scope decides execution order, not file position.** On a build for
+  target `T` the engine runs every `@any` op first, in file order, then
+  every `T` op, in file order. `mk`/`text` ops are last-wins, so an
+  `@any` op written *below* a `@T` block still loses on `T` — and wins on
+  build lines that have no block of their own. An op that must beat an
+  `@any` op belongs in that target's block, not merely after it.
+  `get_effective_overlay`'s `effective_ops` is already in this order and
+  carries `apply_index`; trust it over the file.
 - Comments start with `#` (outside heredoc bodies).
 
 ## Makefile variable ops

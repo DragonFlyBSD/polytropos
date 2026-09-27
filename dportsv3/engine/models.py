@@ -305,3 +305,40 @@ def diagnostic_not_implemented(stage: str, source_path: Path | None) -> Diagnost
         message=f"{stage} is not implemented yet",
         source_path=str(source_path) if source_path is not None else None,
     )
+
+
+def order_ops_for_target(ops: list[PlanOp], target: str) -> list[PlanOp]:
+    """Plan ops in the order an apply run for ``target`` executes them.
+
+    SCOPE DECIDES ORDER, NOT FILE POSITION. Every ``@any`` op runs first,
+    in source order, then every op bound to ``target``, then the rest --
+    which are skipped as target-mismatched. docs/dsl-v0.md states this as
+    the contract and ports-mgmt/pkg's overlay relies on it ("@any ops
+    always run first regardless of where the block sits in the file").
+
+    Because ``mk`` and ``text`` ops resolve last-wins, the op that reads
+    LAST in the file wins on a target with no block of its own and loses
+    on a target that has one -- one edit, two composed trees, and only
+    one of them is ever built (poly-7pwa.11). Anything that reports what
+    an overlay "will do" has to order it this way or it reports the wrong
+    winner, which is why this lives here rather than inline in the apply
+    loop: ``apply`` and the agent's ``get_effective_overlay`` must not be
+    able to disagree about it.
+
+    Mismatched scopes are ordered LAST rather than dropped, so a caller
+    can report them as skipped. Callers rely on that: it is what lets an
+    index taken while walking this list double as the op's position in
+    the executed sequence.
+
+    ``target`` is a build target, so never ``@any`` -- but a caller that
+    passed one would otherwise get every ``@any`` op twice, once from
+    each bucket. Treat it as "only the universal ops run".
+    """
+    if target == "@any":
+        return [op for op in ops if op.target == "@any"] + [
+            op for op in ops if op.target != "@any"
+        ]
+    ordered = [op for op in ops if op.target == "@any"]
+    ordered.extend(op for op in ops if op.target == target)
+    ordered.extend(op for op in ops if op.target not in {"@any", target})
+    return ordered

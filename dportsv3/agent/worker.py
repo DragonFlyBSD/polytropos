@@ -1805,13 +1805,26 @@ def get_effective_overlay(env: str, origin: str) -> dict:
     externalizes the work into a tool — feed it origin, get back
     structured ops the engine would actually apply.
 
+    ``effective_ops`` IS IN APPLY ORDER, WHICH IS NOT FILE ORDER. Every
+    ``@any`` op executes before any of the target's own, whatever the
+    file says (``order_ops_for_target``), and ``mk``/``text`` ops are
+    last-wins. Reporting file order here named the wrong winner for any
+    port with a per-target block — an ``@any`` op written *below* a
+    ``@main`` one loses on ``@main``, and wins only on build lines that
+    have no block of their own writing the same subject — and this is the
+    tool whose whole job is to answer "what will compose do"
+    (poly-7pwa.11). ``apply_index`` is the ordinal in that sequence; it
+    is the op's real position because ``order_ops_for_target`` sorts
+    mismatched scopes strictly last, so every effective op is seen before
+    any filtered one.
+
     Returns a dict with::
 
         {
             "ok": True,
             "target": "<env target>",
-            "effective_ops": [<PlanOp dict>, ...],
-            "filtered_out": [<PlanOp dict + reason>, ...],
+            "effective_ops": [<PlanOp dict + scope + apply_index>, ...],
+            "filtered_out": [<PlanOp dict + scope + reason>, ...],
             "overlay_path": "ports/<origin>/overlay.dops",
         }
 
@@ -1832,6 +1845,7 @@ def get_effective_overlay(env: str, origin: str) -> dict:
     agent edits), ``ok=True`` with empty lists — not an error.
     """
     from dportsv3.engine.api import build_plan  # noqa: PLC0415
+    from dportsv3.engine.models import order_ops_for_target  # noqa: PLC0415
 
     target = peek_env_target(env)
     if not target:
@@ -1892,7 +1906,13 @@ def get_effective_overlay(env: str, origin: str) -> dict:
 
     effective: list[dict] = []
     filtered: list[dict] = []
-    for op in plan_result.plan.ops:
+    # APPLY ORDER, NOT DECLARATION ORDER. The engine runs every @any op
+    # before any of the target's own, whatever the file says, and mk/text
+    # ops are last-wins -- so listing these in file order names the wrong
+    # winner in exactly the multi-target case this tool exists for
+    # (poly-7pwa.11). Same helper the apply loop uses, so the two cannot
+    # drift apart.
+    for op in order_ops_for_target(plan_result.plan.ops, target):
         op_dict = op.to_dict()
         # Rename per-op `target` → `scope` for the agent-facing
         # response. PlanOp.target IS the scope the op is bound to,
@@ -1902,6 +1922,10 @@ def get_effective_overlay(env: str, origin: str) -> dict:
         # for the per-op layer; align the response shape.
         op_dict["scope"] = op_dict.pop("target")
         if op.target in ("@any", target):
+            # Position in the sequence the engine will actually execute.
+            # The agent needs an ordinal it can reason about without
+            # having to know the three-phase rule itself.
+            op_dict["apply_index"] = len(effective)
             effective.append(op_dict)
         else:
             filtered.append({
