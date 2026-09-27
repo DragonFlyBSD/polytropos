@@ -1190,6 +1190,139 @@ def _err(
     )
 
 
+def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
+    """The "you are on build line X" section, or "" when there is nothing to say.
+
+    poly-7pwa.5. An env builds exactly one target, and the job's brief never
+    named it -- it appeared only as a directory component in a sentence about
+    where to read files. So the model had no reason to ask whether its fix
+    belonged to every build line or just this one.
+
+    TWO LEVELS, because volume costs attention. The always-on line names the
+    target AND the question, because the question is what the bead is about
+    and 5085 of 5087 overlays are single-scope: a port that needs its FIRST
+    per-target split is in that population, and telling it only "you cannot
+    see the other lines" hands it a blind spot with no lever. The longer form
+    -- which scopes exist, where an appended op lands, the payload lane --
+    only appears for a port whose overlay already has per-target blocks.
+
+    A COMMA LIST IS NOT TWO BLOCKS. ``target @2026Q3,@main`` expands to one
+    op per target, so naive scope collection reports both and then tells the
+    model that ops which DO apply here do not. lang/rust:88 is exactly that
+    line. An op is another build line's only when no op with the same payload
+    is also effective here -- the same predicate scope_check uses, and the
+    same false positive that bead's review rejected in code before it
+    reappeared here as prose.
+
+    READS THE OVERLAY BEFORE ensure_bootstrap_overlay WRITES IT (147 lines
+    later in this function), so a freshly bootstrapped port sees no file and
+    gets the one-liner. That is correct only because a bootstrap header
+    carries zero ops; if it ever emits a ``target`` directive this goes stale.
+
+    Best-effort, but not silent: a rename of anything it reaches would
+    otherwise drop the section from every prompt with no signal.
+    """
+    try:
+        from dportsv3.engine.api import build_plan  # noqa: PLC0415
+
+        target = worker_mod.peek_env_target(env) or ""
+        if not target:
+            return ""
+        brief = [
+            "\n\n---\n\n## You are building one build line\n\n"
+            f"This job is for **`{target}`**. The env composes and builds that "
+            f"target and no other, so nothing here can tell you whether a "
+            f"change also works on the rest.\n\n"
+            f"So for each change, decide which it is: a platform or framework "
+            f"fix that belongs in `target @any` and applies everywhere, or "
+            f"something tied to this line's own source or versions, which "
+            f"belongs in a `target {target}` block. Upstream source patches "
+            f"and version-pinned values are usually the second. `@any` is the "
+            f"scope nothing here can check, so put a change there on the "
+            f"strength of an argument you can state.\n"
+        ]
+
+        overlay = (
+            worker_mod.env_paths(env).deltaports
+            / "ports" / port_origin / "overlay.dops"
+        )
+        if not overlay.is_file():
+            return "".join(brief)
+        planned = build_plan(overlay.read_text(), overlay)
+        if not planned.ok or planned.plan is None:
+            return "".join(brief)
+
+        # plan.ops, not to_dict(): that flattens the payload over `target`,
+        # so a future payload key of that name would silently make every
+        # such op read as universal. scope_check documents the same hazard.
+        scopes: set[str] = set()
+        effective_payloads: set[tuple] = set()
+        elsewhere: dict[str, set[tuple]] = {}
+        scoped_lanes: set[str] = set()
+        for op in planned.plan.ops:
+            scope = op.target or "@any"
+            key = (op.kind, tuple(sorted((k, repr(v)) for k, v in op.payload.items())))
+            if scope != "@any":
+                scopes.add(scope)
+            if scope in ("@any", target):
+                effective_payloads.add(key)
+            else:
+                elsewhere.setdefault(scope, set()).add(key)
+            src = str(op.payload.get("src") or "")
+            for lane in ("dragonfly", "diffs"):
+                prefix = f"{lane}/@"
+                # @any is not a build line, and the suite pins it as an
+                # established path-preserving shape (poly-7pwa.9).
+                if src.startswith(prefix) and not src.startswith(f"{lane}/@any/"):
+                    scoped_lanes.add(lane)
+        if not scopes:
+            return "".join(brief)
+
+        brief.append(
+            f"\n`{port_origin}`'s overlay already has per-target blocks — "
+            + ", ".join(f"`{s}`" for s in sorted(scopes))
+            + ". So:\n\n"
+            f"- **An op you add takes the scope of the last `target` block "
+            f"above it.** Appended at the end of the file it lands in "
+            f"whichever block is last, which may not be `{target}` — and an "
+            f"op scoped elsewhere is dropped from this build, with nothing "
+            f"saying so until the next attempt. Check with "
+            f"`get_effective_overlay`.\n"
+        )
+        # A scope is another line's only if it holds an op no identical
+        # payload makes effective here -- otherwise it is a comma list.
+        others = sorted(
+            scope for scope, keys in elsewhere.items()
+            if keys - effective_payloads
+        )
+        if others:
+            brief.append(
+                f"- Ops under {', '.join('`' + s + '`' for s in others)} do "
+                f"**not** apply here. Do not delete them to make this build "
+                f"pass: they are the other line's fix and no env here can "
+                f"verify a replacement. If an op is wrong for `{target}` but "
+                f"right elsewhere, split it into per-target blocks rather "
+                f"than removing it.\n"
+            )
+        if scoped_lanes:
+            lanes = " and ".join(f"`{lane}/@<target>/`" for lane in sorted(scoped_lanes))
+            brief.append(
+                f"- Some of this port's patch sources are scoped, under "
+                f"{lanes}, materialized to a flat destination — whether a "
+                f"given file is scoped is per file, and the overlay is the "
+                f"authority. `install_patches` puts a re-cut in the right "
+                f"lane: take the path from `installed` and read `scope_note`, "
+                f"which says whether an op still has to be written.\n"
+            )
+        return "".join(brief)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            _log.warning("build-line brief not added: %s", exc)
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
+
 def _read_overlay_text(worker_mod: Any, env: str, origin: str) -> str | None:
     """A port's overlay.dops text, or None when there is none to read.
 
@@ -1509,6 +1642,19 @@ class PatchAttemptStep:
                 f"Build with `dsynth_build(\"{origin}\")` as usual — it "
                 f"builds the master alongside it.\n"
             )
+
+        # WHICH BUILD LINE THIS IS, stated as a fact rather than left as a
+        # path component. The target reaches the model today only inside
+        # "read files under /work/artifacts/compose/<target>/...", so
+        # nothing tells it that which line it is on can change what the fix
+        # should look like -- and for a port whose overlay already has
+        # per-target blocks, it cannot infer the convention from a bundle
+        # that shows the flattened composed tree (poly-7pwa.5).
+        #
+        # Same shape as the slave-port section above, and for the same
+        # reason: a layout rule the model has no way to derive, told only
+        # when it applies.
+        payload += _build_line_brief(_worker, env, patch_origin)
 
         def _clean_check() -> dict:
             # `also` is omitted when empty: assert_port_clean is a
