@@ -187,6 +187,51 @@ def _notes(tool_log: list[dict]) -> list[str]:
             and str((ev.get("args") or {}).get("text") or "").strip()]
 
 
+def _overlay_text(env: str, origin: str | None) -> str | None:
+    """A port's overlay.dops text, or a marker when it could not be read."""
+    from dportsv3.agent import worker  # noqa: PLC0415
+    from dportsv3.agent.scope_check import UNREADABLE  # noqa: PLC0415
+
+    if not origin:
+        return None
+    try:
+        path = (
+            worker.env_paths(env).deltaports / "ports" / origin / "overlay.dops"
+        )
+    except Exception:  # noqa: BLE001
+        return UNREADABLE
+    try:
+        return path.read_text() if path.is_file() else None
+    except Exception:  # noqa: BLE001
+        return UNREADABLE
+
+
+def _scope_drift_note(env: str, origin: str | None, before: str | None) -> str:
+    """"Your overlay edits missed this build line", for the next attempt.
+
+    An op inherits the last ``target`` block above it, so an append lands
+    in whatever block is last -- ``@main``, for both multi-target ports in
+    the tree. A job on another build line then edits a file its own compose
+    skips, the build fails unchanged, and every remaining attempt repeats
+    it. This is the channel that stops that: ``notes`` is already carried
+    into the next attempt's prompt (poly-7pwa.1).
+
+    Swallowed whole. A note is not worth failing an attempt over.
+    """
+    try:
+        from dportsv3.agent import worker  # noqa: PLC0415
+        from dportsv3.agent.scope_check import scope_drift  # noqa: PLC0415
+
+        drift = scope_drift(
+            before,
+            _overlay_text(env, origin),
+            worker.peek_env_target(env) or "",
+        )
+        return drift.note()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _last_proof_failure(tool_log: list[dict]) -> str:
     """The error tail of the last build the previous attempt ran, if any."""
     for ev in reversed(tool_log):
@@ -422,6 +467,14 @@ def run(
     # into a NameError on the way out.
     report_complete = True
 
+    # BASELINE FOR THE PER-ATTEMPT SCOPE CHECK (poly-7pwa.1). The port
+    # subtree is deliberately not reset between attempts, so one read here
+    # is the right "before" for every attempt in this job. Taken inside the
+    # loop's own module so the check lives next to the retry it feeds:
+    # reporting it only after run() returns told the agent nothing until
+    # every attempt it could have saved was already spent.
+    overlay_before = _overlay_text(env, origin)
+
     iterations = max(1, int(getattr(tier, "max_iterations", 1) or 1))
     budget = int(getattr(tier, "max_tokens", 0) or 0)
 
@@ -618,6 +671,9 @@ def run(
         prev_tools = this_attempt_tools
         prev_stop = seen.get("stop_reason")
         notes += _notes(this_attempt_tools)
+        scope_note = _scope_drift_note(env, origin, overlay_before)
+        if scope_note:
+            notes.append(scope_note)
 
         # Optional full-session dump (gated by DP_HARNESS_DUMP_SESSION
         # at the callback's construction site). messages is the final

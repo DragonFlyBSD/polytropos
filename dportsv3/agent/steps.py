@@ -1190,6 +1190,87 @@ def _err(
     )
 
 
+def _read_overlay_text(worker_mod: Any, env: str, origin: str) -> str | None:
+    """A port's overlay.dops text, or None when there is none to read.
+
+    Returns ``None`` when there is no such file and
+    ``scope_check.UNREADABLE`` when the read itself failed -- two different
+    facts. Collapsing them let one failed read report every other-target op
+    in the file as freshly added, which is the noise the check exists to
+    avoid.
+
+    Swallows every failure: this feeds a diagnostic, and a diagnostic that
+    can break an attempt is worse than no diagnostic.
+    """
+    from dportsv3.agent.scope_check import UNREADABLE  # noqa: PLC0415
+
+    try:
+        path = (
+            worker_mod.env_paths(env).deltaports / "ports" / origin / "overlay.dops"
+        )
+    except Exception:  # noqa: BLE001
+        return UNREADABLE
+    try:
+        return path.read_text() if path.is_file() else None
+    except Exception:  # noqa: BLE001
+        return UNREADABLE
+
+
+def _report_scope_drift(
+    services: Any,
+    ctx: Any,
+    queue_root: Any,
+    env: str,
+    *,
+    baseline: dict,
+) -> None:
+    """Say so when the attempt added ops its own build line will skip.
+
+    poly-7pwa.1. The overlay is valid, compose succeeds and the build
+    fails unchanged, so there is no other moment at which this becomes
+    visible. Reported per origin, because a slave's fix lives in its
+    master's overlay and the two can drift independently.
+
+    Best-effort throughout: a reporting path must never be able to fail an
+    attempt that otherwise succeeded.
+    """
+    try:
+        from dportsv3.agent import worker as _worker  # noqa: PLC0415
+        from dportsv3.agent.scope_check import scope_drift  # noqa: PLC0415
+
+        target = _worker.peek_env_target(env) or ""
+        for origin, before in (baseline or {}).items():
+            after = _read_overlay_text(_worker, env, origin)
+            drift = scope_drift(before, after, target)
+            if drift.ok:
+                continue
+            message = drift.message()
+            if not message:
+                continue
+            services.log(queue_root, "WARN", f"{origin}: {message}")
+            services.activity_log(
+                queue_root, "overlay_scope_drift",
+                f"{origin}: {message}",
+                job_id=getattr(ctx, "job_id", None),
+                extra={
+                    "origin": origin,
+                    "target": target,
+                    "stranded": list(drift.stranded),
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort, but not silent. A rename of env_paths /
+        # peek_env_target / scope_check would otherwise disable the check
+        # with no signal that it had stopped running at all.
+        try:
+            services.log(
+                queue_root, "WARN",
+                f"scope-drift report failed, so the check did not run: {exc}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # -----------------------------------------------------------------------------
 # PatchAttemptStep — one patch run via the dportsv3.agent.patch harness.
 # -----------------------------------------------------------------------------
@@ -1523,6 +1604,20 @@ class PatchAttemptStep:
             return _err(msg, services, job_path,
                         JobEvent.PATCH_GAVE_UP)
 
+        # BASELINE FOR THE SCOPE CHECK (poly-7pwa.1). Deliberately BELOW
+        # the refusal above: "which ops did this attempt add" needs a
+        # trustworthy before, and the only thing that makes this one
+        # trustworthy is that every dirty path has already returned. Read
+        # it here and the guarantee is local; read it earlier and it holds
+        # only because nothing in between happens to proceed, which a later
+        # warn-and-continue mode would silently break.
+        #
+        # Both origins: a slave's durable fix lives in its master's overlay.
+        ctx.state["overlay_baseline"] = {
+            o: _read_overlay_text(_worker, env, o)
+            for o in (origin, *also_origins)
+        }
+
         # Compose this one origin BEFORE the agent touches anything, so
         # the attempt starts from a tree derived from the repo it can
         # see (poly-15l).
@@ -1778,6 +1873,15 @@ class PatchAttemptStep:
                     queue_root, "WARN",
                     f"orphan reconcile failed for {origin}: {exc}",
                 )
+
+        # The operator-facing record of the same check the attempt loop
+        # already fed back per attempt (poly-7pwa.1). Runs whether the
+        # attempt succeeded or gave up -- but NOT when the harness raised,
+        # which returns above; _rescue_work_on_raise owns that path.
+        _report_scope_drift(
+            services, ctx, queue_root, env,
+            baseline=ctx.state.get("overlay_baseline") or {},
+        )
 
         # Step 30 slice 5: changes.diff is now branch-vs-base
         # (the former delivery.diff shape) and is the single
