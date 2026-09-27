@@ -202,6 +202,16 @@ def build_compose_report_overview(
         hints.append(
             "stale overlays were marked with removed_in; rerun compose to skip persisted entries"
         )
+    if warning_codes.get("I_COMPOSE_COMPAT_SCOPED_PAYLOAD", 0) > 0:
+        # The per-port message only exists in --json stages[].warnings, and
+        # _format_pairs renders code=count. Without this the operator sees a
+        # bare code name, which looks like coverage rather than being it.
+        hints.append(
+            "a compat-mode port has target-scoped diffs/ or dragonfly/: "
+            "dragonfly payload is copied path-preserving and never applies, "
+            "and every diffs/*.diff is applied whatever build line it is "
+            "for -- convert the port to overlay.dops"
+        )
     if error_codes.get("E_COMPOSE_COMPAT_FAILED", 0) > 0:
         hints.append("review apply_compat_ops failures by origin and patch name")
     if error_codes.get("E_COMPOSE_SPECIAL_PATCH_FAILED", 0) > 0:

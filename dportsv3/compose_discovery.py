@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from dportsv3.common.io import read_toml_file, write_toml_file
-from dportsv3.common.validation import compose_target_branch, is_scoped_target
+from dportsv3.common.validation import (
+    compose_target_branch,
+    is_compose_target,
+    is_scoped_target,
+)
 from dportsv3.compose_models import ComposePortContext
 from dportsv3.policy import EXCLUDED_TOP_LEVEL
 
@@ -234,3 +238,97 @@ def validate_target_scoped_payloads(port_ctx: ComposePortContext) -> list[str]:
             if entry.name.startswith("@") and not is_scoped_target(entry.name):
                 errors.append(f"invalid target directory in {lane}: {entry.name}")
     return errors
+
+def compat_scoped_payload_warnings(
+    port_ctx: ComposePortContext, target: str = ""
+) -> list[str]:
+    """Scoped payload in a COMPAT-mode port, which no build line reads right.
+
+    Both lanes are target-blind here, and they fail in OPPOSITE directions:
+
+    - ``dragonfly/``: the payload is copied path-preserving, so
+      ``dragonfly/@main/patch-x`` lands at that path in the output. do-patch
+      globs ``dragonfly/patch-*`` NON-recursively, so the patch silently
+      stops applying -- and the other build line's copy arrives beside it,
+      equally inert.
+    - ``diffs/``: nothing is copied at all. Every ``*.diff`` found
+      recursively is APPLIED to the one output tree, so a two-target port
+      has both build lines' framework patches applied together. Overlapping
+      hunks give a loud E_COMPOSE_COMPAT_FAILED; non-overlapping ones give a
+      silently cross-contaminated tree. The bead's first framing was right
+      about this lane and its own audit correction retracted it after
+      looking only at ``dragonfly``.
+
+    WHY THIS WARNS AND DOES NOT FIX. Not because the intent is unclear --
+    docs/implementation-plan-v3.md specifies per-target layering for both
+    lanes. Because these two resolvers are named ``*_script_parity`` and
+    that is their contract: the legacy generator still runs and is
+    target-blind in exactly these two ways (``merge.sh`` does
+    ``cp -pr ${DP}/dragonfly ${WORKAREA}/``, then ``find ${DP}/diffs -name
+    '*.diff'`` and applies each). The compat path's output is the
+    byte-parity oracle the remaining compat ports are migrated against --
+    31 ``Makefile.DragonFly`` and 145 ``diffs/`` directories in the tree as
+    measured, with "compose-output-with-compat byte-equals" as the stated
+    definition of done. Diverging from the oracle inside the one code path
+    whose contract is parity with it is worse than the hazard, and no test
+    edit buys that back.
+
+    The suite pins the present behaviour for a real target directory too,
+    not merely for ``@any``: a compat port composing ``@main`` is expected
+    to produce ``dragonfly/@main/pkg-descr`` at that path.
+
+    ``@any`` is not flagged because nothing in the compat path interprets a
+    payload-lane ``@any`` at all -- there is no behaviour to second-guess,
+    and no port in the tree uses one.
+    """
+    if port_ctx.mode != "compat":
+        return []
+    warnings: list[str] = []
+    for lane in ["diffs", "dragonfly"]:
+        lane_dir = port_ctx.path / lane
+        if not lane_dir.exists() or not lane_dir.is_dir():
+            continue
+        scoped = sorted(
+            entry.name
+            for entry in lane_dir.iterdir()
+            # is_compose_target is exactly "a real build line" -- scoped
+            # minus @any. An invalid @name is already an error from
+            # validate_target_scoped_payloads; repeating it here in
+            # different words would be noise.
+            if entry.is_dir() and is_compose_target(entry.name)
+        )
+        if not scoped:
+            continue
+        others = [s for s in scoped if s != target]
+        if lane == "dragonfly":
+            effect = (
+                "the payload is copied path-preserving, and do-patch globs "
+                "dragonfly/patch-* non-recursively, so none of it applies"
+            )
+            if others:
+                effect += (
+                    f"; {','.join(others)} belongs to another build line and "
+                    f"is copied into this tree regardless"
+                )
+            remedy = (
+                f"a `file materialize {lane}/@<target>/X -> {lane}/X` op "
+                f"names the flattening explicitly"
+            )
+        else:
+            effect = (
+                "every *.diff found recursively is APPLIED to this one "
+                "output tree"
+            )
+            if others:
+                effect += (
+                    f", so {','.join(others)}'s framework patches are applied "
+                    f"here too"
+                )
+            remedy = f"a `patch apply {lane}/@<target>/X` op selects one"
+        warnings.append(
+            f"{lane}/{{{','.join(scoped)}}} is target-scoped but this port "
+            f"composes in compat mode, which is target-blind for parity with "
+            f"the legacy generator: {effect}. Convert the port to "
+            f"overlay.dops, where {remedy}."
+        )
+    return warnings

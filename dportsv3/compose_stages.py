@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from dportsv3.compat import infer_compat_port_type, run_compat_merge
 from dportsv3.compose_discovery import (
+    compat_scoped_payload_warnings,
     discover_overlay_contexts,
     list_port_origins,
     read_overlay_removed_in,
@@ -503,11 +504,24 @@ def _record_target_scope_errors(
     ctx: ComposePortContext,
     report: ComposePortReport,
     stage: ComposeStageResult,
+    target: str = "",
 ) -> None:
     payload_errors = validate_target_scoped_payloads(ctx)
     for error in payload_errors:
         stage.add_error("E_COMPOSE_INVALID_TARGET_SCOPE", f"{ctx.origin}: {error}")
         report.errors += 1
+    # Scoped payload in a compat-mode port lands where do-patch does not
+    # look. Latent today, and a warning rather than a behaviour change --
+    # see compat_scoped_payload_warnings for why (poly-7pwa.9).
+    # No report.warnings increment: the summary sums port warnings AND
+    # stage warnings, so one hazard would add two to the number an operator
+    # reads. Every sibling preflight warning notes and does not count.
+    for warning in compat_scoped_payload_warnings(ctx, target):
+        stage.add_warning(
+            "I_COMPOSE_COMPAT_SCOPED_PAYLOAD", f"{ctx.origin}: {warning}"
+        )
+        if "compat-scoped-payload" not in report.notes:
+            report.notes.append("compat-scoped-payload")
 
 
 def preflight_stage(
@@ -564,7 +578,9 @@ def preflight_stage(
             continue
 
         _record_preflight_mode_notes(ctx=ctx, report=report, stage=stage)
-        _record_target_scope_errors(ctx=ctx, report=report, stage=stage)
+        _record_target_scope_errors(
+            ctx=ctx, report=report, stage=stage, target=target
+        )
 
         if ctx.dops_path is None:
             compat_type, compat_reason = infer_compat_port_type(ctx.path)
