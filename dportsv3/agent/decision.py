@@ -134,10 +134,34 @@ class PortHistory:
 
         has_fresh_user_context = False
         try:
+            # SCOPED TO THIS BUILD LINE, like every other query here.
+            # user_context is keyed (run_id, origin) and the target lives
+            # on runs, so this needs the join -- without it the most
+            # recent context row for the origin won across every target,
+            # and this flag both promotes MANUAL to an automatic patch
+            # and forgives the patch cap. Operator guidance written for
+            # one build line was launching attempts on another, on advice
+            # that may be wrong there: for a port whose upstream source
+            # differs per branch, it reliably is (poly-7pwa.10).
+            #
+            # LEFT JOIN, not INNER: a context row whose run is unknown
+            # then has a NULL target, so it matches only a caller asking
+            # for no target. Of the two it errs toward not suppressing,
+            # which is the direction that costs less here. Note this is
+            # the one place the idiom is stretched -- for jobs/bundles it
+            # describes a RECORDED null target, and here a missing row
+            # reads the same as one. Orphans are not reachable in
+            # practice (nothing deletes from runs), so the choice is
+            # about which way to fail, not about live data.
             row = conn.execute(
-                """SELECT updated_at FROM user_context
-                   WHERE origin = ? ORDER BY updated_at DESC LIMIT 1""",
-                (origin,),
+                """SELECT uc.updated_at
+                     FROM user_context uc
+                     LEFT JOIN runs r ON r.run_id = uc.run_id
+                    WHERE uc.origin = ?
+                      AND (r.target = ?
+                           OR (? = '' AND (r.target IS NULL OR r.target = '')))
+                    ORDER BY uc.updated_at DESC LIMIT 1""",
+                (origin, target, target),
             ).fetchone()
             user_context_at = (row[0] if row and row[0] else "") or ""
             # If there are no failed patch attempts yet, any operator
