@@ -721,6 +721,16 @@ Transition rule of thumb:
   overlay's `overlay.toml` when writes are allowed.
 - The first run still reports the stale overlay as an error; the next run skips
   that overlay for the same target via `removed_in`.
+- **The two runs read differently in the port report, and only the first says
+  "stale".** Run 1 notes `stale-skipped` alongside `E_COMPOSE_STALE_OVERLAY`
+  and `I_COMPOSE_STALE_MARKED_REMOVED`. Every run after it notes
+  `removed-for-target` and `removed-for-target-skipped`, exits 0 and warns
+  about nothing — because the `removed_in` check precedes the upstream-presence
+  check, so by then compose no longer knows the port is absent upstream. If you
+  are looking at a quiet report and wondering why an overlay does nothing,
+  `removed-for-target` is the answer and `overlay.toml` is where it is written.
+- `removed_in` is only ever added to, never cleared, so an overlay stays
+  skipped even if the port later reappears upstream.
 - If you also want the stale port removed from the composed output tree on that
   same run, rerun with `--prune-stale-overlays`.
 

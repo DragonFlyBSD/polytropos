@@ -468,8 +468,10 @@ def _record_preflight_mode_notes(
     report: ComposePortReport,
     stage: ComposeStageResult,
 ) -> None:
-    report.mode = ctx.mode
-    report.mode_reason = ctx.mode_reason
+    # mode/mode_reason are written by the caller before any skip, so that a
+    # skipped port does not report the dataclass defaults as fact. Writing
+    # them again here would be two writes of one fact in a function whose
+    # name says "notes".
     if ctx.mode == "dops" and (
         ctx.compat_makefile is not None
         or bool(ctx.fallback_patches)
@@ -546,6 +548,16 @@ def preflight_stage(
     for ctx in contexts:
         report = reports[ctx.origin]
 
+        # WHAT THE PORT IS, RECORDED BEFORE ANY SKIP. mode/mode_reason
+        # describe the port, not whether we composed it, and the report's
+        # dataclass defaults are compat/legacy-overlay -- so a port skipped
+        # here kept those defaults and a dops port with a valid overlay
+        # read as un-migrated compat. That is what an operator counts
+        # conversion progress from, and 1093 ports carry removed_in
+        # (poly-7pwa.7).
+        report.mode = ctx.mode
+        report.mode_reason = ctx.mode_reason
+
         if target in read_overlay_removed_in(ctx.path):
             ctx.removed_for_target = True
             report.notes.append("removed-for-target")
@@ -602,6 +614,37 @@ def preflight_stage(
 def is_stale_port_context(ctx: ComposePortContext) -> bool:
     """Return true when context points to stale type=port overlay."""
     return ctx.stale and ctx.plan_type == "port"
+
+
+def _note_apply_skip(
+    *,
+    ctx: ComposePortContext,
+    report: ComposePortReport,
+) -> None:
+    """Record WHY an apply stage skipped this port, once.
+
+    Both apply stages guard on ``is_stale_port_context(ctx) or
+    ctx.removed_for_target`` and used to write the single string
+    "stale-skipped" for either -- so a port whose overlay is removed for
+    this target was reported as stale, twice, next to the preflight's
+    correct "removed-for-target". The report contradicted itself in one
+    list, and that report is the only place the skip is visible at all
+    (poly-7pwa.6, poly-7pwa.7).
+
+    Deduped: the note is a fact about the port, and two stages declining
+    to touch it is not two facts.
+    """
+    if ctx.removed_for_target:
+        note = "removed-for-target-skipped"
+    elif is_stale_port_context(ctx):
+        note = "stale-skipped"
+    else:
+        # Neither cause holds. The callers guard on the disjunction, so
+        # this is unreachable -- and guessing "stale" for a port that is
+        # not stale is the bug being fixed, so say nothing instead.
+        return
+    if note not in report.notes:
+        report.notes.append(note)
 
 
 def prune_stale_overlays_stage(
@@ -685,7 +728,7 @@ def semantic_stage(
         report = reports[ctx.origin]
         if is_stale_port_context(ctx) or ctx.removed_for_target:
             stage.skipped += 1
-            report.notes.append("stale-skipped")
+            _note_apply_skip(ctx=ctx, report=report)
             continue
         if ctx.mode != "dops":
             stage.skipped += 1
@@ -827,7 +870,7 @@ def fallback_stage(
     for ctx in contexts:
         if is_stale_port_context(ctx) or ctx.removed_for_target:
             stage.skipped += 1
-            reports[ctx.origin].notes.append("stale-skipped")
+            _note_apply_skip(ctx=ctx, report=reports[ctx.origin])
             continue
         if ctx.mode != "compat":
             continue
