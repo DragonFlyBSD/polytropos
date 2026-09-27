@@ -54,15 +54,63 @@ BUNDLE_FOR_RESULT_SQL = """(
 
 
 def _port_identity(origin: str, flavor: str = "") -> tuple[str, str]:
-    """Accept origin@flavor and dsynth's FLAVOR=ORIGIN unflavored sentinel."""
-    origin, flavor = origin.strip(), flavor.strip()
+    """Accept origin@flavor and dsynth's FLAVOR=ORIGIN unflavored sentinel.
+
+    The ``@`` comes off BEFORE the sentinel is looked for, not after: a
+    flavour spelled "@devel/glib20" beside origin "devel/glib20" is the
+    same sentinel wearing the separator, and stripping afterwards left it
+    looking like a real flavour that happened to equal the port
+    (poly-1v7l). The agent-side rule in dsynth_tail.real_flavor strips
+    first for the same reason.
+    """
+    origin, flavor = origin.strip(), flavor.strip().lstrip("@")
     base, _, suffix = origin.partition("@")
     if flavor in (origin, base):
         flavor = ""
-    flavor = flavor.lstrip("@")
     if suffix and flavor and suffix != flavor:
         raise ValueError("Origin suffix and flavor disagree")
     return base, flavor or suffix
+
+
+def real_flavor(origin: str, flavor: str = "") -> str:
+    """The flavour a row really has, with dsynth's sentinel removed.
+
+    dsynth exports ``FLAVOR=$ORIGIN`` for a port with no flavour, and the
+    hooks pass it through, so ``jobs.flavor`` and ``bundles.flavor`` carry
+    the origin for an unflavoured port -- 802 of 1480 jobs and 476 of 581
+    bundles on the builder measured 2026-09-27. ``build_results`` and
+    ``port_status`` do not, because they go through ``_port_identity`` on
+    the way in; these two tables are written by other paths and are
+    normalised on the way OUT instead, which is what this is for.
+
+    Delegates rather than reimplements: one rule, one place, and a view
+    that disagrees with the writer about what a flavour is was the whole
+    defect (poly-1v7l). A disagreeing origin suffix is shown rather than
+    raised on -- a view is the wrong place to discover bad data, but an
+    even worse place to hide it.
+    """
+    try:
+        return _port_identity(origin or "", flavor or "")[1]
+    except ValueError:
+        return (flavor or "").strip().lstrip("@")
+
+
+def port_label(origin: str, flavor: str = "", sep: str = " @ ") -> str:
+    """``origin``, plus its flavour when it actually has one.
+
+    Registered as a Jinja global so the six templates that render a port
+    share one answer. They did not: the job header, the job summary
+    table, the bundle summary, the artifact and session pages and the
+    bundles list each spelled the condition themselves, and they rendered
+    "print/qt6-pdf @ print/qt6-pdf" for every unflavoured port
+    (poly-1v7l). That is the copy-paste drift ``_macros.html`` exists to
+    prevent, one layer down.
+    """
+    try:
+        base, real = _port_identity(origin or "", flavor or "")
+    except ValueError:
+        base, real = (origin or ""), (flavor or "").strip().lstrip("@")
+    return f"{base}{sep}{real}" if real else base
 
 
 def open_db(db_path: str | Path) -> sqlite3.Connection:

@@ -72,7 +72,7 @@
           page failing to read it (poly-1v7l). Same rule the hooks apply
           in logfile_for_origin and the tracker in _port_identity. -#}
       <p>{{ job.type or 'job' }} job{% if job.origin %} for
-        <code>{{ job.origin }}{% if job.flavor and job.flavor != job.origin %}@{{ job.flavor }}{% endif %}</code>
+        <code>{{ port_label(job.origin, job.flavor, "@") }}</code>
         {%- endif %}{% if job.target %} on <code>{{ job.target }}</code>{% endif %}</p>
     </div>
     <div class="heading-actions">

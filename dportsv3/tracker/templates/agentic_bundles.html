@@ -33,7 +33,7 @@
         <tr>
           <td><a href="{{ request.url_for('agentic_bundle_detail', bundle_id=b.bundle_id) }}">{{ b.bundle_id }}</a></td>
           <td>{{ b.origin }}</td>
-          <td>{{ b.flavor or '—' }}</td>
+          <td>{{ real_flavor(b.origin, b.flavor) or '—' }}</td>
           <td>{{ b.target or '—' }}</td>
           <td><span class="stat-pill {% if b.result == 'fail' or b.result == 'failure' %}failed{% else %}built{% endif %}">{{ b.result }}</span></td>
           <td>{{ status_pill(b) }}</td>

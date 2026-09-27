@@ -85,7 +85,7 @@
     <h1>{{ session.filename }}</h1>
     <div class="tracker-card" style="font-size:12px;">
       <div><strong>Bundle:</strong> <a href="{{ request.url_for('agentic_bundle_detail', bundle_id=bundle.bundle_id) }}">{{ bundle.bundle_id }}</a></div>
-      <div><strong>Origin:</strong> {{ bundle.origin }}{% if bundle.flavor %} @ {{ bundle.flavor }}{% endif %}</div>
+      <div><strong>Origin:</strong> {{ port_label(bundle.origin, bundle.flavor) }}</div>
       <div><strong>Path:</strong> <code>{{ session.relpath }}</code></div>
       <div><a href="/api/bundles/{{ bundle.bundle_id }}/artifacts/{{ session.relpath }}">Download raw .jsonl.gz</a></div>
     </div>

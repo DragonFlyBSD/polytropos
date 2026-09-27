@@ -18,7 +18,7 @@ from typing import Any
 from dportsv3.tracker import fix_state
 from dportsv3.tracker import issue_state
 from dportsv3.tracker import render
-from dportsv3.tracker.db import ActiveBuildError, init_db, open_db
+from dportsv3.tracker.db import ActiveBuildError, init_db, open_db, port_label, real_flavor
 from dportsv3.tracker.routes import (
     _common,
     agentic_api,
@@ -170,6 +170,10 @@ def create_app(db_path: str | Path) -> Any:
     # The single operator-facing status projection. Templates call it to
     # render one status pill instead of reconciling resolution +
     # verification_status + job.state by eye.
+    # One answer to "what port is this row about" for every template
+    # that renders one (poly-1v7l).
+    templates.env.globals["port_label"] = port_label
+    templates.env.globals["real_flavor"] = real_flavor
     templates.env.globals["fix_status"] = fix_state.fix_status
     # Chapter 6 of the operator guide is generated from the same
     # projection the pages use, so it cannot drift from the rules it

@@ -3,7 +3,7 @@
    reader below gets the full width, instead of a tall facts card. #}
     <div class="tracker-card bundle-header">
       {{ status_pill(bundle) }}
-      <span><span class="k">origin</span> {{ bundle.origin }}{% if bundle.flavor %} @ {{ bundle.flavor }}{% endif %}</span>
+      <span><span class="k">origin</span> {{ port_label(bundle.origin, bundle.flavor) }}</span>
       <span><span class="k">target</span> {{ bundle.target or '—' }}</span>
       <span><span class="k">result</span>
         <span class="stat-pill {% if bundle.result == 'fail' or bundle.result == 'failure' %}failed{% else %}built{% endif %}">{{ bundle.result }}</span>
