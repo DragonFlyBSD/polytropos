@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 
@@ -41,9 +42,25 @@ class FileTransaction:
     def read_text(self, path: Path) -> str:
         if path in self._writes:
             return self._writes[path]
+        if path in self._writes_bytes:
+            # A file.materialize staged this path as bytes. A later op must
+            # edit that file, not the one on disk underneath it -- reading
+            # the disk here silently discarded the materialized file
+            # (poly-bz7n.1). Decoded exactly as path.read_text() would read
+            # it once committed, so a payload that is not text fails the
+            # same way it would from disk.
+            return io.TextIOWrapper(io.BytesIO(self._writes_bytes[path])).read()
         if path in self._removes:
             raise FileNotFoundError(path)
         return path.read_text()
+
+    def exists(self, path: Path) -> bool:
+        """Whether ``path`` exists once the staged changes are committed."""
+        if path in self._writes or path in self._writes_bytes:
+            return True
+        if path in self._removes:
+            return False
+        return path.exists()
 
     def stage_write(self, path: Path, content: str) -> None:
         self._writes[path] = content

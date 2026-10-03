@@ -115,7 +115,7 @@ def exec_file_remove(
         )
 
     policy = _on_missing(op)
-    if target.exists():
+    if txn.exists(target):
         txn.stage_remove(target)
         return _success_row(op, "removed")
 
