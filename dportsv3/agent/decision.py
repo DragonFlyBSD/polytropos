@@ -48,8 +48,9 @@ class PortHistory:
     - ``failed_patch_attempts``: how many times the agent actually
       tried and failed (``patch_gave_up`` / ``patch_budget_exhausted``
       retire reasons). The primary signal — "is automation stuck?"
-    - ``has_fresh_user_context``: did the operator just intervene?
-      One free retry after fresh context lands.
+    - ``has_fresh_user_context``: did the operator intervene in this
+      job's run, after its last failed attempt? One free retry after
+      fresh context lands.
     - ``last_failure_signature`` + ``signature_repeat_count``: if every
       attempt fails with the same first-error-line, the agent is
       stuck on the same wall; if signatures vary, it's progressing.
@@ -77,8 +78,16 @@ class PortHistory:
         target: str,
         origin: str,
         window_hours: int,
+        *,
+        run_id: str | None = None,
     ) -> "PortHistory":
-        """Query state.db for this port's recent outcomes + agent attempts."""
+        """Query state.db for this port's recent outcomes + agent attempts.
+
+        ``run_id`` is the job's run. Only operator context recorded
+        against that run can set ``has_fresh_user_context`` -- the same
+        ``(run_id, origin)`` row ``runner.get_user_context`` puts in the
+        prompt. Without a ``run_id`` the flag is False.
+        """
         if conn is None or not origin:
             return cls.empty(target, origin)
         cutoff = (
@@ -134,35 +143,24 @@ class PortHistory:
 
         has_fresh_user_context = False
         try:
-            # SCOPED TO THIS BUILD LINE, like every other query here.
-            # user_context is keyed (run_id, origin) and the target lives
-            # on runs, so this needs the join -- without it the most
-            # recent context row for the origin won across every target,
-            # and this flag both promotes MANUAL to an automatic patch
-            # and forgives the patch cap. Operator guidance written for
-            # one build line was launching attempts on another, on advice
-            # that may be wrong there: for a port whose upstream source
-            # differs per branch, it reliably is (poly-7pwa.10).
-            #
-            # LEFT JOIN, not INNER: a context row whose run is unknown
-            # then has a NULL target, so it matches only a caller asking
-            # for no target. Of the two it errs toward not suppressing,
-            # which is the direction that costs less here. Note this is
-            # the one place the idiom is stretched -- for jobs/bundles it
-            # describes a RECORDED null target, and here a missing row
-            # reads the same as one. Orphans are not reachable in
-            # practice (nothing deletes from runs), so the choice is
-            # about which way to fail, not about live data.
-            row = conn.execute(
-                """SELECT uc.updated_at
-                     FROM user_context uc
-                     LEFT JOIN runs r ON r.run_id = uc.run_id
-                    WHERE uc.origin = ?
-                      AND (r.target = ?
-                           OR (? = '' AND (r.target IS NULL OR r.target = '')))
-                    ORDER BY uc.updated_at DESC LIMIT 1""",
-                (origin, target, target),
-            ).fetchone()
+            # THE JOB'S OWN RUN, and only that run. (run_id, origin) is
+            # the key runner.get_user_context and the context history
+            # use to put the operator's text in the prompt, so the flag
+            # fires only on guidance the agent will read. Keyed on
+            # origin alone, any older run's row -- a year old, or
+            # written for another build line -- promoted MANUAL and
+            # forgave the patch cap while the prompt carried nothing
+            # (poly-7pwa.17). A run is one dsynth invocation of one
+            # profile, so this is also the build line (poly-7pwa.10).
+            # No run: no row, as for the prompt. No time window either:
+            # a retry can wait hours behind an active job of its port.
+            row = None
+            if run_id:
+                row = conn.execute(
+                    """SELECT updated_at FROM user_context
+                        WHERE run_id = ? AND origin = ?""",
+                    (run_id, origin),
+                ).fetchone()
             user_context_at = (row[0] if row and row[0] else "") or ""
             # If there are no failed patch attempts yet, any operator
             # context counts as "fresh". Otherwise it must be newer

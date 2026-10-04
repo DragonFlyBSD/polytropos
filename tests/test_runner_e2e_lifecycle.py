@@ -17,6 +17,9 @@ Coverage:
 - invalidate_health_cache clears entries.
 - _looks_env_suspicious heuristic recognizes the known stderr
   patterns that trigger a forced re-probe.
+- Operator context: a MANUAL promotion or a patch-cap pardon happens
+  only on context recorded in the job's own run, and the prompt of
+  the patch job it enqueues carries that context (poly-7pwa.17).
 
 The runner's LLM calls (``triage.run`` / ``patch.run``) and the dev-env
 worker boundary are stubbed via monkeypatch. No real network, no
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -423,3 +427,157 @@ def test_looks_env_suspicious_detects_known_sentinels():
         "ok": True, "stderr_tail": "missing DragonFly packages",
     }) is False
     assert runner._looks_env_suspicious(None) is False
+
+
+# --- Operator context is keyed on the job's run (poly-7pwa.17) ------------------
+
+
+def _ago(**kw) -> str:
+    return (datetime.now(timezone.utc) - timedelta(**kw)).isoformat()
+
+
+def _plant_run(conn, run_id: str, target: str | None = "@test"):
+    conn.execute("INSERT OR IGNORE INTO runs (run_id, profile, target) "
+                 "VALUES (?, 'test', ?)", (run_id, target))
+    conn.commit()
+
+
+def _plant_context(conn, run_id: str, when: str, origin="foo/bar",
+                   text="link against the system zstd"):
+    _plant_run(conn, run_id)
+    conn.execute("INSERT INTO user_context (run_id, origin, "
+                 "context_text, updated_at, context_rev) "
+                 "VALUES (?, ?, ?, ?, 1)", (run_id, origin, text, when))
+    conn.execute("INSERT INTO user_context_history (run_id, origin, "
+                 "context_rev, submitted_at, text) "
+                 "VALUES (?, ?, 1, ?, ?)", (run_id, origin, when, text))
+    conn.commit()
+
+
+def _plant_gave_up_patch(conn, job_id: str, when: str):
+    conn.execute("INSERT INTO jobs (job_id, origin, target, type, "
+                 "state, retire_reason, last_transition_at) "
+                 "VALUES (?, 'foo/bar', '@test', 'patch', 'dead', "
+                 "'patch_gave_up', ?)", (job_id, when))
+    conn.commit()
+
+
+def _triage_in_run(queue_env, tmp_path, monkeypatch, run_id: str,
+                   classification: str = "missing-dep"):
+    """missing-dep is MANUAL in the default policy. Returns (the
+    patch job it enqueued, or None; the bundle dir)."""
+    from dportsv3.agent import triage as triage_module
+    monkeypatch.setattr(triage_module, "run",
+                        lambda *a, **kw: _StubTriageResult(
+                            classification=classification,
+                            confidence="high"))
+    queue_root = queue_env["queue_root"]
+    bdir = _make_bundle_dir(tmp_path)
+    job_path = _drop_synthetic_job(queue_env, bundle_dir=bdir,
+                                   extra_fields={"run_id": run_id})
+    inflight = queue_root / "inflight" / job_path.name
+    job_path.rename(inflight)
+    runner._apply_transition(job_path.name, lifecycle.JobEvent.CLAIM)
+    runner.process_job(queue_root, inflight, [],
+                       dry_run=False, playbooks_dir=None)
+    pending = sorted((queue_root / "pending").glob("*-patch.job"))
+    assert len(pending) <= 1
+    if not pending:
+        return None, bdir
+    return runner.parse_job_file(pending[0]), bdir
+
+
+def _prompt_carries_context(patch_job, bdir) -> bool:
+    payload = runner.build_patch_payload(bdir, None, patch_job)
+    return "## User Context" in payload
+
+
+def test_a_retry_in_its_context_s_run_launches_with_the_context(
+        queue_env, tmp_path, monkeypatch):
+    """The retry-with-context loop: the operator answered run-1's
+    request, and run-1's retriage launches with the answer in its
+    prompt."""
+    _plant_context(queue_env["conn"], "run-1", _ago(minutes=5))
+    patch_job, bdir = _triage_in_run(queue_env, tmp_path, monkeypatch,
+                                     "run-1")
+    assert patch_job is not None
+    assert patch_job["run_id"] == "run-1"
+    assert _prompt_carries_context(patch_job, bdir)
+
+
+@pytest.mark.parametrize("context_age, gave_up_age", [
+    ({"hours": 30}, None),
+    ({"days": 400}, {"days": 399}),
+], ids=["previous-run", "a-year-old-row-after-the-window-rolled-over"])
+def test_another_run_s_context_launches_nothing(queue_env, tmp_path,
+                                                monkeypatch, context_age,
+                                                gave_up_age):
+    """A failure in a new run cannot carry an earlier run's text, so
+    that text does not promote it: the port is asked about again, in
+    the new run."""
+    conn = queue_env["conn"]
+    _plant_context(conn, "run-1", _ago(**context_age))
+    if gave_up_age is not None:
+        _plant_gave_up_patch(conn, "old-patch.job", _ago(**gave_up_age))
+    patch_job, _ = _triage_in_run(queue_env, tmp_path, monkeypatch, "run-2")
+    assert patch_job is None
+    runs = [r["run_id"] for r in conn.execute(
+        "SELECT run_id FROM user_context_requests WHERE origin = 'foo/bar'")]
+    assert runs == ["run-2"]
+
+
+def test_a_retry_that_waited_past_the_window_still_launches(
+        queue_env, tmp_path, monkeypatch, set_setting):
+    """A retry waits while another job of its port is active on its
+    line; the context it was enqueued for still counts when it runs."""
+    set_setting("runner.attempt_window_hours", 2)
+    _plant_context(queue_env["conn"], "run-1", _ago(hours=3))
+    patch_job, bdir = _triage_in_run(queue_env, tmp_path, monkeypatch,
+                                     "run-1")
+    assert patch_job is not None
+    assert _prompt_carries_context(patch_job, bdir)
+
+
+@pytest.mark.parametrize("job_run, pardoned", [
+    ("run-1", True),
+    ("run-2", False),
+])
+def test_the_patch_cap_is_pardoned_only_in_the_context_s_run(
+        queue_env, tmp_path, monkeypatch, set_setting, job_run, pardoned):
+    """Context newer than the last gave-up attempt forgives the cap,
+    but only for a job whose prompt will carry it."""
+    set_setting("runner.max_patch_attempts", 3)
+    set_setting("runner.attempt_window_hours", 2)
+    conn = queue_env["conn"]
+    _plant_run(conn, "run-2")
+    for n, minutes in enumerate((60, 61, 62)):
+        _plant_gave_up_patch(conn, f"gave-up-{n}.job", _ago(minutes=minutes))
+    _plant_context(conn, "run-1", _ago(minutes=30))
+    patch_job, bdir = _triage_in_run(queue_env, tmp_path, monkeypatch,
+                                     job_run, classification="compile-error")
+    assert (patch_job is not None) is pardoned
+    if pardoned:
+        assert _prompt_carries_context(patch_job, bdir)
+
+
+def test_a_run_with_no_recorded_target_still_counts_for_its_own_jobs(
+        queue_env, tmp_path, monkeypatch):
+    """runs.target is never read: a run with none still promotes its
+    own jobs, whose prompts carry its context."""
+    conn = queue_env["conn"]
+    _plant_run(conn, "run-legacy", target=None)
+    _plant_context(conn, "run-legacy", _ago(minutes=5))
+    patch_job, bdir = _triage_in_run(queue_env, tmp_path, monkeypatch,
+                                     "run-legacy")
+    assert patch_job is not None
+    assert _prompt_carries_context(patch_job, bdir)
+
+
+def test_context_for_another_origin_in_this_run_launches_nothing(
+        queue_env, tmp_path, monkeypatch):
+    """Context is keyed (run_id, origin): another port's answer in the
+    same run does not promote this one."""
+    _plant_context(queue_env["conn"], "run-1", _ago(minutes=5),
+                   origin="other/port")
+    patch_job, _ = _triage_in_run(queue_env, tmp_path, monkeypatch, "run-1")
+    assert patch_job is None

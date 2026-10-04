@@ -444,7 +444,8 @@ class TriageStep:
           upsert_user_context_request (queue_root, **fields) -> None
           update_runner_status  (status, **fields) -> None
           probe_health_cached   (env, ttl) -> EnvHealth | None
-          load_port_history     (target, origin, window_hours) -> PortHistory
+          load_port_history     (target, origin, window_hours, run_id=None)
+                                -> PortHistory
           log                   (queue_root, level, message) -> None
 
     The step returns a ``StepOutcome`` whose ``detail['status_str']``
@@ -700,7 +701,10 @@ class TriageStep:
         bundle_backstop = int(settings.get("runner.bundle_backstop"))
         signature_stickiness = int(settings.get("runner.signature_stickiness"))
         target_value = job.get("target", "") or ""
-        history = services.load_port_history(target_value, origin, window_hours)
+        history = services.load_port_history(
+            target_value, origin, window_hours,
+            run_id=job.get("run_id") or None,
+        )
 
         # env + relation were resolved above (before the convert-defer).
         env_health = None

@@ -8,6 +8,11 @@ per-target -- so guidance written against one build line launched attempts
 on another.
 
 An env builds one target, so nothing downstream could notice.
+
+Since poly-7pwa.17 the lookup is keyed on the job's own run, the key the
+prompt reads the operator's text with. A run is one dsynth invocation of
+one profile, so it has one target, and every case below still holds: each
+job reads from the run of its own build line.
 """
 
 from __future__ import annotations
@@ -69,19 +74,20 @@ def _add_context(conn, run_id, target, origin, when):
     conn.commit()
 
 
-def _load(conn, target, origin="foo/bar"):
-    return PortHistory.load(conn, target, origin, window_hours=24)
+def _load(conn, target, origin="foo/bar", run_id=None):
+    return PortHistory.load(conn, target, origin, window_hours=24,
+                            run_id=run_id)
 
 
 def test_context_for_this_target_counts(db):
     _add_context(db, "r-main", "@main", "foo/bar", _now())
-    assert _load(db, "@main").has_fresh_user_context is True
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is True
 
 
 def test_context_for_another_target_does_not_count(db):
     """The defect. Guidance for @2026Q3 must not act on @main."""
     _add_context(db, "r-q3", "@2026Q3", "foo/bar", _now())
-    assert _load(db, "@main").has_fresh_user_context is False
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is False
 
 
 def test_the_newest_row_does_not_leak_across_targets(db):
@@ -92,42 +98,46 @@ def test_the_newest_row_does_not_leak_across_targets(db):
     """
     _add_context(db, "r-main", "@main", "foo/bar", _hours_ago(3))
     _add_context(db, "r-q3", "@2026Q3", "foo/bar", _now())
-    assert _load(db, "@main").has_fresh_user_context is True
-    assert _load(db, "@2026Q3").has_fresh_user_context is True
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is True
+    assert _load(db, "@2026Q3", run_id="r-q3").has_fresh_user_context is True
     # And a third build line, with context on neither, stays untouched.
-    assert _load(db, "@2026Q2").has_fresh_user_context is False
+    assert _load(db, "@2026Q2", run_id="r-q2").has_fresh_user_context is False
 
 
 def test_context_for_another_origin_still_does_not_count(db):
     _add_context(db, "r-main", "@main", "other/port", _now())
-    assert _load(db, "@main").has_fresh_user_context is False
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is False
 
 
-def test_an_unknown_run_is_not_treated_as_this_target(db):
-    """A context row whose run has no target is not evidence for @main.
-
-    Mirrors the NULL handling of every other query in load(): an absent
-    target matches only a caller asking for no target.
-    """
+def test_a_row_from_another_run_does_not_count_even_for_an_untargeted_job(db):
+    """The key is the job's run, not the target. Under poly-7pwa.10 a
+    row whose run was unknown counted for a caller asking for no target;
+    it is not that caller's run, so its prompt never carries the text."""
     db.execute(
         "INSERT INTO user_context (run_id, origin, context_text, updated_at) "
         "VALUES (?, ?, ?, ?)",
         ("r-orphan", "foo/bar", "ctx", _now()),
     )
     db.commit()
-    assert _load(db, "@main").has_fresh_user_context is False
-    # The untargeted caller is the one it belongs to.
-    assert _load(db, "").has_fresh_user_context is True
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is False
+    assert _load(db, "", run_id="r-main").has_fresh_user_context is False
 
 
-def test_a_missing_runs_table_degrades_to_no_context(db):
+def test_a_missing_user_context_table_degrades_to_no_context(db):
     """Per-query try/except: degrade toward NOT promoting, never toward it."""
     _add_context(db, "r-main", "@main", "foo/bar", _now())
     # Without the row above this passes for the trivial reason that the
     # query finds nothing, whatever the code does.
-    db.execute("DROP TABLE runs")
+    db.execute("DROP TABLE user_context")
     db.commit()
-    assert _load(db, "@main").has_fresh_user_context is False
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is False
+
+
+@pytest.mark.parametrize("run_id", [None, ""])
+def test_a_job_with_no_run_has_no_context(db, run_id):
+    """No run, no row: the prompt reads nothing either."""
+    _add_context(db, "r-main", "@main", "foo/bar", _now())
+    assert _load(db, "@main", run_id=run_id).has_fresh_user_context is False
 
 
 def _add_failed_patch(conn, origin, target, when):
@@ -164,16 +174,16 @@ def test_the_patch_cap_is_not_forgiven_by_the_other_build_line(db):
     _add_context(db, "r-main", "@main", "foo/bar", _hours_ago(6))
     _add_context(db, "r-q3", "@2026Q3", "foo/bar", _hours_ago(1))
 
-    on_main = _load(db, "@main")
+    on_main = _load(db, "@main", run_id="r-main")
     assert on_main.failed_patch_attempts == 1
     assert on_main.has_fresh_user_context is False
 
     # And @2026Q3's own context IS fresh there -- it has no failure at all.
-    assert _load(db, "@2026Q3").has_fresh_user_context is True
+    assert _load(db, "@2026Q3", run_id="r-q3").has_fresh_user_context is True
 
 
 def test_context_newer_than_this_target_s_failure_is_still_fresh(db):
     """The effect must keep working where it is meant to."""
     _add_failed_patch(db, "foo/bar", "@main", _hours_ago(3))
     _add_context(db, "r-main", "@main", "foo/bar", _now())
-    assert _load(db, "@main").has_fresh_user_context is True
+    assert _load(db, "@main", run_id="r-main").has_fresh_user_context is True
