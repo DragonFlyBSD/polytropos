@@ -138,7 +138,10 @@ def _register_compose_parser(subparsers: argparse._SubParsersAction) -> None:
     compose.add_argument(
         "--prune-stale-overlays",
         action="store_true",
-        help="Remove stale type=port overlays from delta/output during compose",
+        help=(
+            "Report stale type=port overlays as warnings, not errors, and "
+            "remove them from the output tree; the delta overlay is kept"
+        ),
     )
     compose.add_argument(
         "--json",

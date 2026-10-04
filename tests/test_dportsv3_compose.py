@@ -386,7 +386,7 @@ def test_compose_human_summary_includes_triage_overview(tmp_path, capsys) -> Non
     assert "top_error_codes:" in out.out
     assert "stale:" in out.out
     assert "hint: rerun with --prune-stale-overlays" in out.out
-    assert "hint: stale overlays were marked with removed_in" in out.out
+    assert "hint: a full compose marks stale overlays with removed_in" in out.out
 
 
 def test_compose_prune_stale_overlays_keeps_delta_overlay(tmp_path, capsys) -> None:

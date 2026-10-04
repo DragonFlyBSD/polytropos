@@ -100,12 +100,19 @@ def build_compose_report_overview(
     patch_failures: Counter[str] = Counter()
     mode_counts: Counter[str] = Counter()
     stale_origins: set[str] = set()
+    # Writes compose made to --delta-root, its INPUT tree: listed apart
+    # from the output so an operator reviews and commits them on their own
+    # (poly-7pwa.16).
+    delta_writes: list[str] = []
     # Kept verbatim so the hint can name the path that was tried; a
     # static hint would drop exactly the detail the operator needs.
     lock_root_error: str | None = None
 
     for stage in stages:
         stage_name = str(stage.get("name", ""))
+        delta_writes.extend(
+            str(item) for item in stage.get("metadata", {}).get("delta_writes", [])
+        )
         for item in list(stage.get("errors", [])):
             text = str(item)
             code = _diagnostic_code(text)
@@ -167,9 +174,8 @@ def build_compose_report_overview(
     marked_removed = warning_codes.get("I_COMPOSE_STALE_MARKED_REMOVED", 0)
     pruned = 0
     if isinstance(prune_stage, dict):
-        delta_removed = list(prune_stage.get("metadata", {}).get("delta_removed", []))
         output_removed = list(prune_stage.get("metadata", {}).get("output_removed", []))
-        pruned = len(set(str(item) for item in delta_removed + output_removed))
+        pruned = len(set(str(item) for item in output_removed))
 
     special_stage = next(
         (stage for stage in stages if str(stage.get("name")) == "apply_special"),
@@ -200,7 +206,9 @@ def build_compose_report_overview(
         hints.append("rerun with --prune-stale-overlays to auto-remove stale overlays")
     if marked_removed > 0:
         hints.append(
-            "stale overlays were marked with removed_in; rerun compose to skip persisted entries"
+            "a full compose marks stale overlays with removed_in only on the "
+            "target's branch and without --dry-run or --origin; later composes "
+            "skip them"
         )
     if warning_codes.get("I_COMPOSE_COMPAT_SCOPED_PAYLOAD", 0) > 0:
         # The per-port message only exists in --json stages[].warnings, and
@@ -249,6 +257,10 @@ def build_compose_report_overview(
             "origins": sorted(stale_origins)[:top],
             "marked_removed": marked_removed,
             "pruned": pruned,
+        },
+        "delta_writes": {
+            "count": len(delta_writes),
+            "paths": sorted(delta_writes)[:top],
         },
         "special": {
             "components": special_components,
@@ -310,6 +322,20 @@ def format_compose_overview(
             f"count={stale.get('count', 0)} "
             f"marked_removed={stale.get('marked_removed', 0)} "
             f"pruned={stale.get('pruned', 0)}"
+        )
+
+    delta_writes = dict(overview.get("delta_writes", {}))
+    delta_count = int(delta_writes.get("count", 0))
+    if delta_count > 0:
+        # Only --json stages[].metadata.delta_writes lists every write;
+        # this line says when it stops short of that.
+        paths = [str(item) for item in delta_writes.get("paths", [])]
+        more = ", ..." if delta_count > len(paths) else ""
+        lines.append(
+            f"delta_writes: count={delta_count} "
+            "(input tree, not output; review and commit): "
+            + ", ".join(paths)
+            + more
         )
 
     mode_counts = dict(overview.get("mode_counts", {}))

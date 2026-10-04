@@ -384,6 +384,8 @@ Incremental selected-origin compose:
 
 - When `--origin` is used, compose works against the existing full output tree.
 - `seed_output` and `apply_special` are skipped.
+- The delta tree is never written: a stale overlay's `removed_in` marker is
+  reported as would add and left for a full compose.
 - Only the selected origins are revalidated and recomposed.
 - If `--output` does not already exist, compose fails.
 
@@ -710,6 +712,8 @@ Transition rule of thumb:
 
 - Your FreeBSD checkout branch does not match `--target`.
 - Switch branch in `--freebsd-root` and rerun.
+- Until then compose writes no `removed_in` marker: which ports exist upstream
+  was read from another build line.
 
 ### `E_COMPOSE_OUTPUT_NOT_EMPTY`
 
@@ -717,8 +721,9 @@ Transition rule of thumb:
 
 ### Stale overlay errors
 
-- On first detection, compose auto-writes `removed_in = ["@<target>"]` into the
-  overlay's `overlay.toml` when writes are allowed.
+- On first detection, a full compose (no `--dry-run`, no `--origin`, freebsd
+  checkout on the target's branch) writes `removed_in = ["@<target>"]` into the
+  overlay's `overlay.toml`.
 - The first run still reports the stale overlay as an error; the next run skips
   that overlay for the same target via `removed_in`.
 - **The two runs read differently in the port report, and only the first says
@@ -733,6 +738,11 @@ Transition rule of thumb:
   skipped even if the port later reappears upstream.
 - If you also want the stale port removed from the composed output tree on that
   same run, rerun with `--prune-stale-overlays`.
+- These markers and the `special/<component>/{diffs,replacements}/@<target>/`
+  bootstrap are the only writes compose makes to `--delta-root`. They change
+  your input tree, so review and commit them on their own: `--json` lists every
+  one under `stages[].metadata.delta_writes`, and the text output's
+  `delta_writes:` line gives their count and the first few paths.
 
 ### Patch failures in `apply_special` or compat stage
 

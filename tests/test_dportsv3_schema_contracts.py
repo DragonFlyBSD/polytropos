@@ -59,10 +59,12 @@ def test_compose_result_and_overview_schema_contract() -> None:
         "top_failed_patches",
         "mode_counts",
         "stale",
+        "delta_writes",
         "special",
         "hints",
         "dops_failed_ops",
     }
+    assert set(overview["delta_writes"].keys()) == {"count", "paths"}
     assert set(overview["stale"].keys()) == {
         "count",
         "origins",

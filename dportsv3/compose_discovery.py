@@ -33,6 +33,21 @@ def list_port_origins(base: Path) -> set[str]:
     return origins
 
 
+def _removed_in_targets(payload: object) -> list[str]:
+    """The str entries of payload["removed_in"], or [] for any other shape.
+
+    The one parse of removed_in: everything that reads or rewrites the
+    list takes it from here, so no two of them can disagree about what
+    the manifest says.
+    """
+    if not isinstance(payload, dict):
+        return []
+    value = payload.get("removed_in")
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
+
+
 def read_overlay_removed_in(port_path: Path) -> list[str]:
     """Return the removed_in target list from overlay.toml, or [] if absent."""
     manifest = port_path / "overlay.toml"
@@ -41,10 +56,7 @@ def read_overlay_removed_in(port_path: Path) -> list[str]:
     payload, error = read_toml_file(manifest)
     if error is not None or payload is None:
         return []
-    value = payload.get("removed_in") if isinstance(payload, dict) else None
-    if isinstance(value, list):
-        return [v for v in value if isinstance(v, str)]
-    return []
+    return _removed_in_targets(payload)
 
 
 def write_overlay_removed_in(port_path: Path, target: str) -> tuple[bool, str | None]:
@@ -59,12 +71,7 @@ def write_overlay_removed_in(port_path: Path, target: str) -> tuple[bool, str | 
     else:
         payload = {}
 
-    removed_in = payload.get("removed_in")
-    current = (
-        [value for value in removed_in if isinstance(value, str)]
-        if isinstance(removed_in, list)
-        else []
-    )
+    current = _removed_in_targets(payload)
     if target in current:
         return False, None
 

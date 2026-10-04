@@ -270,6 +270,8 @@ def apply_special_stage(
     copied = gid_uid_copied
     patched = 0
     component_rows: list[dict[str, Any]] = []
+    # Changes to the INPUT tree, listed apart from the output (poly-7pwa.16).
+    delta_writes: list[str] = []
     for component in SPECIAL_COMPONENTS:
         comp_copied = 0
         comp_patched = 0
@@ -312,6 +314,11 @@ def apply_special_stage(
                 "I_COMPOSE_SPECIAL_TARGET_BOOTSTRAPPED",
                 f"{component}/diffs/{target}: created from unscoped main payloads",
             )
+            if not dry_run and not diffs_bootstrap_empty:
+                delta_writes.append(
+                    f"special/{component}/diffs/{target}/ "
+                    f"(bootstrapped from unscoped main)"
+                )
             if diffs_bootstrap_empty:
                 stage.add_warning(
                     "I_COMPOSE_SPECIAL_TARGET_BOOTSTRAP_EMPTY",
@@ -347,6 +354,11 @@ def apply_special_stage(
                 "I_COMPOSE_SPECIAL_TARGET_BOOTSTRAPPED",
                 f"{component}/replacements/{target}: created from unscoped main payloads",
             )
+            if not dry_run and not repl_bootstrap_empty:
+                delta_writes.append(
+                    f"special/{component}/replacements/{target}/ "
+                    f"(bootstrapped from unscoped main)"
+                )
             if repl_bootstrap_empty:
                 stage.add_warning(
                     "I_COMPOSE_SPECIAL_TARGET_BOOTSTRAP_EMPTY",
@@ -376,6 +388,8 @@ def apply_special_stage(
         )
 
     stage.changed = copied + patched
+    if delta_writes:
+        stage.metadata["delta_writes"] = delta_writes
     stage.metadata["components"] = component_rows
     stage.metadata["copied"] = copied
     stage.metadata["patched"] = patched
@@ -388,7 +402,15 @@ def _check_freebsd_git_state(
     stage: ComposeStageResult,
     freebsd_root: Path,
     target_branch: str,
-) -> bool:
+) -> tuple[bool, bool]:
+    """Check the freebsd checkout; return (usable, on_target_branch).
+
+    usable is False only when freebsd_root is not a git work tree, and
+    then compose stops. Otherwise compose goes on with upstream presence
+    read from whatever is checked out -- another build line when the
+    branch is wrong or unreadable -- which is why the caller must not
+    write the delta tree from it unless on_target_branch is True.
+    """
     code, stdout, stderr = _run_git(
         ["rev-parse", "--is-inside-work-tree"], freebsd_root
     )
@@ -396,7 +418,7 @@ def _check_freebsd_git_state(
         stage.add_error(
             "E_COMPOSE_FREEBSD_NOT_GIT", stderr or f"not a git repo: {freebsd_root}"
         )
-        return False
+        return False, False
 
     code, stdout, stderr = _run_git(
         ["symbolic-ref", "--quiet", "--short", "HEAD"], freebsd_root
@@ -410,13 +432,14 @@ def _check_freebsd_git_state(
             "E_COMPOSE_GIT_BRANCH_CHECK_FAILED",
             stderr or "failed to inspect freebsd branch",
         )
-        return True
+        return True, False
     if stdout != target_branch:
         stage.add_error(
             "E_COMPOSE_TARGET_BRANCH_MISMATCH",
             f"expected branch {target_branch}, current {stdout}",
         )
-    return True
+        return True, False
+    return True, True
 
 
 def _apply_stale_overlay_policy(
@@ -426,7 +449,8 @@ def _apply_stale_overlay_policy(
     stage: ComposeStageResult,
     reason: str,
     target: str,
-    dry_run: bool,
+    delta_write_skip: str | None,
+    delta_writes: list[str],
     prune_stale_overlays: bool,
 ) -> None:
     ctx.stale = True
@@ -444,10 +468,11 @@ def _apply_stale_overlay_policy(
         )
         report.errors += 1
 
-    if dry_run:
+    if delta_write_skip is not None:
         stage.add_warning(
             "I_COMPOSE_STALE_MARKED_REMOVED",
-            f"{ctx.origin}: would add removed_in target {target} to overlay.toml",
+            f"{ctx.origin}: would add removed_in target {target} to "
+            f"overlay.toml ({delta_write_skip})",
         )
         return
 
@@ -460,6 +485,9 @@ def _apply_stale_overlay_policy(
         stage.add_warning(
             "I_COMPOSE_STALE_MARKED_REMOVED",
             f"{ctx.origin}: added removed_in target {target} to overlay.toml",
+        )
+        delta_writes.append(
+            f"ports/{ctx.origin}/overlay.toml (removed_in +{target})"
         )
 
 
@@ -564,13 +592,32 @@ def preflight_stage(
             )
     reports = {ctx.origin: ComposePortReport(origin=ctx.origin) for ctx in contexts}
 
-    if not _check_freebsd_git_state(
+    usable, on_target_branch = _check_freebsd_git_state(
         stage=stage,
         freebsd_root=freebsd_root,
         target_branch=target_branch,
-    ):
+    )
+    if not usable:
         stage.finished_at = datetime.now()
         return stage, contexts, reports
+
+    # THE DELTA-WRITE RULE (poly-7pwa.16). Only a full compose, without
+    # --dry-run, whose freebsd checkout passed the branch check writes the
+    # delta tree. An --origin compose reads the delta tree and never writes
+    # it: reapply, apply-and-build and the absorb parity gates all run
+    # --origin, and a write there lands in a job's worktree or in a tree
+    # the gate promised not to touch. A checkout on another branch would
+    # mark ports from another build line's upstream. compose.py passes
+    # selected_origins only for an --origin compose.
+    if dry_run:
+        delta_write_skip: str | None = "dry run"
+    elif selected_origins is not None:
+        delta_write_skip = "an --origin compose does not write the delta tree"
+    elif not on_target_branch:
+        delta_write_skip = f"the freebsd checkout is not on branch {target_branch}"
+    else:
+        delta_write_skip = None
+    delta_writes: list[str] = []
 
     upstream_origins = list_port_origins(freebsd_root)
     for ctx in contexts:
@@ -607,7 +654,8 @@ def preflight_stage(
                     stage=stage,
                     reason="overlay origin missing in upstream target",
                     target=target,
-                    dry_run=dry_run,
+                    delta_write_skip=delta_write_skip,
+                    delta_writes=delta_writes,
                     prune_stale_overlays=prune_stale_overlays,
                 )
             elif compat_type == "port":
@@ -633,10 +681,13 @@ def preflight_stage(
                 stage=stage,
                 reason="type port but upstream origin is missing",
                 target=target,
-                dry_run=dry_run,
+                delta_write_skip=delta_write_skip,
+                delta_writes=delta_writes,
                 prune_stale_overlays=prune_stale_overlays,
             )
 
+    if delta_writes:
+        stage.metadata["delta_writes"] = delta_writes
     stage.metadata["origins"] = len(contexts)
     stage.changed = len(contexts)
     stage.finished_at = datetime.now()

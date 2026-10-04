@@ -198,7 +198,9 @@ def test_build_compose_report_overview_tracks_stale_marked_removed() -> None:
         "pruned": 0,
     }
     assert (
-        "stale overlays were marked with removed_in; rerun compose to skip persisted entries"
+        "a full compose marks stale overlays with removed_in only on the "
+        "target's branch and without --dry-run or --origin; later composes "
+        "skip them"
         in overview["hints"]
     )
     assert "stale: count=1 marked_removed=1 pruned=0" in format_compose_overview(
