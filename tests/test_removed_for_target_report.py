@@ -57,14 +57,18 @@ def _report(payload, origin):
 
 @pytest.fixture
 def dops_port_removed_in_main(tmp_path):
-    """devel/plasma's shape: a live overlay.dops, removed_in @main.
+    """devel/plasma's shape: a live overlay.dops, removed_in @main, and
+    the port ABSENT from upstream main.
 
-    The port EXISTS upstream, so this is not the stale path -- it is a
-    port whose overlay is skipped while the port itself composes.
+    Every removed_in+overlay.dops port in the tree has this shape (251;
+    249 of them list @main): absent upstream on each line it is removed
+    in. It is also the only shape compose still skips once a marker
+    stops outliving its reason (poly-7pwa.6). The @2026Q3 test below
+    adds the port upstream on that branch, where its overlay applies.
     """
     freebsd = tmp_path / "freebsd"
-    (freebsd / "devel" / "plasma").mkdir(parents=True)
-    (freebsd / "devel" / "plasma" / "Makefile").write_text("VAR= upstream\n")
+    (freebsd / "devel" / "present").mkdir(parents=True)
+    (freebsd / "devel" / "present" / "Makefile").write_text("VAR= upstream\n")
     _init_freebsd_repo(freebsd)
 
     port = tmp_path / "delta" / "ports" / "devel" / "plasma"
@@ -92,7 +96,9 @@ def test_the_skip_note_names_the_cause_not_staleness(
     report = _report(_compose(dops_port_removed_in_main, capsys), "devel/plasma")
     assert "removed-for-target" in report["notes"]
     assert "removed-for-target-skipped" in report["notes"]
-    # The port is not stale -- it exists upstream. Saying so was the bug.
+    # "stale-skipped" means THIS run found the overlay stale and raised
+    # E_COMPOSE_STALE_OVERLAY; this run skipped on a persisted marker and
+    # raised nothing. Reporting both under one note was the bug.
     assert "stale-skipped" not in report["notes"]
 
 
@@ -109,16 +115,15 @@ def test_the_overlay_really_is_skipped_so_the_report_is_the_only_signal(
 ):
     """Guards the premise: if the ops applied, none of the above matters."""
     payload = _compose(dops_port_removed_in_main, capsys)
+    assert payload["ok"] is True
     report = _report(payload, "devel/plasma")
     assert report["applied_ops"] == 0
     assert report["errors"] == 0
-    composed = dops_port_removed_in_main / "out" / "devel" / "plasma" / "Makefile"
-    # Not behind an `if`: a path typo would make this vacuous, and the
-    # premise is the whole point. seed_stage copies the upstream tree, so
-    # the file exists whether or not the overlay ran.
-    assert composed.exists()
-    assert "from-overlay" not in composed.read_text()
-    assert "VAR= upstream" in composed.read_text()
+    # Nothing upstream to seed and the overlay skipped: no port at all.
+    # The sibling proves the output tree is where this test looks.
+    out = dops_port_removed_in_main / "out"
+    assert (out / "devel" / "present" / "Makefile").is_file()
+    assert not (out / "devel" / "plasma").exists()
 
 
 def test_a_genuinely_stale_port_still_reports_stale(tmp_path, capsys):
@@ -167,6 +172,10 @@ def test_the_overlay_is_valid_and_does_apply_on_a_target_it_is_not_removed_in(
     # than reusing the @main fixture's repo.
     tmp_path = dops_port_removed_in_main
     _run(["git", "checkout", "-b", "2026Q3"], tmp_path / "freebsd")
+    (tmp_path / "freebsd" / "devel" / "plasma").mkdir(parents=True)
+    (tmp_path / "freebsd" / "devel" / "plasma" / "Makefile").write_text(
+        "VAR= upstream\n"
+    )
 
     payload = _compose(tmp_path, capsys, target="@2026Q3")
     report = _report(payload, "devel/plasma")
