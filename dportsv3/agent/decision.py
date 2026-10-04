@@ -27,6 +27,7 @@ synthetic state.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,36 @@ from .policy import Policy, Tier, tier_for
 
 
 Action = Literal["auto_patch", "escalate_manual", "skip"]
+
+_LOG = logging.getLogger(__name__)
+
+# (query, exception class, message) of every history query failure
+# this process has reported. load() runs on every triage, so each
+# distinct failure is said once; a different failure of the same
+# query is said again.
+_REPORTED_FAILURES: set[tuple[str, str, str]] = set()
+
+
+def _history_query_failed(query: str, exc: sqlite3.Error) -> None:
+    """Say once that a PortHistory.load query failed, and what it
+    costs.
+
+    load() reads a failed query as no history so that a decision
+    can still be made, and that is not a safe default for every
+    query: a failed jobs query counts no failed attempt, so the
+    patch cap never fires and any operator context counts as fresh
+    whatever its age.
+    """
+    key = (query, type(exc).__name__, str(exc))
+    if key in _REPORTED_FAILURES:
+        return
+    _REPORTED_FAILURES.add(key)
+    _LOG.warning(
+        "PortHistory.load: the %s query failed (%s: %s); it reads as "
+        "no history until this is fixed. Reported once per distinct "
+        "failure.",
+        query, type(exc).__name__, exc,
+    )
 
 
 @dataclass
@@ -117,8 +148,8 @@ class PortHistory:
                 recent_failures = int(row[0] or 0)
                 last_success_at = row[1]
                 last_attempt_at = row[2]
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _history_query_failed("bundles", exc)
 
         failed_patch_attempts = 0
         last_failed_patch_at = ""
@@ -138,8 +169,8 @@ class PortHistory:
             if row is not None:
                 failed_patch_attempts = int(row[0] or 0)
                 last_failed_patch_at = (row[1] or "")
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _history_query_failed("failed_patch_attempts", exc)
 
         has_fresh_user_context = False
         try:
@@ -172,8 +203,8 @@ class PortHistory:
                     has_fresh_user_context = (
                         user_context_at > last_failed_patch_at
                     )
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _history_query_failed("user_context", exc)
 
         last_failure_signature = None
         signature_repeat_count = 0
@@ -199,8 +230,8 @@ class PortHistory:
                     (origin, last_failure_signature, cutoff, target, target),
                 ).fetchone()
                 signature_repeat_count = int(row[0] or 0) if row else 0
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _history_query_failed("failure_signature", exc)
 
         return cls(
             target=target,

@@ -15,6 +15,7 @@ shipped policy JSON lives in test_decision_parity.py (Step 3).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -385,6 +386,34 @@ def test_port_history_load_handles_sqlite_error(bundles_db):
     bundles_db.execute("DROP TABLE bundles")
     h = PortHistory.load(bundles_db, "@test", "foo/bar", window_hours=2)
     assert h.recent_failures == 0
+
+
+def test_each_distinct_history_query_failure_is_reported_once(
+        bundles_db, caplog, monkeypatch):
+    """A failed history query reads as no history, and a failed jobs
+    query lifts the patch cap, so it must not fail silently. load()
+    runs on every triage: each distinct failure is said once, and a
+    different failure of the same query is said again."""
+    monkeypatch.setattr("dportsv3.agent.decision._REPORTED_FAILURES",
+                        set(), raising=False)
+
+    def jobs_records():
+        return [r.getMessage() for r in caplog.records
+                if "failed_patch_attempts" in r.getMessage()]
+
+    with caplog.at_level(logging.WARNING, logger="dportsv3.agent.decision"):
+        # bundles_db has no jobs table.
+        PortHistory.load(bundles_db, "@test", "foo/bar", window_hours=2)
+        PortHistory.load(bundles_db, "@test", "foo/bar", window_hours=2)
+        records = jobs_records()
+        assert len(records) == 1
+        assert "OperationalError: no such table: jobs" in records[0]
+
+        bundles_db.execute("CREATE TABLE jobs (job_id TEXT, origin TEXT)")
+        PortHistory.load(bundles_db, "@test", "foo/bar", window_hours=2)
+        records = jobs_records()
+        assert len(records) == 2
+        assert "no such column" in records[1]
 
 
 def test_port_history_empty_classmethod():
