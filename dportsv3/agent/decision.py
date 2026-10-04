@@ -111,6 +111,7 @@ class PortHistory:
         window_hours: int,
         *,
         run_id: str | None = None,
+        context_rev: int | None = None,
     ) -> "PortHistory":
         """Query state.db for this port's recent outcomes + agent attempts.
 
@@ -118,6 +119,12 @@ class PortHistory:
         against that run can set ``has_fresh_user_context`` -- the same
         ``(run_id, origin)`` row ``runner.get_user_context`` puts in the
         prompt. Without a ``run_id`` the flag is False.
+
+        ``context_rev`` is the revision a retriage job was enqueued for
+        (its ``user_context_rev``). When it equals the revision of the
+        job's own context row, the job is the retry that revision asked
+        for, and the context counts as fresh whatever the attempt
+        history says.
         """
         if conn is None or not origin:
             return cls.empty(target, origin)
@@ -188,7 +195,7 @@ class PortHistory:
             row = None
             if run_id:
                 row = conn.execute(
-                    """SELECT updated_at FROM user_context
+                    """SELECT updated_at, context_rev FROM user_context
                         WHERE run_id = ? AND origin = ?""",
                     (run_id, origin),
                 ).fetchone()
@@ -197,7 +204,10 @@ class PortHistory:
             # context counts as "fresh". Otherwise it must be newer
             # than the last failed patch.
             if user_context_at:
-                if not last_failed_patch_at:
+                if (context_rev is not None
+                        and int(row[1] or 0) == context_rev):
+                    has_fresh_user_context = True
+                elif not last_failed_patch_at:
                     has_fresh_user_context = True
                 else:
                     has_fresh_user_context = (

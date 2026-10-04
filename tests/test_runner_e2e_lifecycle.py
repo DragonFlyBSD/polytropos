@@ -581,3 +581,40 @@ def test_context_for_another_origin_in_this_run_launches_nothing(
                    origin="other/port")
     patch_job, _ = _triage_in_run(queue_env, tmp_path, monkeypatch, "run-1")
     assert patch_job is None
+
+
+def test_guidance_written_while_another_run_s_attempt_was_active_is_tried(
+        queue_env, tmp_path, monkeypatch):
+    """run-1's operator answered while run-2's attempt on the port was
+    active on this line. The retriage waited for it, and run-2's attempt
+    gave up after the answer was written: the retriage is still the
+    retry that revision asked for, and runs with it (poly-lns1)."""
+    conn = queue_env["conn"]
+    _plant_run(conn, "run-2")
+    _plant_context(conn, "run-1", _ago(minutes=30))
+    conn.execute("INSERT INTO bundles (bundle_id, run_id, origin, target, "
+                 "result) VALUES ('b-run-2', 'run-2', 'foo/bar', '@test', "
+                 "'failure')")
+    conn.execute("INSERT INTO jobs (job_id, origin, target, type, state, "
+                 "retire_reason, last_transition_at, bundle_id) "
+                 "VALUES ('run-2-patch.job', 'foo/bar', '@test', 'patch', "
+                 "'dead', 'patch_gave_up', ?, 'b-run-2')",
+                 (_ago(minutes=10),))
+    conn.commit()
+    from dportsv3.agent import triage as triage_module
+    monkeypatch.setattr(triage_module, "run",
+                        lambda *a, **kw: _StubTriageResult(
+                            classification="missing-dep", confidence="high"))
+    queue_root = queue_env["queue_root"]
+    bdir = _make_bundle_dir(tmp_path)
+    job_path = _drop_synthetic_job(
+        queue_env, bundle_dir=bdir,
+        extra_fields={"run_id": "run-1", "user_context_rev": "1"})
+    inflight = queue_root / "inflight" / job_path.name
+    job_path.rename(inflight)
+    runner._apply_transition(job_path.name, lifecycle.JobEvent.CLAIM)
+    runner.process_job(queue_root, inflight, [],
+                       dry_run=False, playbooks_dir=None)
+    pending = sorted((queue_root / "pending").glob("*-patch.job"))
+    assert len(pending) == 1
+    assert _prompt_carries_context(runner.parse_job_file(pending[0]), bdir)

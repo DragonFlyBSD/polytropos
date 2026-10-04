@@ -45,6 +45,7 @@ def db():
             origin TEXT NOT NULL,
             context_text TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            context_rev INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (run_id, origin)
         );
         CREATE TABLE bundles (

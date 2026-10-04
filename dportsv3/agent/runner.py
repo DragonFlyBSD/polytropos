@@ -912,7 +912,8 @@ def _ensure_recent_signatures(target: str, origin: str, window_hours: int) -> No
 
 
 def _load_port_history(target: str, origin: str, window_hours: int,
-                       run_id: str | None = None):
+                       run_id: str | None = None,
+                       context_rev: int | None = None):
     """Thin lock-wrapper over PortHistory.load using the runner DB.
 
     The decision engine's ``PortHistory.load`` does the SQL; this
@@ -929,7 +930,8 @@ def _load_port_history(target: str, origin: str, window_hours: int,
     _ensure_recent_signatures(target or "", origin, window_hours)
     with _state_db_lock:
         return PortHistory.load(_state_db_conn, target or "", origin,
-                                window_hours, run_id=run_id)
+                                window_hours, run_id=run_id,
+                                context_rev=context_rev)
 
 
 def port_bundle_history(origin: str) -> list[dict]:
