@@ -1173,6 +1173,9 @@ def process_verify_requests(queue_root: Path) -> None:
     """
     if _state_db_conn is None:
         return
+    from dportsv3.agent.env_resolver import (  # noqa: PLC0415
+        build_line, other_build_line,
+    )
     try:
         with _state_db_lock:
             rows = _state_db_conn.execute(
@@ -1208,6 +1211,18 @@ def process_verify_requests(queue_root: Path) -> None:
             continue
         origin = brow["origin"] if hasattr(brow, "keys") else brow[0]
         target = (brow["target"] if hasattr(brow, "keys") else brow[1]) or ""
+        env_line = other_build_line(env, target)
+        if env_line:
+            reason = (f"bundle {bundle_id} is for {build_line(target)} "
+                      f"but env {env} composes {env_line}; verify it in "
+                      f"an env of {build_line(target)}")
+            _mark_verify_request(req_id, "failed", error=reason)
+            activity_log(
+                queue_root, "verify_refused_env_target_mismatch", reason,
+                extra={"request_id": req_id, "bundle_id": bundle_id,
+                       "env": env, "job_target": build_line(target),
+                       "env_target": env_line})
+            continue
         try:
             job_path = enqueue_verify_job(
                 queue_root, bundle_id=bundle_id, origin=origin,
@@ -1799,9 +1814,15 @@ def process_build_requests(queue_root: Path) -> None:
     the build failed later — is counted and paced by
     :func:`_record_confirm_failure` (C4), so the feed backs off instead of
     re-deriving the same doomed work every pass.
+
+    An issue whose build line the selected env does not compose, while
+    another env on this host does, waits here, unclaimed and uncounted,
+    until an env of its line is selected; the job is then pinned to the env
+    it was checked against (poly-7pwa.14).
     """
     if _state_db_conn is None:
         return
+    from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
     from dportsv3.tracker.agentic_queries import issues_needing_build  # noqa: PLC0415
     try:
         with _state_db_lock:
@@ -1809,6 +1830,10 @@ def process_build_requests(queue_root: Path) -> None:
     except sqlite3.Error as exc:
         log(queue_root, "WARN", f"build-requests scan failed: {exc}")
         return
+    if not issues:
+        return
+    gate_env = resolve_env_for_gate()
+    held = _lines_held_back(gate_env)
     for issue in issues:
         issue_key = issue.get("issue_key")
         bundle_id = issue.get("delivery_bundle_id")
@@ -1819,6 +1844,8 @@ def process_build_requests(queue_root: Path) -> None:
             # resolving without a deliverable occurrence: nothing to build.
             # Leave it for an operator; don't spin.
             continue
+        if build_line(target) in held:
+            continue    # unclaimed, uncounted: it waits for its line's env
         # Claim FIRST: the marker gates the enqueue, so a failed claim can
         # never leave an unmarked issue for the next pass to re-enqueue.
         if not _claim_issue_build(queue_root, issue_key, generation):
@@ -1827,6 +1854,7 @@ def process_build_requests(queue_root: Path) -> None:
             job_path = enqueue_confirm_build_job(
                 queue_root, issue_key=issue_key, bundle_id=bundle_id,
                 origin=origin, target=target, generation=generation,
+                dev_env=gate_env,
             )
         except Exception as exc:
             # An enqueue that fails is an attempt that produced no verdict,
@@ -2808,7 +2836,90 @@ def _write_job_file(dest_dir: Path, meta: dict, job_id: str) -> Path:
     return path
 
 
-def claim_stranded_db_jobs(queue_root: Path) -> tuple[Path, list[Path]] | None:
+# --- jobs that wait for an env of their build line (poly-7pwa.14) ----------
+#
+# A dev-env composes one build line, and a hook-created job names no env, so
+# it would run in whichever env is selected. While the selected env composes
+# another line that some env on this host composes, such a job is left
+# QUEUED instead: it runs once an env of its line is selected. A line no env
+# here composes is never held -- nothing could ever release it -- and goes on
+# to the job-start refusal (_check_env_build_line).
+
+#: Jobs left queued on the last claim pass, per build line. Read by the
+#: idle runner status (_idle_stage).
+_HELD_FOR_LINE: dict[str, int] = {}
+
+
+def _lines_held_back(gate_env: str | None) -> frozenset[str]:
+    """The build lines whose unpinned jobs wait while ``gate_env`` is selected.
+
+    Every line some env on this host composes, except ``gate_env``'s own.
+    Empty when no env is selected or its line cannot be read: nothing is
+    held on a guess.
+    """
+    from dportsv3.agent import env_resolver  # noqa: PLC0415
+    if not gate_env:
+        return frozenset()
+    try:
+        own = env_resolver.env_compose_target(gate_env)
+    except LookupError:
+        return frozenset()
+    return frozenset(env_resolver.envs_by_build_line()) - {own}
+
+
+def _waits_for_its_line(meta: dict, held: frozenset[str]) -> bool:
+    """True when the job ``meta`` describes waits for an env of its line.
+
+    A job pinned to an env (``dev_env``) never waits: its env cannot
+    change, so it would wait forever; the job-start check refuses it
+    instead. Counts each waiting job in _HELD_FOR_LINE.
+    """
+    from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
+    if meta.get("dev_env"):
+        return False
+    line = build_line(meta.get("target"))
+    if line not in held:
+        return False
+    _HELD_FOR_LINE[line] = _HELD_FOR_LINE.get(line, 0) + 1
+    return True
+
+
+def _idle_stage() -> str:
+    """The idle runner status, naming the build lines whose jobs wait."""
+    if not _HELD_FOR_LINE:
+        return "waiting"
+    counts = ", ".join(f"{n} for {line}"
+                       for line, n in sorted(_HELD_FOR_LINE.items()))
+    return f"waiting: queued jobs need an env of their build line ({counts})"
+
+
+def _reap_stale_queued_at_startup(queue_root: Path, max_age: int) -> list[str]:
+    """Startup's stale-queued reap, sparing rows that wait for their line.
+
+    A queued triage row the DB claim can take (it has a bundle and a
+    runs.profile) for a line some env on this host composes is not
+    stranded: claim_stranded_db_jobs takes it once an env of that line is
+    selected, so it is kept however old. Every line some env composes, not
+    only the held ones: a restart can coincide with selecting the waiting
+    line. Every other stale row whose file is gone is reaped as before
+    (poly-7pwa.14).
+    """
+    from dportsv3.agent import lifecycle  # noqa: PLC0415
+    from dportsv3.agent.env_resolver import (  # noqa: PLC0415
+        build_line, envs_by_build_line,
+    )
+    lines = frozenset(envs_by_build_line())
+    keep = {r["job_id"] for r in _queued_triage_rows()
+            if r.get("profile") and build_line(r.get("target")) in lines}
+    with _state_db_lock:
+        return lifecycle.reap_stale_queued(
+            _state_db_conn, queue_root, max_age_seconds=max_age,
+            actor=f"runner-{os.getpid()}", keep=keep)
+
+
+def claim_stranded_db_jobs(
+    queue_root: Path, *, held: frozenset[str] | None = None,
+) -> tuple[Path, list[Path]] | None:
     """Claim queued triage jobs whose .job file this runner cannot see.
 
     The claim is ``lifecycle.apply(..., CLAIM)``, which runs under BEGIN
@@ -2818,7 +2929,8 @@ def claim_stranded_db_jobs(queue_root: Path) -> tuple[Path, list[Path]] | None:
     to the next candidate.
 
     Returns ``(lead_path, sibling_paths)`` as ``claim_next_job_batch``
-    does, or ``None``.
+    does, or ``None``. ``held`` is the set of build lines whose jobs wait
+    for their env (_lines_held_back); None computes it.
     """
     from dportsv3.agent.lifecycle import JobEvent
 
@@ -2836,6 +2948,13 @@ def claim_stranded_db_jobs(queue_root: Path) -> tuple[Path, list[Path]] | None:
             f"{len(incomplete)} queued job(s) have no runs.profile and were "
             f"left alone: {','.join(r['job_id'] for r in incomplete[:5])}")
         rows = [r for r in rows if r.get("profile")]
+
+    # A row for a line another env here composes waits for that env to be
+    # selected (poly-7pwa.14). DB rows carry no dev_env.
+    if held is None:
+        held = _lines_held_back(resolve_env_for_gate())
+    rows = [r for r in rows
+            if not _waits_for_its_line(_job_meta_from_row(r), held)]
 
     if not rows:
         return None
@@ -2884,6 +3003,10 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
 
     from dportsv3.agent.steps import job_held_back  # noqa: PLC0415
 
+    # Once per pass: which build lines wait for their env (poly-7pwa.14).
+    _HELD_FOR_LINE.clear()
+    held = _lines_held_back(resolve_env_for_gate())
+
     for lead_path in jobs:
         try:
             lead_meta = parse_job_file(lead_path)
@@ -2891,8 +3014,9 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
             continue
         # A requeued job sits in pending/ like any other; what keeps it
         # from being re-claimed on the very next pass is its own backoff,
-        # carried in the job file we just parsed.
-        if job_held_back(lead_meta):
+        # carried in the job file we just parsed. A job whose build line
+        # the selected env does not compose waits for an env of its line.
+        if job_held_back(lead_meta) or _waits_for_its_line(lead_meta, held):
             continue
         lead_key = _job_dedup_key(lead_meta)
         candidate_siblings: list[Path] = []
@@ -2929,7 +3053,7 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
     # Nothing in pending/. A hook on the other side of a chroot or a
     # host boundary wrote its file where this runner cannot see it, but
     # its jobs row arrived over HTTP.
-    return claim_stranded_db_jobs(queue_root)
+    return claim_stranded_db_jobs(queue_root, held=held)
 
 
 def enqueue_patch_job(
@@ -3078,6 +3202,7 @@ def enqueue_confirm_build_job(
     target: str,
     generation: int,
     requested_by: str = "reconcile",
+    dev_env: str | None = None,
 ) -> Path:
     """Enqueue a confirm-build job (C2).
 
@@ -3088,9 +3213,9 @@ def enqueue_confirm_build_job(
     the accepted fix for ``(target, origin)``, then reports a green/red
     verdict tied back to ``(issue_key, generation)``.
 
-    ``dev_env`` is deliberately omitted — a confirm build is not
-    operator-triggered, so the env is resolved at dispatch time
-    (``resolve_env``), exactly as auto triage/patch jobs do. ``generation``
+    ``dev_env`` is the env process_build_requests checked the issue's
+    build line against, so the build runs where it was checked even if the
+    selection moves while the job waits (poly-7pwa.14). ``generation``
     is carried so the verdict can be matched to the exact C1 intent.
     """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
@@ -3111,6 +3236,8 @@ def enqueue_confirm_build_job(
         f"requested_build_generation={generation}",
         f"requested_by={requested_by}",
     ]
+    if dev_env:
+        content.append(f"dev_env={dev_env}")
 
     tmp_path = job_path.with_suffix(".tmp")
     with open(tmp_path, "w") as f:
@@ -3709,6 +3836,75 @@ def _maybe_skip_locked_origin(
     return True, f"origin_locked_by:{locked_bundle}"
 
 
+def _check_env_build_line(
+    *,
+    queue_root: Path,
+    job: dict,
+    job_id: str,
+    sibling_paths: list[Path] | None,
+    origin: str,
+    env: str | None,
+    job_type: str,
+) -> tuple[str | None, tuple[bool, str] | None]:
+    """poly-7pwa.14: refuse a job whose env composes another build line.
+
+    Returns ``(env_line, refused)``. ``env_line`` is the line ``env``
+    composes, or None when there is no env or its state cannot be read;
+    the job then proceeds as before, because this check must not add a
+    failure mode the env-broken paths own. ``refused`` is None to
+    proceed, or the ``(False, status)`` to return once the job and its
+    siblings are retired DEAD with retire_reason ``env_target_mismatch``.
+
+    The hint names the tracker UI or dev-env create, never ``--env`` (the
+    tracker selection outranks it) and never retry (Retry's required note
+    reaches the agent and lets a MANUAL decision run an attempt).
+    """
+    from dportsv3.agent import env_resolver  # noqa: PLC0415
+    from dportsv3.agent.lifecycle import JobEvent  # noqa: PLC0415
+
+    if not env:
+        return None, None
+    try:
+        env_line = env_resolver.env_compose_target(env)
+    except LookupError as exc:
+        log(queue_root, "WARN",
+            f"{origin}: could not read the build line env {env} composes "
+            f"({exc}); target check skipped")
+        return None, None
+    job_line = env_resolver.build_line(job.get("target"))
+    if not job_line or job_line == env_line:
+        return env_line, None
+
+    composing = env_resolver.envs_by_build_line().get(job_line)
+    if composing:
+        hint = (f"select env {' or '.join(composing)} (it composes "
+                f"{job_line}) in the tracker UI")
+    else:
+        hint = (f"no env on this host composes {job_line}: create one with "
+                f"'dportsv3 dev-env create --target {job_line}', or correct "
+                f"DPORTSV3_TRACKER_TARGET in the hook conf that queued it")
+    message = (f"{origin}: job is for {job_line} but env {env} composes "
+               f"{env_line}; {job_type} not run")
+    log(queue_root, "WARN", message + ". " + hint)
+    detail = {
+        "origin": origin,
+        "job_target": job_line,
+        "env": env,
+        "env_target": env_line,
+        "bundle_id": job.get("bundle_id"),
+        "reason": "env_target_mismatch",
+    }
+    activity_log(
+        queue_root, f"{job_type}_refused_env_target_mismatch", message,
+        job_id=job_id, extra={**detail, "hint": hint},
+    )
+    _apply_transition(job_id, JobEvent.ENV_TARGET_MISMATCH, detail=detail)
+    for s in sibling_paths or ():
+        _apply_transition(s.name, JobEvent.ENV_TARGET_MISMATCH, detail=detail)
+    return env_line, (False, f"env_target_mismatch: job is for {job_line}, "
+                             f"env {env} composes {env_line}")
+
+
 def _maybe_skip_muted_issue(
     *,
     queue_root: Path,
@@ -3968,6 +4164,20 @@ def process_triage_job(
     # invisible to `tracker get-activity --job ID`.
     job["queue_root"] = str(queue_root)
     job["job_id"] = job_id
+
+    # poly-7pwa.14: resolve once, pin it, and check the env composes the
+    # job's build line. The pin makes the port-relation probe, the overlay
+    # bootstrap and the patch job this triage enqueues use the checked env.
+    env = resolve_env(job)
+    if env and not job.get("dev_env"):
+        job["dev_env"] = env
+    _, refused = _check_env_build_line(
+        queue_root=queue_root, job=job, job_id=job_id,
+        sibling_paths=sibling_paths, origin=origin, env=env,
+        job_type="triage")
+    if refused is not None:
+        return refused
+
     payload = build_triage_payload(bundle_dir, playbooks_dir, job)
 
     ctx = StepCtx(
@@ -3977,7 +4187,7 @@ def process_triage_job(
         apply_transition=_apply_transition,
         activity_log=activity_log,
         db_conn=_state_db_conn,
-        env_name=resolve_env(job),
+        env_name=env,
         bundle_dir=bundle_dir,
         bundle_id=job.get("bundle_id"),
         playbooks_dir=playbooks_dir,
@@ -4648,6 +4858,27 @@ def process_patch_job(
         return skipped
     # ---------------------------------------------------------------
 
+    # Seed queue_root + job_id into job so payload-build telemetry
+    # (`playbooks_selected` activity row) can find them. See the same
+    # comment in process_triage_job. Before resolve_env, so the env a
+    # refused job resolved to is recorded on its row too.
+    job["queue_root"] = str(queue_root)
+    job["job_id"] = job_path.name
+
+    # poly-7pwa.14: resolve once, pin it, and check the env composes the
+    # job's build line. The pin makes PatchAttemptStep's own resolution
+    # and process_job's branch drop use the env checked here, even if the
+    # tracker selection moves mid-job.
+    env = resolve_env(job)
+    if env and not job.get("dev_env"):
+        job["dev_env"] = env
+    env_line, refused = _check_env_build_line(
+        queue_root=queue_root, job=job, job_id=job_id,
+        sibling_paths=sibling_paths, origin=origin, env=env,
+        job_type="patch")
+    if refused is not None:
+        return refused
+
     # Step 30 slice 1: give the patch its own worktree, cut from or
     # reusing bundle/<id>. Hard-fail since B1 — without an isolated tree
     # the job would edit whatever PORTS_DIR last pointed at, which after
@@ -4655,7 +4886,7 @@ def process_patch_job(
     # _checkout_bundle_branch_for_job for why there is no safe fallback.
     if not _checkout_bundle_branch_for_job(
         queue_root=queue_root, job_id=job_path.name,
-        env=resolve_env(job), bundle_id=job.get("bundle_id") or None,
+        env=env, bundle_id=job.get("bundle_id") or None,
         job_type="patch",
     ):
         detail = {
@@ -4675,22 +4906,18 @@ def process_patch_job(
                               detail=detail)
         return False, "worktree_unavailable"
 
-    # Step 38a: record the env's compose target so get_effective_overlay
-    # can scope-filter overlay.dops by the build line the env targets.
-    # Guard env=None so an unresolvable env doesn't stash a junk entry
-    # under the None key (the cache miss-fallback is the same `None`,
-    # so behavior is unchanged either way — but a clean cache makes
-    # debugging easier).
+    # Step 38a: record the build line the env composes, read from the env
+    # and checked against the job's above, so get_effective_overlay,
+    # install_patches, the build-line brief and the scope-drift check
+    # scope by it; the job's own target only when the env's cannot be
+    # read. job["target"] is not written in either path: the patch job's
+    # recorded target, PortHistory keys and handoff text read it
+    # (poly-7pwa.14).
     from dportsv3.agent import worker as _worker  # noqa: PLC0415
-    _38a_env = resolve_env(job)
-    if _38a_env:
-        _worker.set_env_target(_38a_env, job.get("target") or None)
+    if env:
+        _worker.set_env_target(env, env_line or job.get("target")
+                               or None)
 
-    # Seed queue_root + job_id into job so payload-build telemetry
-    # (`playbooks_selected` activity row) can find them. See the same
-    # comment in process_triage_job.
-    job["queue_root"] = str(queue_root)
-    job["job_id"] = job_path.name
     payload = build_patch_payload(bundle_dir, playbooks_dir, job)
 
     ctx = StepCtx(
@@ -4700,7 +4927,7 @@ def process_patch_job(
         apply_transition=_apply_transition,
         activity_log=activity_log,
         db_conn=_state_db_conn,
-        env_name=resolve_env(job),
+        env_name=env,
         bundle_dir=bundle_dir,
         bundle_id=job.get("bundle_id"),
         playbooks_dir=playbooks_dir,
@@ -5384,12 +5611,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from dportsv3 import settings  # noqa: PLC0415
             max_age = int(settings.get("runner.stale_queued_max_age_seconds"))
-            with _state_db_lock:
-                stale = lifecycle.reap_stale_queued(
-                    _state_db_conn, queue_root,
-                    max_age_seconds=max_age,
-                    actor=f"runner-{os.getpid()}",
-                )
+            # A held row waiting for an env of its build line is kept.
+            stale = _reap_stale_queued_at_startup(queue_root, max_age)
             if stale:
                 log(queue_root, "INFO",
                     f"reaped {len(stale)} stale queued job(s): "
@@ -5585,6 +5808,8 @@ def main(argv: list[str] | None = None) -> int:
                 if batch:
                     lead, siblings = batch
                     process_job(queue_root, lead, siblings, args.dry_run, playbooks_dir)
+                elif _HELD_FOR_LINE:
+                    log(queue_root, "INFO", _idle_stage())
                 else:
                     log(queue_root, "INFO", "no jobs in queue")
         else:
@@ -5606,7 +5831,8 @@ def main(argv: list[str] | None = None) -> int:
                     lead, siblings = batch
                     process_job(queue_root, lead, siblings, args.dry_run, playbooks_dir)
                 else:
-                    update_runner_status("idle", job_id=None, stage="waiting")
+                    update_runner_status("idle", job_id=None,
+                                         stage=_idle_stage())
                     time.sleep(5)
     except KeyboardInterrupt:
         log(queue_root, "INFO", "shutting down (keyboard interrupt)")

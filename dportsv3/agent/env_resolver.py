@@ -6,9 +6,14 @@ Replaces the prior pattern of every callsite doing
 
 Precedence (top wins):
 
-1. ``job.dev_env`` — the job carries its own env. Hook-driven jobs
-   are bound to the env where dsynth failed; that env is the right
-   answer regardless of operator preference.
+1. ``job.dev_env`` -- the job carries its own env: a patch job the
+   env its triage ran in, a verify job the env the operator
+   picked, a confirm build the env its feed checked. Hook-created
+   jobs carry none (hook_common.sh writes no dev_env), so they
+   resolve through 2-4, none of which looks at the job's target.
+   The runner matches the two: it leaves such a job queued while
+   the selected env composes another build line, and checks again
+   at job start (poly-7pwa.14; ``other_build_line``).
 2. ``tracker_active_env`` row in state.db — what the operator
    selected in the tracker UI (or via the PUT endpoint).
 3. ``--env NAME`` CLI flag at runner startup. The trackerless
@@ -106,6 +111,72 @@ def list_available_envs() -> tuple[str, ...]:
     return list_available_envs_detailed()[0]
 
 
+def build_line(target: str | None) -> str:
+    """The build line ``target`` names, in its one spelling (``@T``).
+
+    The single normalizer every env-to-job comparison goes through, so a
+    bare ``main`` and ``@main`` are the same line. Empty for no target.
+    """
+    t = (target or "").strip()
+    return "@" + t.lstrip("@") if t else ""
+
+
+def env_compose_target(env: str) -> str:
+    """The build line ``env`` composes: ``state.target`` from its env.json.
+
+    A file read through dports_dev_env's store, never a shell-out to
+    ``dev-env status``. Raises LookupError when the state cannot be read,
+    for whatever reason; callers treat that as "unknown" and never guess.
+    ``state.target`` is never empty (dev-env's loader rejects it), so
+    there is no empty answer.
+    """
+    try:
+        from dports_dev_env.config import load_config  # noqa: PLC0415
+        from dports_dev_env.store import EnvironmentStore  # noqa: PLC0415
+    except ImportError as exc:
+        raise LookupError(f"dports_dev_env is not importable ({exc})") from exc
+    try:
+        state = EnvironmentStore(load_config()).load(env)
+    except Exception as exc:
+        raise LookupError(f"{type(exc).__name__}: {exc}") from exc
+    return build_line(state.target)
+
+
+def other_build_line(env: str | None, target: str | None) -> str | None:
+    """``env``'s build line when it differs from ``target``'s, else None.
+
+    None also when either is empty or the env's line cannot be read: only
+    a known mismatch is a mismatch (poly-7pwa.14).
+    """
+    job_line = build_line(target)
+    if not env or not job_line:
+        return None
+    try:
+        env_line = env_compose_target(env)
+    except LookupError:
+        return None
+    return env_line if env_line != job_line else None
+
+
+def envs_by_build_line(
+    envs: Iterable[str] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """``{line: env names}`` over ``envs`` (default: every env on disk).
+
+    An env whose line cannot be read is left out, so a line appears here
+    only when some env is known to compose it.
+    """
+    names = list_available_envs() if envs is None else envs
+    out: dict[str, list[str]] = {}
+    for name in names:
+        try:
+            line = env_compose_target(name)
+        except LookupError:
+            continue
+        out.setdefault(line, []).append(name)
+    return {line: tuple(found) for line, found in out.items()}
+
+
 def resolve_env_for_job(
     job: dict | None,
     db_conn: sqlite3.Connection | None,
@@ -121,7 +192,8 @@ def resolve_env_for_job(
     value in tests to avoid touching the host filesystem, with
     ``enumeration_error`` to simulate an unreadable store.
     """
-    # Step 1: job carries its own env (hook-driven).
+    # Step 1: the job carries its own env (patch, verify and confirm
+    # jobs; a hook-created job never does).
     if job is not None:
         job_env = job.get("dev_env") if isinstance(job, dict) else None
         if isinstance(job_env, str) and job_env:

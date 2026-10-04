@@ -274,6 +274,17 @@ def run_verify_fix(
             f"bundle {bundle_id!r} has no origin field; cannot verify"
         )
 
+    # poly-7pwa.14: a verdict is about the bundle's build line, so an env
+    # that composes another line can only produce a wrong one. The CLI's
+    # check, and the backstop for verify and confirm jobs.
+    from dportsv3.agent import env_resolver  # noqa: PLC0415
+    env_line = env_resolver.other_build_line(env, bundle.get("target"))
+    if env_line:
+        line = env_resolver.build_line(bundle.get("target"))
+        raise VerifyFixError(
+            f"bundle {bundle_id!r} is for {line} but env {env!r} "
+            f"composes {env_line}; verify it in an env of {line}")
+
     # changes.diff is the canonical replay payload: base-relative,
     # carrying the full convert+patch chain, so it replays cleanly
     # against a fresh checkout off base.
@@ -465,8 +476,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Dev-env name to verify in. Optional — when omitted, "
              "falls back to the tracker's active env "
              "(GET /api/config/active-env). The env should be clean "
-             "(no in-flight agent edits) and target-matched to the "
-             "bundle.",
+             "(no in-flight agent edits) and compose the bundle's build "
+             "line; an env of another line is refused.",
     )
     p.add_argument(
         "--tracker-url", default=None,

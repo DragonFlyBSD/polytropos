@@ -100,6 +100,24 @@ subcommand requires root, so a runner that cannot enumerate envs could not
 exec into one either — "no envs exist" and "you are not root" take opposite
 operator actions and must not read the same.
 
+**A job runs only in an env of its own build line.** A dev-env composes one
+target, and a job, a verify and a confirm build are each for one.
+Hook-created jobs name no env, so a queued job whose line the selected env
+does not compose, while another env on this host does, waits in the queue,
+also across a runner restart: the runner status says how many, and for
+which line, and the job runs once an env of that line is selected. A
+confirm build waits the same way and spends none of its retry budget. A
+verify asked for in an env of another line never starts; its request says
+why. Before triage or a patch attempt the runner checks the pairing once
+more, and a job pinned to an env of another line, or for a line no env on
+this host composes, is retired with retire_reason `env_target_mismatch`
+and an activity row naming both lines. The port is triaged again the next
+time it fails on its line, or through Retry, which waits like any queued
+job until an env of its line is selected (for a line no env here composes,
+create that env first); Retry's required note reaches the agent and lets a
+MANUAL decision run an attempt. `dportsv3 verify-fix --env` refuses an env
+of another line.
+
 ## Environment
 
 Everything is one file, `$DPORTSV3_CONFIG_DIR/polytropos.toml`:

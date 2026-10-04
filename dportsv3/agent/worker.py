@@ -1768,11 +1768,11 @@ PACKAGE_BUILDING = "PACKAGE_BUILDING=yes"
 _WRKSRC_CACHE: dict[tuple[str, str], str] = {}
 
 
-# Step 38a: per-env compose-target cache. The runner populates this
-# at attempt start (process_patch_job / process_convert_job) from
-# job["target"] so `get_effective_overlay` can scope-filter the
-# overlay against the env's build target. Empty value (None or "")
-# is the @any default.
+# Step 38a: per-env compose-target cache. process_patch_job populates it
+# at attempt start with the build line the env composes, after checking it
+# against the job's (poly-7pwa.14), so every target-scoped read here scopes
+# by what the env actually builds. Empty value (None or "") is the @any
+# default.
 _TARGET_CACHE: dict[str, str | None] = {}
 
 

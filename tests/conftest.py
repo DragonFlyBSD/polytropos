@@ -56,6 +56,14 @@ def _isolate_env_resolver(monkeypatch):
     """
     from dportsv3.agent import env_resolver, runner
     monkeypatch.setattr(env_resolver, "list_available_envs", lambda: ())
+
+    # poly-7pwa.14: no test reads the host's env store through the
+    # build-line comparator. Unreadable is today's behaviour: nothing is
+    # held and nothing refused. A plain setattr, so a rename fails loudly.
+    def _no_env_store(env):
+        raise LookupError("test isolation: no dev-env store")
+
+    monkeypatch.setattr(env_resolver, "env_compose_target", _no_env_store)
     monkeypatch.setattr(runner, "_CLI_ENV_DEFAULT", None)
     # Reset the gate's TTL cache between tests — a value populated
     # in test A would bleed into test B for up to 1 s and silently

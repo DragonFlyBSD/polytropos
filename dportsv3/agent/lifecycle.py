@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
@@ -119,6 +120,11 @@ class JobEvent(StrEnum):
     # A machinery failure is neither, and borrowing either would corrupt
     # a signal something else reads.
     WORKTREE_UNAVAILABLE = "worktree_unavailable"
+    # The job is for one build line and its env composes another
+    # (poly-7pwa.14). Its own event for the same reason as
+    # WORKTREE_UNAVAILABLE: it is neither the agent giving up (counted
+    # against the patch cap) nor a broken env (feeds the health contract).
+    ENV_TARGET_MISMATCH = "env_target_mismatch"
 
 
 # (from_state, event) -> to_state. ``None`` as from_state means
@@ -192,6 +198,12 @@ TRANSITIONS: dict[tuple[JobState | None, JobEvent], JobState] = {
     (JobState.TRIAGED,     JobEvent.WORKTREE_UNAVAILABLE): JobState.DEAD,
     (JobState.PATCHING,    JobEvent.WORKTREE_UNAVAILABLE): JobState.DEAD,
 
+    # A job whose build line its env does not compose (poly-7pwa.14).
+    # The check runs right after TRIAGE_START / PATCH_START, so nothing
+    # fires it from CLAIMED.
+    (JobState.TRIAGING,    JobEvent.ENV_TARGET_MISMATCH): JobState.DEAD,
+    (JobState.PATCHING,    JobEvent.ENV_TARGET_MISMATCH): JobState.DEAD,
+
     # Startup orphan reap — same shape as env_broken but a distinct
     # event so retire_reason can be filled differently.
     (JobState.CLAIMED,     JobEvent.REAP_ORPHAN):      JobState.DEAD,
@@ -258,6 +270,7 @@ _TERMINAL_REASONS: dict[JobEvent, str] = {
     JobEvent.SKIP_ORIGIN_LOCKED: "origin_locked",
     JobEvent.SKIP_ISSUE_MUTED: "issue_muted",
     JobEvent.WORKTREE_UNAVAILABLE: "worktree_unavailable",
+    JobEvent.ENV_TARGET_MISMATCH: "env_target_mismatch",
 }
 
 
@@ -370,6 +383,7 @@ ACTIVE_WORK_STATE_VALUES: tuple[str, ...] = tuple(
 # port. Infrastructure, not a verdict.
 RETIRE_INTERRUPTED: frozenset[str] = frozenset({
     "runner_restart", "env_broken", "worktree_unavailable",
+    "env_target_mismatch",
 })
 
 # SKIPPED: a decision was taken not to do this work. Also not a verdict.
@@ -614,6 +628,7 @@ def reap_stale_queued(
     *,
     max_age_seconds: int = 3600,
     actor: str = "runner",
+    keep: Collection[str] = (),
 ) -> list[str]:
     """Reap QUEUED rows whose ``.job`` file is missing from
     ``queue_root/pending/`` AND whose last transition is older than
@@ -631,6 +646,10 @@ def reap_stale_queued(
       fallback) older than the threshold. Guards against racing with
       a brand-new HOOK_ENQUEUED whose .job file is *about* to be
       written.
+
+    ``keep`` names rows to leave queued however old: the runner's DB
+    claim takes them once an env of their build line is selected
+    (poly-7pwa.14).
 
     Returns the list of reaped ``job_id`` values for logging.
     """
@@ -654,6 +673,9 @@ def reap_stale_queued(
         job_id = row[0] if not hasattr(row, "keys") else row["job_id"]
         if (pending_dir / job_id).exists():
             # File is still on disk — legitimate work, leave alone.
+            continue
+        if job_id in keep:
+            # Waits for an env of its build line (poly-7pwa.14).
             continue
         try:
             apply(conn, job_id, JobEvent.REAP_ORPHAN, actor=actor)
