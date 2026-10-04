@@ -497,6 +497,16 @@ def analyze_document(
                         source_path,
                     )
                 )
+            repeated = [t for i, t in enumerate(targets) if t in targets[:i]]
+            if repeated:
+                diagnostics.append(
+                    _diag(
+                        "E_SEM_INVALID_TARGET_SCOPE",
+                        f"target directive repeats a selector: {repeated[0]}",
+                        statement.span,
+                        source_path,
+                    )
+                )
             current_targets = tuple(targets)
             continue
 

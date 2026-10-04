@@ -112,6 +112,22 @@ def test_any_cannot_be_combined_with_explicit_targets() -> None:
     assert any(d.code == "E_SEM_INVALID_TARGET_SCOPE" for d in result.diagnostics)
 
 
+def test_a_selector_list_cannot_repeat_a_selector() -> None:
+    # `target @main,@main` would run every following op twice on
+    # @main; a text line-insert then lands twice.
+    text = (
+        'target @main,@2026Q3,@main\n'
+        'port category/name\nmk set VAR "one"\n'
+    )
+    result = check_dsl(text)
+
+    assert not result.ok
+    assert [(d.code, d.line) for d in result.diagnostics] == [
+        ("E_SEM_INVALID_TARGET_SCOPE", 1)
+    ]
+    assert "repeats a selector: @main" in result.diagnostics[0].message
+
+
 def test_invalid_semantic_operation_state_is_reported() -> None:
     document = AstDocument(
         span=_span(1),

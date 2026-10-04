@@ -126,6 +126,8 @@ on_missing        = "on-missing" ("error" | "warn" | "noop") ;
   one scoped operation per selector, in selector order
 - `@any` MUST NOT be combined with explicit selectors in one `target` directive
   (for example, `target @any,@2026Q1` is invalid)
+- A selector MUST NOT appear twice in one `target` directive (for
+  example, `target @main,@main` is invalid)
 - For an apply run targeting `T`, operation evaluation order is:
   1) all `@any` operations in source order
   2) all `T` operations in source order
@@ -438,6 +440,13 @@ port category/name
 
 ```text
 target @main, @2026Q1
+port category/name
+```
+
+### Invalid (repeated selector)
+
+```text
+target @main,@main
 port category/name
 ```
 
