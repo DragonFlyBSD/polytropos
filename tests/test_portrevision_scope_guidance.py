@@ -7,12 +7,12 @@ replaces when it is not, so that op rewrites every other build line's
 PORTREVISION to this branch's number, and goes on rewriting it on every
 compose forever: every future upstream bump on those lines is reverted.
 
-MEASURED, and the first version of this fix got it wrong: ``graphics/gdal``
-carries ``mk set PORTREVISION "3"`` in ``@any`` while upstream ``2026Q3``
-has PORTREVISION 2 and ``main`` has none. The clobber is live. And 5085 of
-5087 overlays in the tree have no non-@any block at all, so an escape clause
-for "ports with no per-target blocks" exempted essentially everything --
-including gdal.
+MEASURED, and the first version of this fix got it wrong: in 2026-09
+``graphics/gdal`` carried ``mk set PORTREVISION "3"`` in ``@any`` while
+upstream ``2026Q3`` had PORTREVISION 2 and ``main`` had none. And 5085 of
+5087 overlays in the tree have no non-@any block at all, so an escape
+clause for "ports with no per-target blocks" exempted essentially
+everything -- including gdal.
 """
 
 from __future__ import annotations
@@ -63,12 +63,10 @@ def test_there_is_no_escape_clause_for_single_scope_overlays():
 
 
 def test_the_section_states_the_permanent_pin_argument():
-    """The bounded/unbounded asymmetry is what actually decides this."""
+    """A missed bump ends at the line's next bump; a pin never ends."""
     section = _section()
     assert "permanent pin" in section
-    assert "unbounded" in section
-    # And the bounded half, so the trade is honest rather than one-sided.
-    assert "bounded" in section
+    assert "a pin never ends" in section
 
 
 def test_the_section_names_the_live_instance():
@@ -89,22 +87,18 @@ def test_the_claim_about_mk_set_is_narrow_and_true():
     assert "never errors and never warns" not in section
 
 
-def test_the_unbumped_cost_is_stated_as_an_unchanged_version_not_a_missing_rebuild():
-    """The other lines DO rebuild -- dsynth's CRC folds mtime, size, path.
-
-    What they ship is changed content under an unchanged version string,
-    which pkg never installs. "A missing rebuild" understates it.
-    """
-    section = _section()
-    assert "unchanged version string" in section
-    assert "still" in section and "rebuild" in section
-
-
 def test_the_section_handles_a_pre_existing_any_op():
     """Layering a scoped bump on top leaves the pin everywhere else."""
     section = _section()
-    assert "already has an `@any`" in section
-    assert "Move the existing op" in section
+    assert "Move an existing `@any` PORTREVISION op" in section
+    assert "leaves the pin everywhere else" in section
+
+
+def test_the_section_is_its_rule_and_stays_small():
+    """It rides in every patch prompt, so it is the rule and no more."""
+    text = FLOW.read_text()
+    body = text.split(HEADING, 1)[1].split("\n## ", 1)[0]
+    assert len((HEADING + body).encode()) <= 650
 
 
 def test_the_worked_example_no_longer_claims_mk_set_fails_when_absent():

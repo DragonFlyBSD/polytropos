@@ -187,11 +187,8 @@ Scope is also a **disambiguation lever**: when an op refuses as ambiguous
 because the same line/block exists under both `@any` and a quarterly
 section, placing the op under the specific section targets exactly one.
 
-PORTREVISION is the exception, and it goes the OTHER way: scope it to
-the build line you are building, never `@any`. A revision number counts
-rebuilds of a specific PORTVERSION, and branches carry different versions —
-so one absolute number cannot be right for both. See "Bumping
-PORTREVISION" below.
+PORTREVISION is the exception: scope it to the build line you are
+building, never `@any` (see "Bumping PORTREVISION").
 
 ## Order is by scope, not by position
 
@@ -384,42 +381,12 @@ first time a port is touched — that's an introduction, not a rebuild.
 
 ### Scope it to the build line you are on
 
-**Put the bump in the block for the target you are building** — the one
-`get_effective_overlay` reports — and never in `@any`. This is the one place
-the "most fixes are universal" rule inverts, and the reason is that a
-revision number is meaningless without the PORTVERSION it counts against.
-`graphics/gdal` today:
-
-| | `main` | `2026Q3` |
-|---|---|---|
-| PORTVERSION | 3.13.3 | 3.13.1 |
-| upstream PORTREVISION | absent (→ 0) | 2 |
-
-Revision 3 of 3.13.1 and revision 3 of 3.13.3 are unrelated packages. There
-is no single number that is correct for both, in principle.
-
-**An absolute value in `@any` is a permanent pin, and that is what makes it
-worse than the alternative.** `mk set` never fails because the variable is
-absent — it inserts — so the op silently rewrites every other build line's
-PORTREVISION to your number, and goes on rewriting it on every compose
-forever. Every *future* upstream bump on those lines is reverted, silently,
-indefinitely. gdal's `@any` op does exactly this: it overwrites `2026Q3`'s
-upstream `2` with `3` right now.
-
-Nothing catches it. An env builds one target, so no build sees the other
-line; and because `mk set` inserts rather than failing on a missing subject,
-even composing the other target comes out clean.
-
-**The cost of scoping, stated honestly:** the other build lines still
-*rebuild* the port — dsynth's change detector folds mtime, size and path, so
-any overlay change forces a rebuild everywhere — but they ship the changed
-contents under an **unchanged version string**, which `pkg` will never
-install. That is a real and quiet failure. It is also *bounded*: one missed
-upgrade signal per line, ended by the next bump on that line. The `@any` pin
-is unbounded. That asymmetry is the whole argument.
-
-**If the port already has an `@any` `mk set PORTREVISION`, adding a scoped
-one does not help** — `@any` runs first and the scoped op only wins on your
-line, leaving the pin in place everywhere else. Move the existing op into a
-target block rather than layering on top of it.
-
+Put the bump in the `target` block of the line `get_effective_overlay`
+reports, never in `@any`. A revision counts rebuilds of one PORTVERSION,
+and lines differ: in 2026-09 graphics/gdal was 3.13.3 (no PORTREVISION)
+on main and 3.13.1 (2) on 2026Q3. `mk set` never fails because the
+variable is absent, so an `@any` value is a **permanent pin**: every
+compose rewrites the other lines' revision, and no build sees it. A
+missed bump ends at that line's next bump; a pin never ends. Move an
+existing `@any` PORTREVISION op into a target block; a scoped op added
+on top leaves the pin everywhere else.
