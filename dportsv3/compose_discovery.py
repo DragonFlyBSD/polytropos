@@ -266,12 +266,12 @@ def compat_scoped_payload_warnings(
     target-blind in exactly these two ways (``merge.sh`` does
     ``cp -pr ${DP}/dragonfly ${WORKAREA}/``, then ``find ${DP}/diffs -name
     '*.diff'`` and applies each). The compat path's output is the
-    byte-parity oracle the remaining compat ports are migrated against --
-    31 ``Makefile.DragonFly`` and 145 ``diffs/`` directories in the tree as
-    measured, with "compose-output-with-compat byte-equals" as the stated
-    definition of done. Diverging from the oracle inside the one code path
-    whose contract is parity with it is worse than the hazard, and no test
-    edit buys that back.
+    byte-parity oracle the remaining compat ports are migrated against
+    (19 ``Makefile.DragonFly``, 28 ``diffs/`` and 23 ``dragonfly/`` among
+    compat ports, measured 2026-10-04), with "compose-output-with-compat
+    byte-equals" as the stated definition of done. Diverging from the
+    oracle inside the one code path whose contract is parity with it is
+    worse than the hazard, and no test edit buys that back.
 
     The suite pins the present behaviour for a real target directory too,
     not merely for ``@any``: a compat port composing ``@main`` is expected

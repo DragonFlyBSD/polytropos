@@ -504,15 +504,29 @@ def _record_target_scope_errors(
     ctx: ComposePortContext,
     report: ComposePortReport,
     stage: ComposeStageResult,
-    target: str = "",
 ) -> None:
     payload_errors = validate_target_scoped_payloads(ctx)
     for error in payload_errors:
         stage.add_error("E_COMPOSE_INVALID_TARGET_SCOPE", f"{ctx.origin}: {error}")
         report.errors += 1
-    # Scoped payload in a compat-mode port lands where do-patch does not
-    # look. Latent today, and a warning rather than a behaviour change --
-    # see compat_scoped_payload_warnings for why (poly-7pwa.9).
+
+
+def _record_compat_scoped_payload(
+    *,
+    ctx: ComposePortContext,
+    report: ComposePortReport,
+    stage: ComposeStageResult,
+    target: str,
+) -> None:
+    """Warn when a compat port's target-scoped payload will not be read.
+
+    Called only for a compat ``type port`` overlay that apply_compat_ops
+    will copy: not mask, dport or lock (run_compat_merge returns before any
+    copy for those), and not a stale port (apply_compat_ops skips it).
+    Scoped payload in a compat-mode port lands where do-patch does not
+    look. Latent today, and a warning rather than a behaviour change --
+    see compat_scoped_payload_warnings for why (poly-7pwa.9).
+    """
     # No report.warnings increment: the summary sums port warnings AND
     # stage warnings, so one hazard would add two to the number an operator
     # reads. Every sibling preflight warning notes and does not count.
@@ -578,9 +592,7 @@ def preflight_stage(
             continue
 
         _record_preflight_mode_notes(ctx=ctx, report=report, stage=stage)
-        _record_target_scope_errors(
-            ctx=ctx, report=report, stage=stage, target=target
-        )
+        _record_target_scope_errors(ctx=ctx, report=report, stage=stage)
 
         if ctx.dops_path is None:
             compat_type, compat_reason = infer_compat_port_type(ctx.path)
@@ -597,6 +609,10 @@ def preflight_stage(
                     target=target,
                     dry_run=dry_run,
                     prune_stale_overlays=prune_stale_overlays,
+                )
+            elif compat_type == "port":
+                _record_compat_scoped_payload(
+                    ctx=ctx, report=report, stage=stage, target=target
                 )
             continue
 

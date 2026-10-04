@@ -27,10 +27,13 @@ only for ``@any``: a compat port composing ``@main`` is expected to produce
 
 from __future__ import annotations
 
+import json
 import pathlib
+import subprocess
 
 import pytest
 
+from dportsv3.cli import main
 from dportsv3.compose_discovery import compat_scoped_payload_warnings
 from dportsv3.compose_models import ComposePortContext
 
@@ -198,3 +201,89 @@ def test_the_two_scoped_ports_would_warn_if_they_were_compat():
             pytest.skip(f"{origin} no longer keeps a dragonfly lane")
         assert compat_scoped_payload_warnings(_ctx(port, "compat")), origin
         assert compat_scoped_payload_warnings(_ctx(port, "dops")) == []
+
+
+# --------------------------------------------------------------------------
+# Through compose: the call site and the hint, not just the helper
+# --------------------------------------------------------------------------
+
+
+def _compose_compat_fixture(
+    tmp_path, capsys, *, overlay_toml=None, json_out=True, upstream=True
+):
+    freebsd = tmp_path / "freebsd"
+    name = "thing" if upstream else "other"
+    (freebsd / "devel" / name).mkdir(parents=True)
+    (freebsd / "devel" / name / "Makefile").write_text("VAR= upstream\n")
+    for cmd in (["git", "init"], ["git", "checkout", "-b", "main"]):
+        subprocess.run(cmd, cwd=freebsd, check=True, capture_output=True)
+
+    port = tmp_path / "delta" / "ports" / "devel" / "thing"
+    for line in ("@main", "@2026Q3"):
+        (port / "dragonfly" / line).mkdir(parents=True)
+        (port / "dragonfly" / line / "patch-x").write_text("diff\n")
+    if overlay_toml is not None:
+        (port / "overlay.toml").write_text(overlay_toml)
+
+    argv = [
+        "compose",
+        "--target", "@main",
+        "--output", str(tmp_path / "out"),
+        "--delta-root", str(tmp_path / "delta"),
+        "--freebsd-root", str(freebsd),
+        "--oracle-profile", "off",
+        "--replace-output",
+    ]
+    if json_out:
+        argv.append("--json")
+    code = main(argv)
+    out = capsys.readouterr().out
+    return code, (json.loads(out) if json_out else out)
+
+
+def _stage(payload, name):
+    return next(s for s in payload["stages"] if s["name"] == name)
+
+
+def _thing(payload):
+    return next(p for p in payload["ports"] if p["origin"] == "devel/thing")
+
+
+def test_compose_emits_the_warning_for_a_compat_port(tmp_path, capsys):
+    code, payload = _compose_compat_fixture(tmp_path, capsys)
+    assert code == 0, payload
+    warnings = [
+        w
+        for w in _stage(payload, "preflight_validate")["warnings"]
+        if w.startswith("I_COMPOSE_COMPAT_SCOPED_PAYLOAD")
+    ]
+    assert len(warnings) == 1, warnings
+    assert "@2026Q3 belongs to another build line" in warnings[0]
+    assert _thing(payload)["notes"].count("compat-scoped-payload") == 1
+
+
+def test_the_hint_reaches_compose_text_output(tmp_path, capsys):
+    """--json carries no hints; the text output is where an operator reads it."""
+    code, stdout = _compose_compat_fixture(tmp_path, capsys, json_out=False)
+    assert code == 0, stdout
+    assert "I_COMPOSE_COMPAT_SCOPED_PAYLOAD=1" in stdout
+    assert "hint: a compat-mode port has target-scoped diffs/ or dragonfly/" in stdout
+
+
+def test_a_compat_mask_is_not_told_its_scoped_payload_is_copied(tmp_path, capsys):
+    """run_compat_merge returns before any copy for mask, dport and lock."""
+    _, payload = _compose_compat_fixture(
+        tmp_path, capsys, overlay_toml='type = "mask"\n'
+    )
+    warnings = _stage(payload, "preflight_validate")["warnings"]
+    assert not [w for w in warnings if "COMPAT_SCOPED_PAYLOAD" in w], warnings
+
+
+def test_a_stale_compat_port_is_not_told_its_scoped_payload_is_copied(
+    tmp_path, capsys
+):
+    """apply_compat_ops skips a stale port outright: nothing is copied."""
+    _, payload = _compose_compat_fixture(tmp_path, capsys, upstream=False)
+    preflight = _stage(payload, "preflight_validate")
+    assert any(e.startswith("E_COMPOSE_STALE_OVERLAY") for e in preflight["errors"])
+    assert not [w for w in preflight["warnings"] if "COMPAT_SCOPED_PAYLOAD" in w]
