@@ -417,14 +417,27 @@ def apply_plan(
             # the port's trailing `.include`, so for a slave port a
             # plain assignment in the master silently wins and the
             # overlay is inert — visible here, or not at all.
-            expect = literal_expectations({
-                str(op.payload.get("name")): str(op.payload.get("value"))
-                for op, row in zip(plan.ops, op_results, strict=False)
-                if op.kind == "mk.var.set"
-                and row.status != "failed"
-                and isinstance(op.payload.get("name"), str)
-                and isinstance(op.payload.get("value"), str)
-            })
+            # Only ops that ran on this build line, in the order they ran
+            # (models.order_ops_for_target): another line's op is
+            # "skipped", not "failed", and file order is not apply order.
+            # A later mk.var op on the same name (mk add after mk set)
+            # leaves no literal to compare, so the name is dropped.
+            ran = {row.id for row in op_results if row.status == "applied"}
+            values: dict[str, str] = {}
+            for op in ordered_ops:
+                name = op.payload.get("name")
+                if (
+                    op.id not in ran
+                    or not op.kind.startswith("mk.var.")
+                    or not isinstance(name, str)
+                ):
+                    continue
+                value = op.payload.get("value")
+                if op.kind == "mk.var.set" and isinstance(value, str):
+                    values[name] = value
+                else:
+                    values.pop(name, None)
+            expect = literal_expectations(values)
             try:
                 oracle_result = run_bmake_oracle(
                     oracle_root, profile=normalized_oracle_profile,
