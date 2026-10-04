@@ -73,17 +73,25 @@ def test_it_says_nothing_here_can_check_the_others(env):
     assert "whether a change also works on the rest" in brief
 
 
-def test_the_always_on_line_poses_the_question_and_names_both_answers(env):
+def test_the_always_on_line_defaults_to_any_and_names_the_exception(env):
     """On 5085 of 5087 ports this is ALL the agent gets.
 
-    Naming the blind spot without naming the lever is not a reason to ask
-    anything -- and a port needing its first per-target split is in that
-    population.
+    New work defaults to @any and scoping answers a divergence the agent can
+    show; a port needing its first per-target split is in that population,
+    so the exception is named too.
     """
     brief = _brief(env, SINGLE)
-    assert "decide which it is" in brief
-    assert "`target @any`" in brief
+    assert "Put a change in `target @any`" in brief
+    assert "unless you can show" in brief
     assert "`target @main` block" in brief
+    assert "decide which it is" not in brief
+    assert "usually the second" not in brief
+    assert "nothing here can check" not in brief
+
+
+def test_the_always_on_brief_stays_small(env):
+    """It rides on every turn of every patch attempt."""
+    assert len(_brief(env, SINGLE)) <= 540
 
 
 def test_a_single_scope_port_gets_only_the_one_line(env):
@@ -111,7 +119,54 @@ def test_it_forbids_deleting_the_other_build_lines_ops(env):
     assert "Do not delete them" in brief
     assert "no env here can verify a replacement" in brief
     # And it says what to do instead: a prohibition alone gets improvised on.
-    assert "split it into per-target blocks" in brief
+    # Splitting an @any op into per-target blocks drops it from later lines.
+    assert "split it into per-target blocks" not in brief
+    assert "undo or replace it with an op in the `target @main` block" in brief
+    assert "including later ones" in brief
+    assert "no later op can fix that" in brief
+
+
+MAKEFILE = "PORTNAME=\tthing\n\n.include <bsd.port.mk>\n"
+
+
+def _apply(tmp_path, body, target):
+    from dportsv3.engine.api import apply_dsl
+
+    root = tmp_path / target.lstrip("@")
+    root.mkdir()
+    (root / "Makefile").write_text(MAKEFILE)
+    result = apply_dsl(HEAD + body, source_path=None, port_root=root,
+                       target=target, oracle_profile="off")
+    return result, (root / "Makefile").read_text()
+
+
+def test_a_target_block_op_overrides_an_any_op_that_applies(tmp_path):
+    """The first half of the remedy: the @any op stays for every other line.
+
+    @2099Q1 stands for a line branched later, which no block names.
+    """
+    body = (
+        'target @any\nmk set FOO "shared"\n'
+        'target @main\nmk set FOO "main"\n'
+    )
+    for target, want in (("@main", "FOO= main"), ("@2026Q3", "FOO= shared"),
+                         ("@2099Q1", "FOO= shared")):
+        result, text = _apply(tmp_path, body, target)
+        assert result.ok, (target, result.diagnostics)
+        foo = [ln for ln in text.splitlines() if ln.startswith("FOO")]
+        assert foo == [want], (target, foo)
+
+
+def test_a_target_block_op_cannot_rescue_an_any_op_that_fails(tmp_path):
+    """The second half: a failed @any op fails the port whatever runs after."""
+    body = (
+        'target @any\n'
+        'text replace-once file Makefile from "NOT THERE" to "x"\n'
+        'target @main\nmk set FOO "main"\n'
+    )
+    result, _text = _apply(tmp_path, body, "@main")
+    assert result.ok is False
+    assert [row.status for row in result.op_results] == ["failed", "applied"]
 
 
 def test_the_do_not_apply_bullet_excludes_the_target_being_built(env):
@@ -126,7 +181,8 @@ def test_the_do_not_apply_bullet_excludes_the_target_being_built(env):
     """
     brief = _brief(env, MULTI, target="@main")
     # Just the LIST of scopes, not the whole bullet: the remedy clause after
-    # it legitimately names the target ("if an op is wrong for `@main`...").
+    # it legitimately names the target ("If an `@any` op applies here but
+    # is wrong for `@main`...").
     listed = brief[
         brief.index("- Ops under ") + len("- Ops under "):
         brief.index(" do **not** apply here")
@@ -213,15 +269,66 @@ def test_it_never_raises(monkeypatch):
     assert steps._build_line_brief(broken, "e", "devel/thing") == ""
 
 
-def test_the_patch_step_actually_injects_it():
-    """A helper nothing calls is not a fix."""
-    import inspect
+class _HarnessReached(BaseException):
+    """Stops the step at the harness call.
 
-    src = inspect.getsource(steps.PatchAttemptStep)
-    # Ordering, not presence: a presence grep passed with the call placed
-    # anywhere, including after the harness had already run.
-    call = src.index("payload += _build_line_brief(_worker, env, patch_origin)")
-    assert call < src.index("harness_patch.run(")
-    # Method-level, not nested inside the slave-port branch.
-    line_start = src.rindex("\n", 0, call) + 1
-    assert src[line_start:call] == " " * 8, repr(src[line_start:call])
+    BaseException, so run()'s "except Exception" salvage path lets it out.
+    """
+
+
+def test_the_patch_payload_carries_the_build_line_brief(
+    env, tmp_path, monkeypatch, set_setting,
+):
+    """A helper nothing calls is not a fix: drive the step to the harness."""
+    from dportsv3.agent import patch as harness_patch
+    from dportsv3.agent import runner
+    from dportsv3.agent.policy import Tier
+    from dportsv3.agent.step import StepCtx
+
+    (env.port / "overlay.dops").write_text(SINGLE)
+    monkeypatch.setattr(worker, "patch_origin_for", lambda e, o: o)
+    monkeypatch.setattr(worker, "assert_port_clean",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(worker, "ensure_bootstrap_overlay",
+                        lambda *a, **k: {})
+    monkeypatch.setattr(worker, "materialize_dports",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(runner, "take_operator_notes", lambda job_id: [])
+    captured: dict = {}
+
+    def _stub(payload, **kw):
+        captured["payload"] = payload
+        raise _HarnessReached
+
+    monkeypatch.setattr(harness_patch, "run", _stub)
+    set_setting("llm.patch.model", "test/stub")
+    worker.set_env_target("brief-env", "@main")
+
+    def _noop(*a, **k):
+        return None
+
+    services = steps.PatchServices(
+        read_bundle_text=_noop, write_error_note=_noop,
+        write_patch_audit=_noop, write_tool_trace=_noop,
+        write_changes_diff=_noop,
+        looks_env_suspicious=lambda *a, **k: False,
+        invalidate_health_cache=_noop,
+        cached_health_broken=lambda *a, **k: False,
+        summarize_tool_call=lambda *a, **k: "",
+        activity_log=_noop, log=_noop, load_port_history=_noop,
+    )
+    ctx = StepCtx(
+        job_id="j1", job={"origin": "devel/thing", "target": "@main"},
+        queue_root=tmp_path,
+    )
+    ctx.state.update(
+        services=services, job_path=tmp_path / "j1.job",
+        origin="devel/thing", payload="BASE PAYLOAD", model="test/stub",
+        env="brief-env", tier=Tier(name="AUTO", max_tokens=1000),
+    )
+    with pytest.raises(_HarnessReached):
+        steps.PatchAttemptStep().run(ctx)
+    payload = captured["payload"]
+    assert payload.startswith("BASE PAYLOAD")
+    assert "## You are building one build line" in payload
+    assert "`@main`" in payload

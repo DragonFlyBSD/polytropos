@@ -1199,10 +1199,12 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     belonged to every build line or just this one.
 
     TWO LEVELS, because volume costs attention. The always-on line names the
-    target AND the question, because the question is what the bead is about
-    and 5085 of 5087 overlays are single-scope: a port that needs its FIRST
-    per-target split is in that population, and telling it only "you cannot
-    see the other lines" hands it a blind spot with no lever. The longer form
+    target and the default: a change goes in ``target @any`` unless it can
+    be shown to be this line's alone, because a wrong shared change fails
+    loudly on the other lines while a wrongly scoped one is silently missing
+    there. 5085 of 5087 overlays are single-scope, so a port that needs its
+    FIRST per-target split is in that population and the exception has to
+    be named in the always-on line too. The longer form
     -- which scopes exist, where an appended op lands, the payload lane --
     only appears for a port whose overlay already has per-target blocks.
 
@@ -1233,13 +1235,12 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             f"This job is for **`{target}`**. The env composes and builds that "
             f"target and no other, so nothing here can tell you whether a "
             f"change also works on the rest.\n\n"
-            f"So for each change, decide which it is: a platform or framework "
-            f"fix that belongs in `target @any` and applies everywhere, or "
-            f"something tied to this line's own source or versions, which "
-            f"belongs in a `target {target}` block. Upstream source patches "
-            f"and version-pinned values are usually the second. `@any` is the "
-            f"scope nothing here can check, so put a change there on the "
-            f"strength of an argument you can state.\n"
+            f"Put a change in `target @any`, which every build line reads, "
+            f"unless you can show it is this line's alone; then it goes in a "
+            f"`target {target}` block. A shared patch that is wrong elsewhere "
+            f"fails loudly there; a change scoped here is silently missing "
+            f"from every other line. The playbooks' \"Scoping\" section says "
+            f"what counts.\n"
         ]
 
         overlay = (
@@ -1300,9 +1301,13 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
                 f"- Ops under {', '.join('`' + s + '`' for s in others)} do "
                 f"**not** apply here. Do not delete them to make this build "
                 f"pass: they are the other line's fix and no env here can "
-                f"verify a replacement. If an op is wrong for `{target}` but "
-                f"right elsewhere, split it into per-target blocks rather "
-                f"than removing it.\n"
+                f"verify a replacement. If an `@any` op applies here but is "
+                f"wrong for `{target}`, undo or replace it with an op in the "
+                f"`target {target}` block, which runs after `@any`; every "
+                f"other line, including later ones, keeps the `@any` op. If it "
+                f"fails here (a missing anchor, an ambiguous match, a `diffs/` "
+                f"reject), no later op can fix that: the `@any` op itself has "
+                f"to change.\n"
             )
         if scoped_lanes:
             lanes = " and ".join(f"`{lane}/@<target>/`" for lane in sorted(scoped_lanes))
