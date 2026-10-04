@@ -183,7 +183,8 @@ including any self-referential value (`${VAR:mod}`), where `mk set`'s recursive
 `mk set` (`=`) and `mk eval` (`:=`) do not run a shell; only `mk shell` does.
 `on-missing` is not allowed (it always appends).
 
-`mk add` and `mk remove` still require an existing assignment.
+`mk remove` requires an existing assignment. `mk add` creates one,
+`<VAR>= <token>`, when the variable is absent.
 
 Operator mapping (source assignment → op): `=` → `mk set`; `:=` → `mk eval`;
 `!=` → `mk shell`; `+=` → `mk add`. `?=` (conditional default) has no faithful

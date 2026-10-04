@@ -134,9 +134,9 @@ def test_the_superseded_case_exists_and_owns_the_delete() -> None:
 
 def test_the_delete_is_gated_on_evidence_not_on_touching_the_same_file() -> None:
     """The dangerous shortcut. devel/glib20 has FreeBSD patching the
-    exact same line and our patch is still required, because DragonFly
-    ships no libelf at all. Deleting on 'FreeBSD patches that line'
-    would have broken the build."""
+    exact same line and our patch is still required: theirs points the
+    libelf block at a system libelf, and ours disables that block.
+    Deleting on 'FreeBSD patches that line' would have broken the build."""
     body = _prefer_dops_body()
     step = body[body.index("has FreeBSD made our patch unnecessary?"):]
     step = step[:step.index("### Step 2")]

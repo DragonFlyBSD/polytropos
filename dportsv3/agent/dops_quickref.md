@@ -22,7 +22,9 @@ reason "<one-line why this overlay exists>"
 
 - One origin per file. `port` directive is required exactly once.
 - `target` sets the active scope. Multiple `target` directives are
-  allowed; operations inherit the most recently named scope.
+  allowed; operations inherit the most recently named scope. `@any`
+  reaches every build line, including later ones, and is where a fix goes
+  by default; `target @2026Q3,@main` (no space) is exactly those two.
 - **Scope decides execution order, not file position.** On a build for
   target `T` the engine runs every `@any` op first, in file order, then
   every `T` op, in file order. `mk`/`text` ops are last-wins, so an
@@ -58,10 +60,8 @@ mk shell  PG_UID "grep -E '^pgsql:' ${PORTSDIR}/GIDs | awk -F ':' '{print $$3}'"
 # `+=`->mk add. `?=` has NO faithful op — escalate it (mk set would override an
 # upstream value the default was meant to defer to).
 
-# Optional behavior when the var isn't found:
-mk set FOO "bar" on-missing error    # default: fail if not found
-mk set FOO "bar" on-missing warn     # warn + insert new
-mk set FOO "bar" on-missing noop     # silently insert new
+# mk set inserts an absent variable under every on-missing policy;
+# on-missing only matters if the Makefile itself is missing.
 ```
 
 ## Conditional / block ops
@@ -140,7 +140,7 @@ file materialize dragonfly/patch-Makefile.am -> dragonfly/patch-Makefile.am
 file copy Makefile.in.dragonfly -> Makefile.in
 
 # Drop a file out of the port.
-file remove files/patch-stale on-missing warn
+file remove files/patch-stale
 
 # Edit a single line of any file in the port tree.
 text line-remove file Makefile exact "BROKEN= unsupported"
@@ -229,10 +229,10 @@ after an upstream bump), **re-cut it** with `genpatch` and keep the
 
 ## On-missing modifiers
 
-Most ops accept `on-missing error|warn|noop`. Default is `error`.
-`warn` is the right choice when an op is idempotent across targets
-(e.g. removing a fix that's already been upstreamed in some
-branches).
+Most ops accept `on-missing error|warn|noop`. Keep the default, `error`:
+an env builds one line, and a missing subject is how another line finds
+out an op no longer fits it. Use `warn`/`noop` only for a fact you have
+checked, with a comment naming the line and the date.
 
 ## When to use which
 

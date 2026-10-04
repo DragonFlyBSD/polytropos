@@ -132,8 +132,11 @@ want `unset`, not `remove`.
 
 - A `set`/`unset`/`remove` that matches **more than one** upstream
   assignment of the same variable refuses with `E_APPLY_AMBIGUOUS_MATCH`
-  — the engine won't guess which to rewrite. Narrow it with scope (see
-  below) or hand-resolve. (`add` does not refuse on multi-assignment.)
+  — the engine won't guess which to rewrite, and a `target` block does
+  not change that. Rewrite it with `text replace-once`, quoting enough of
+  the neighbouring lines (joined with `\n`) that the `from` text occurs
+  once in the file, or hand-resolve. (`add` does not refuse on
+  multi-assignment.)
 - Re-emitting `mk set VAR` for the same key **accumulates** lines in the
   overlay. The composed Makefile is still correct (ops play last-wins —
   within one scope that is declaration order; across scopes see "Order is
@@ -183,9 +186,8 @@ concrete target you'd write is the env's compose target, visible as
 `target` in `get_effective_overlay` (and from `env_verify`); write that
 literal section header.
 
-Scope is also a **disambiguation lever**: when an op refuses as ambiguous
-because the same line/block exists under both `@any` and a quarterly
-section, placing the op under the specific section targets exactly one.
+Leave `on-missing` at its default, `error`: a missing anchor or file is
+how another line learns an op no longer fits it.
 
 PORTREVISION is the exception: scope it to the build line you are
 building, never `@any` (see "Bumping PORTREVISION").
@@ -258,9 +260,9 @@ produce the diff rather than hand-writing one:
    the rest of the file is never at risk. **Do not use `put_file` here.**
    A whole-file write means re-emitting every byte from a windowed read,
    and on a multi-kilobyte source that truncates — genpatch then diffs a
-   corrupted baseline and produces an empty or garbage patch. Writing to
-   a WRKSRC path is allowed; to `ports/<origin>/` it is not — edit the
-   overlay there, not the extracted source.
+   corrupted baseline and produces an empty or garbage patch. Edit the
+   extracted source here; the patch reaches `ports/<origin>/` through
+   `genpatch` and `install_patches`.
 5. `genpatch(<same path>)` — runs `diff -u` between `.orig` and current,
    depositing a WRKSRC-relative `patch-*` file. (It picks up WRKSRC from
    the prior `make_extract` automatically.) Because the `.orig` baseline
