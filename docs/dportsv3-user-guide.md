@@ -730,12 +730,18 @@ Transition rule of thumb:
   "stale".** Run 1 notes `stale-skipped` alongside `E_COMPOSE_STALE_OVERLAY`
   and `I_COMPOSE_STALE_MARKED_REMOVED`. Every run after it notes
   `removed-for-target` and `removed-for-target-skipped`, exits 0 and warns
-  about nothing — because the `removed_in` check precedes the upstream-presence
-  check, so by then compose no longer knows the port is absent upstream. If you
-  are looking at a quiet report and wondering why an overlay does nothing,
-  `removed-for-target` is the answer and `overlay.toml` is where it is written.
-- `removed_in` is only ever added to, never cleared, so an overlay stays
-  skipped even if the port later reappears upstream.
+  about nothing: `removed_in` skips a port only while it is still missing
+  upstream for that target, so a quiet `removed-for-target` means exactly that.
+- `removed_in` records that the port was missing; it does not outlive that. If
+  the port reappears upstream, compose applies the overlay again. A full
+  compose removes the target from `removed_in` (`I_COMPOSE_STALE_MARK_CLEARED`,
+  note `removed-for-target-cleared`), deleting `overlay.toml` when nothing else
+  is left in it; a dry run warns `I_COMPOSE_STALE_MARK_IGNORED` instead, and an
+  `--origin` compose only notes `removed-for-target-ignored`. If the old overlay
+  no longer applies to the restored port, compose now fails on it.
+- `removed_in` is written by compose; it is not a switch for keeping an overlay
+  off one build line. In `overlay.dops`, put the ops under `target` blocks for
+  the lines that need them instead.
 - If you also want the stale port removed from the composed output tree on that
   same run, rerun with `--prune-stale-overlays`.
 - These markers and the `special/<component>/{diffs,replacements}/@<target>/`

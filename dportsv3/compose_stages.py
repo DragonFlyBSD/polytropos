@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from dportsv3.compat import infer_compat_port_type, run_compat_merge
 from dportsv3.compose_discovery import (
+    clear_overlay_removed_in,
     compat_scoped_payload_warnings,
     discover_overlay_contexts,
     list_port_origins,
@@ -491,6 +492,52 @@ def _apply_stale_overlay_policy(
         )
 
 
+def _note_stale_removed_in(
+    *,
+    ctx: ComposePortContext,
+    report: ComposePortReport,
+    stage: ComposeStageResult,
+    target: str,
+    origin_compose: bool,
+    delta_write_skip: str | None,
+    delta_writes: list[str],
+) -> None:
+    """Handle a removed_in marker whose origin is present upstream again.
+
+    The overlay is applied either way (the caller falls through). A run
+    that may write the delta tree removes the stale target; any other
+    run leaves the marker and says so -- except an --origin compose,
+    which is the agent's reapply: it gets the overlay, the note in
+    --json, and no warning it could not act on (poly-7pwa.6).
+    """
+    if delta_write_skip is None:
+        changed, error = clear_overlay_removed_in(ctx.path, target)
+        if error is not None:
+            stage.add_error("E_COMPOSE_STALE_MARK_FAILED", f"{ctx.origin}: {error}")
+            report.errors += 1
+            return
+        if changed:
+            stage.add_warning(
+                "I_COMPOSE_STALE_MARK_CLEARED",
+                f"{ctx.origin}: present upstream again; removed {target} "
+                f"from overlay.toml removed_in",
+            )
+            report.notes.append("removed-for-target-cleared")
+            delta_writes.append(
+                f"ports/{ctx.origin}/overlay.toml (removed_in -{target})"
+            )
+        return
+
+    report.notes.append("removed-for-target-ignored")
+    if not origin_compose:
+        stage.add_warning(
+            "I_COMPOSE_STALE_MARK_IGNORED",
+            f"{ctx.origin}: overlay.toml removed_in lists {target}, but the "
+            f"origin is present upstream again, so the overlay was applied; "
+            f"the stale marker was left in place ({delta_write_skip})",
+        )
+
+
 def _record_preflight_mode_notes(
     *,
     ctx: ComposePortContext,
@@ -634,9 +681,24 @@ def preflight_stage(
         report.mode_reason = ctx.mode_reason
 
         if target in read_overlay_removed_in(ctx.path):
-            ctx.removed_for_target = True
-            report.notes.append("removed-for-target")
-            continue
+            if ctx.origin not in upstream_origins:
+                ctx.removed_for_target = True
+                report.notes.append("removed-for-target")
+                continue
+            # removed_in records that the origin was missing upstream for
+            # this line, and skips the port only while that holds. Skipping
+            # a port that is present would build it as pure upstream with
+            # its overlay silently gone, so it falls through and its
+            # overlay is planned and applied like any other (poly-7pwa.6).
+            _note_stale_removed_in(
+                ctx=ctx,
+                report=report,
+                stage=stage,
+                target=target,
+                origin_compose=selected_origins is not None,
+                delta_write_skip=delta_write_skip,
+                delta_writes=delta_writes,
+            )
 
         _record_preflight_mode_notes(ctx=ctx, report=report, stage=stage)
         _record_target_scope_errors(ctx=ctx, report=report, stage=stage)

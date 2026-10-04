@@ -220,6 +220,13 @@ def build_compose_report_overview(
             "and every diffs/*.diff is applied whatever build line it is "
             "for -- convert the port to overlay.dops"
         )
+    if warning_codes.get("I_COMPOSE_STALE_MARK_IGNORED", 0) > 0:
+        # No hint for CLEARED: the delta_writes: line already names it.
+        hints.append(
+            "removed_in named a build line on which the port exists upstream "
+            "again: its overlay was applied, and a full compose removes the "
+            "stale marker"
+        )
     if error_codes.get("E_COMPOSE_COMPAT_FAILED", 0) > 0:
         hints.append("review apply_compat_ops failures by origin and patch name")
     if error_codes.get("E_COMPOSE_SPECIAL_PATCH_FAILED", 0) > 0:

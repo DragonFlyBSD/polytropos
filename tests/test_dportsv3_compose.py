@@ -623,9 +623,8 @@ def test_compose_removed_in_skips_port_for_target(tmp_path, capsys) -> None:
 
     (freebsd / "devel" / "a").mkdir(parents=True)
     (freebsd / "devel" / "a" / "Makefile").write_text("VAR= old\n")
-    # Port exists upstream but is declared removed for @main
-    (freebsd / "devel" / "gone").mkdir(parents=True)
-    (freebsd / "devel" / "gone" / "Makefile").write_text("VAR= old\n")
+    # devel/gone is absent upstream: removed_in skips a port only while that
+    # holds. A port upstream again applies its overlay (poly-7pwa.6).
     _init_freebsd_repo(freebsd)
 
     gone = delta / "ports" / "devel" / "gone"

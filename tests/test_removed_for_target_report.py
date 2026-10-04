@@ -192,10 +192,8 @@ def test_the_transition_every_real_port_goes_through(tmp_path, capsys):
     This is the sequence all 249 removed_in+overlay.dops ports in the tree
     actually took, and it is what changed: their steady-state note used to
     read "stale-skipped". Pinning both runs records the change instead of
-    leaving it incidental -- and shows why the steady-state report no
-    longer mentions "absent upstream" at all (poly-7pwa.6's job, since the
-    `continue` precedes the upstream check and compose genuinely does not
-    know by then).
+    leaving it incidental. A quiet removed-for-target means "still absent
+    upstream": the marker skips a port only while that holds (poly-7pwa.6).
     """
     freebsd = tmp_path / "freebsd"
     (freebsd / "devel" / "present").mkdir(parents=True)

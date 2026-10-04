@@ -82,6 +82,44 @@ def write_overlay_removed_in(port_path: Path, target: str) -> tuple[bool, str | 
     return True, None
 
 
+def clear_overlay_removed_in(port_path: Path, target: str) -> tuple[bool, str | None]:
+    """Remove one target from overlay.toml removed_in; report whether it changed.
+
+    The inverse of write_overlay_removed_in. removed_in records that the
+    origin was missing upstream for a build line, and stops holding once
+    the port is back (poly-7pwa.6). The key is dropped when nothing is
+    left in it, and an overlay.toml left empty is deleted:
+    write_overlay_removed_in created it.
+    """
+    manifest = port_path / "overlay.toml"
+    if not manifest.exists():
+        return False, None
+    payload, error = read_toml_file(manifest)
+    if error is not None:
+        return False, error
+    if payload is None:
+        payload = {}
+    current = _removed_in_targets(payload)
+    if target not in current:
+        return False, None
+
+    remaining = sorted({value for value in current if value != target})
+    if remaining:
+        payload["removed_in"] = remaining
+    else:
+        payload.pop("removed_in", None)
+    if not payload:
+        try:
+            manifest.unlink()
+        except OSError as exc:
+            return False, f"Failed to remove file: {manifest} ({exc})"
+        return True, None
+    error = write_toml_file(manifest, payload)
+    if error is not None:
+        return False, error
+    return True, None
+
+
 def compat_diff_files_script_parity(port_dir: Path) -> tuple[list[Path], list[str]]:
     """Resolve compat fallback patch files matching script behavior."""
     diffs_dir = port_dir / "diffs"
