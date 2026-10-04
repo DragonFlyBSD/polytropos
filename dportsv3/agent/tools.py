@@ -194,21 +194,18 @@ _TOOLS: list[dict] = [
           "Call it after reading why a build failed.",
           {"text": _STR}, ["text"]),
     _tool("dops_reference",
-          "Return a condensed quick-reference for the dops DSL (overlay.dops "
-          "syntax: mk set/add/remove, mk replace-if, mk target set/append, "
-          "text replace-once, file copy/remove, patch apply). On-demand — "
-          "call ONCE only if (a) overlay.dops does NOT exist for this origin "
-          "and (b) you are about to write one. Skip otherwise; the reference "
-          "is large and re-reading wastes tokens.",
+          "Return the condensed dops DSL reference (about 13KB). It stays in "
+          "context for the rest of the attempt, so call it at most ONCE, and "
+          "only when you must write syntax that neither this port's overlay "
+          "nor the playbooks show.",
           {}, []),
     _tool("validate_dops",
           "Run `dportsv3 dsl check` against the port's overlay.dops. Cheap "
           "parse + semantic validation (no compose, no filesystem mutation). "
           "Returns ok=True only when there are zero diagnostics. On failure, "
           "stderr_tail carries diagnostics with line:column and an E_* error "
-          "code. Convert flow: call once after writing overlay.dops via "
-          "put_file; if not ok, fix the offending line(s) and call again. "
-          "Only emit the Conversion Proof after a clean validate_dops.",
+          "code; fix the offending line(s) and call it again before "
+          "materialize_dports.",
           {"origin": _STR}, ["origin"]),
     # Step 38f: scope-filtered view of overlay.dops. Use INSTEAD of
     # `get_file overlay.dops` when reasoning about what compose will
@@ -254,11 +251,7 @@ _HANDLERS: dict[str, Callable] = {
 def schemas(only: set[str] | None = None) -> list[dict]:
     """Return the OpenAI-format tool list to pass to litellm.
 
-    With ``only`` set, restrict the returned schemas to that name
-    set — used by the convert flow (Step 20) to drop build-loop
-    tools (``make_extract``, ``make_patch``, ``dsynth_build``,
-    ``dupe``, ``genpatch``, ``install_patches``) it doesn't need,
-    which prevents the model from going on source-exploration tangents.
+    With ``only`` set, restrict the returned schemas to that name set.
     """
     if only is None:
         return list(_TOOLS)
@@ -273,9 +266,8 @@ def patch_tool_names() -> frozenset[str]:
     """The patch agent's tool list.
 
     The patch agent edits ``ports/<origin>/overlay.dops`` directly in
-    dops DSL — the same surface the convert agent uses (``put_file`` +
-    ``validate_dops`` + ``dops_reference``, reading with ``grep`` /
-    ``get_file``) — plus the build-loop tools convert doesn't need
+    dops DSL (``put_file`` + ``validate_dops`` + ``dops_reference``,
+    reading with ``grep`` / ``get_file``), plus the build-loop tools
     (``make_extract`` / ``make_patch`` / ``dupe`` / ``genpatch`` /
     ``install_patches`` / ``dsynth_build`` / ``dsynth_log`` /
     ``materialize_dports``) and the

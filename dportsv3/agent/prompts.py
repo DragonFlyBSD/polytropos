@@ -220,24 +220,17 @@ diff_bytes value; it tells you whether you start from a clean tree
 or are continuing previous work.
 
 **Step 3 — `get_file /work/DeltaPorts/ports/<origin>/overlay.dops`**.
-This single call decides your whole strategy:
+Your fix goes into this file as additional ops (the patch step writes a
+bare header first for a port that had none). Do NOT introduce a new
+static `dragonfly/patch-*` when a dops operation fits the change. If it
+returns 'no such path', the port carries compat files this flow cannot
+convert: do not create the overlay, which would switch the port to dops
+mode and drop them; stop with `Rebuild Status: gave-up` and say why.
 
-- **File exists** → the port is *already* dops-managed. Your fix
-  goes into this file as additional ops. Do NOT introduce a new
-  static `dragonfly/patch-*` when a dops operation fits the change.
-
-- **File returns 'no such path'** → the port is *unconverted*.
-  The durable fix is conversion to dops, NOT regenerating a static
-  patch (regenerated patches re-break on the next upstream bump;
-  dops survive). Before writing the file, call `dops_reference()`
-  exactly once (Step 4 below). Only fall back to regenerating the
-  static patch when the patch's logic genuinely doesn't reduce to
-  any dops operation.
-
-**Step 4 — `dops_reference()`** *(only if Step 3 returned 'no such
-path' AND you intend to write `overlay.dops`)*. Returns the dops
-quick-reference (~2KB). Call ONCE per patch attempt. Do not call
-again on later turns; it doesn't change.
+**Step 4 — `dops_reference()`**, at most once, and only when you must
+write dops syntax that neither this overlay nor the playbooks show. The
+reference is about 13KB and stays in context for the rest of the
+attempt.
 
 **Step 5 — `materialize_dports(origin)` then `make_extract(origin)`**.
 These produce the buildable tree + extracted source for THIS port.

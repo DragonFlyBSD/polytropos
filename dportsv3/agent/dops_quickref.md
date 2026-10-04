@@ -1,9 +1,8 @@
 # dops Quick Reference (on-demand)
 
 This is the condensed cheat-sheet returned by the ``dops_reference``
-tool. Call it **once** at most per patch attempt, only when you've
-confirmed `overlay.dops` doesn't exist for the origin and you're
-about to write one. Re-calling on later turns wastes tokens.
+tool. It stays in context for the rest of the attempt, so one call per
+attempt is enough.
 
 For the full normative grammar see `docs/dsl-v0.md`. This file is
 the minimal subset patch agents need 90% of the time.

@@ -16,10 +16,11 @@ for changing anything that already exists), `put_file` (whole-file
 write — for creating a file, or replacing a short one outright) and
 `install_patches`, plus the build loop. The grammar itself
 (every `mk`/`file`/`text` op, heredoc blocks, conditional ops) is in
-`dops_reference()` — call it once when you're about to write a fresh
-overlay. This file covers the *flow* knowledge the grammar reference
-doesn't: the write/validate loop, `mk`-directive traps, scoping
-judgment, the static-patch workflow, and recovery from a bad patch.
+`dops_reference()` — call it at most once, for syntax this file and the
+overlay do not show. This file covers the *flow* knowledge the grammar
+reference doesn't: the write/validate loop, `mk`-directive traps,
+scoping judgment, the static-patch workflow, and recovery from a bad
+patch.
 
 ## Read the overlay through the engine, not raw
 

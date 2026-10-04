@@ -42,19 +42,14 @@ generated files and wrong (fragile) for hand-written source.
 
 ## Fix
 
-### Step 0 — does overlay.dops already exist?
+### Step 0 — read the overlay
 
 ```
 get_file /work/DeltaPorts/ports/<origin>/overlay.dops
 ```
 
-- **Yes** → the port is dops-managed. Add new operations to the
-  existing file; follow the existing style.
-- **No** → the port is still on static patches.
-
-If you're about to write an `overlay.dops` and you don't have the
-syntax memorized, call `dops_reference()` **once** to get the
-condensed quick-reference.
+Add new operations to it, following its existing style. For syntax
+neither it nor these playbooks show, call `dops_reference()` once.
 
 ### Step 1 — has FreeBSD made our patch unnecessary? (check this FIRST)
 

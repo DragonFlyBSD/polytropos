@@ -3046,8 +3046,8 @@ def dops_reference(env: str) -> dict:
 
     Co-located with the agent module but NOT inside the playbooks
     directory, so the playbook selector doesn't ship it in every payload. Call once
-    per patch attempt at most, only after confirming there's no
-    ``overlay.dops`` yet and you intend to write one.
+    per patch attempt at most, when the agent needs syntax the overlay and
+    the playbooks do not show.
 
     The full normative grammar lives at ``docs/dsl-v0.md`` — this
     file is the minimal subset patch agents need most often. The
