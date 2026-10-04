@@ -393,6 +393,36 @@ def test_install_patches_rejects_the_batch_if_any_patch_is_bad(env_dir):
     assert not dst.exists()
 
 
+def test_install_patches_refuses_a_name_outside_genpatch_out(env_dir):
+    """poly-qxi8: a name was joined onto genpatch-out unchecked, so
+    ``../../OUTSIDE.diff`` read a diff from the writable dir and installed
+    it into the port under the agent's name."""
+    from dportsv3.agent import worker
+    (env_dir / "work" / "genpatch-out").mkdir(parents=True)
+    (env_dir / "OUTSIDE.diff").write_text(
+        "--- a/t.c\n+++ b/t.c\n@@ -1,1 +1,1 @@\n-a\n+b\n")
+
+    res = worker.install_patches("env", "devel/foo",
+                                 patches=["../../OUTSIDE.diff"])
+
+    assert res.get("ok") is False
+    assert res["installed"] == []
+    assert "not paths" in res["error"]
+    assert not list((env_dir / "work" / "DeltaPorts").rglob("OUTSIDE.diff"))
+
+
+def test_install_patches_accepts_a_plain_name(env_dir):
+    from dportsv3.agent import worker
+    out = env_dir / "work" / "genpatch-out"
+    out.mkdir(parents=True)
+    (out / "patch-t.c").write_text("--- a/t.c\n+++ b/t.c\n@@ -1,1 +1,1 @@\n-a\n+b\n")
+
+    res = worker.install_patches("env", "devel/foo", patches=["patch-t.c"])
+
+    assert res.get("ok", True) is True
+    assert res["installed"] == ["ports/devel/foo/dragonfly/patch-t.c"]
+
+
 # --- the write path the bad patch actually took --------------------------
 
 

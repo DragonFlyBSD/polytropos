@@ -3607,6 +3607,16 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     if patches is None:
         candidates = [f for f in sorted(src.iterdir()) if f.is_file() and f.name.startswith("patch-")]
     else:
+        bad = [n for n in patches
+               if not n or n in (".", "..") or "/" in n or "\\" in n]
+        if bad:
+            return {
+                "ok": False,
+                "error": (f"install_patches: patches must be file names in "
+                          f"{src}, not paths: {bad}"),
+                "origin": origin,
+                "installed": [],
+            }
         candidates = [src / name for name in patches]
         missing = [str(p) for p in candidates if not p.is_file()]
         if missing:
