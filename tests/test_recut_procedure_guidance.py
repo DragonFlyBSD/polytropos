@@ -49,72 +49,30 @@ def test_the_procedure_names_install_patches_rather_than_a_path():
     section = _section("### Re-cut a drifted source patch")
     assert "install_patches" in section
     assert "do not assume the path is" in section.lower()
+    assert "take it from `installed`" in section
 
 
-def test_the_doc_states_the_scoped_shape_source_scoped_destination_flat():
+def test_the_doc_names_the_scoped_path():
     section = _section("### Re-cut a drifted source patch")
     assert "dragonfly/@<target>/<name>" in section
-    # The half that makes it non-obvious: only the SOURCE is scoped.
-    assert "destination stays flat" in section
 
 
-def test_the_doc_frames_the_lane_as_per_file_not_per_port():
-    """pkg is part flat and part scoped in ONE overlay.
+def test_the_doc_forbids_a_second_materialize_op_without_a_false_refusal():
+    """A second op is forbidden, but not because the engine refuses it.
 
-    A per-port framing is the same error the first implementation made.
+    What a second op does (dead under the same target, an override under
+    @any) is install_patches' rerouted note, shown only when it applies.
     """
     section = _section("### Re-cut a drifted source patch")
-    assert "per file" in section
-    assert "the overlay is the authority" in section
-
-
-def test_the_doc_says_a_second_op_is_refused_not_merely_unreported():
-    """poly-7pwa.3 landed a hard diagnostic; saying "nothing reports it"
-    would now send the agent to burn a turn on a refused write."""
-    section = _section("### Re-cut a drifted source patch")
-    assert "E_SEM_DUPLICATE_DESTINATION" in section
-    # The specific claim that is now false. Not a broad "nothing reports"
-    # grep: a correct sentence further down says exactly that about a
-    # different failure (a green build with the fix gone).
-    assert "the engine reports nothing" not in section
-
-
-def test_the_doc_explains_the_no_note_case():
-    """`scope_note` is absent whenever nothing needed explaining."""
-    section = _section("### Re-cut a drifted source patch")
-    assert "installed" in section
-    assert "No note plus a flat path" in section
-
-
-def test_the_doc_warns_that_a_stranded_recut_is_deleted_as_an_orphan():
-    """The consequence that turns a silent miss into lost work.
-
-    Asserts the sentence, not the words: "orphan" already occurs elsewhere
-    in this file, so grepping for it proved nothing.
-    """
-    section = _section("### Re-cut a drifted source patch")
-    assert "no op names is **deleted** as an orphan" in section
-    # And the slave-port exception, so the claim is not absolute.
-    assert "slave port" in section
-
-
-def test_the_doc_forbids_appending_a_second_materialize_op():
-    """The repair an agent would otherwise reach for, which compounds .1 and .3."""
-    text = _flat(DOC)
-    assert "second `file materialize`" in text
-    assert "Order is by scope, not by position" in text
+    assert "Do not add a second `file materialize` for it" in section
+    assert "refused" not in section
+    assert "E_SEM_" not in section
 
 
 def test_it_still_forbids_removing_the_materialize_line():
     """The original warning was right and must survive the rewrite."""
     text = _flat(DOC)
     assert "you are about to delete the fix rather than repair it" in text
-
-
-def test_the_referenced_flow_patch_section_exists():
-    """A cross-reference to a heading that does not exist is worse than none."""
-    flow = (AGENT_PLAYBOOKS_DIR / "flow-patch.md").read_text()
-    assert "## Order is by scope, not by position" in flow
 
 
 def test_no_playbook_or_tool_description_still_promises_the_flat_path():

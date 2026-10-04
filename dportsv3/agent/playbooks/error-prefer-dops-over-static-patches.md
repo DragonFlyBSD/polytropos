@@ -115,49 +115,20 @@ before classifying the target is the #1 mistake here (it produces a fragile
 1. `make_extract`; use `wrksrc` from its response (don't guess from
    `DISTVERSION` — the obj tree has stale leftovers).
 2. `grep` the new upstream file for the same logical change site.
-3. Edit the file in `WRKSRC`, `genpatch`, then `install_patches` to write the
-   refreshed patch back, and **keep** the `file materialize` line. Done — the
-   patch applies cleanly now and surfaces loudly the next time it drifts.
+3. Edit the file in `WRKSRC`, `genpatch`, then `install_patches`,
+   and **keep** the `file materialize` line. Done — the patch applies
+   cleanly now and surfaces loudly the next time it drifts.
 
-**`overlay.dops` is not edited at all in this flow.** The refreshed patch
-replaces the old one at the path the existing `file materialize` line
-already reads, so that line still points at it. If you find yourself
-removing that line, stop — you are about to delete the fix rather than
-repair it. A drifted patch is not a broken patch: it is still the change
-DragonFly needs, aimed at lines that moved.
+`install_patches` writes the refreshed patch over the file that line
+reads on this build line — `dragonfly/@<target>/<name>` on a port that
+keeps this patch per build line — so do not assume the path is
+`dragonfly/<name>`; take it from `installed`. Do not add a second
+`file materialize` for it.
 
-**Use `install_patches`; do not assume the path is `dragonfly/<name>`.**
-Whether a patch's source is flat or scoped is **per file, and the overlay
-is the authority** — `ports-mgmt/pkg` keeps four libpkg patches flat under
-`@any` and one scoped per target, in one overlay. Where a patch differs
-between build lines its source is `dragonfly/@<target>/<name>` while the
-`file materialize` destination stays flat, so "the same path" is not
-`dragonfly/<name>`; writing there strands the re-cut, the kept line goes on
-staging the *stale* file, and the fresh one is referenced by nothing.
-
-`install_patches` resolves the lane from the op that fills
-`dragonfly/<name>` and puts the file where that op reads. **Take the path
-from `installed`**, which is always there. `scope_note` appears only when
-something needs explaining — a scoped lane, or that the lane could not be
-decided at all. **No note plus a flat path means flat was the answer; no
-note plus a warning that the lane was undecidable means check the op
-yourself.**
-
-Two consequences, and they are why this matters more than tidiness:
-
-- A file under `dragonfly/` that no op names is **deleted** as an orphan
-  once the build passes, so a stranded re-cut can be removed as part of the
-  fix. (Reconcile runs against the job's own origin, so for a slave port a
-  file stranded in the master's tree survives instead — no better.)
-- Do **not** answer a stranded patch by appending a second `file
-  materialize`. Two ops filling one destination is refused outright:
-  `E_SEM_DUPLICATE_DESTINATION`, so `validate_dops` will fail and you will
-  have spent a turn. The reason is that two live sources for one composed
-  file have no correct answer — within a scope the later line silently
-  wins, and across scopes `@any` runs first, so it resolves differently per
-  build line ("Order is by scope, not by position" in `flow-patch.md`).
-  **The fix is to put the file at the path the existing op already reads**,
-  which is what `install_patches` does; `overlay.dops` stays untouched.
+**`overlay.dops` is not edited at all in this flow.** If you find
+yourself removing that line, stop — you are about to delete the fix
+rather than repair it. A drifted patch is not a broken patch: it is
+still the change DragonFly needs, aimed at lines that moved.
 
 That failure has happened. The port then builds **green** with the
 DragonFly fix gone, and nothing reports it — the worst shape a change can
