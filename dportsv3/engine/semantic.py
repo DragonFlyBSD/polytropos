@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,6 +55,108 @@ def _diag(
         line=span.line_start,
         column=span.column_start,
     )
+
+
+def _file_effect(
+    op: OperationNode,
+) -> tuple[str | None, bool, frozenset[str] | None]:
+    """What ``op`` does to the port tree, for the dead-op rule.
+
+    Returns (the file the op leaves its result in, whether it replaces
+    or removes that file whole, the files it reads first). The reads are
+    ``None`` for ``patch apply``: its subjects are inside the patch, so it
+    counts as reading every file. Paths go through posixpath.normpath,
+    because apply_common._resolve_path resolves ``./x`` and ``a/../x``
+    to ``x``.
+
+    This is the effects table poly-7pwa.8 lifts into a shared engine
+    helper; extend it here rather than re-encoding it there.
+    """
+    if isinstance(op, FileOpNode):
+        target = op.path if op.action == "remove" else op.dst
+        reads = {op.src} if op.action == "copy" and op.src else set()
+        return (
+            posixpath.normpath(target) if target else None,
+            True,
+            frozenset(posixpath.normpath(p) for p in reads),
+        )
+    if isinstance(op, TextOpNode):
+        path = posixpath.normpath(op.file_path) if op.file_path else None
+        return path, False, frozenset({path} if path else ())
+    if isinstance(op, MkOpNode):
+        return "Makefile", False, frozenset({"Makefile"})
+    return None, False, None
+
+
+_FAMILY = {FileOpNode: "file", TextOpNode: "text", MkOpNode: "mk"}
+
+
+def _lines(span: SourceSpan) -> str:
+    if span.line_end > span.line_start:
+        return f"lines {span.line_start}-{span.line_end}"
+    return f"line {span.line_start}"
+
+
+def _validate_dead_ops(
+    op_scopes: list[tuple[OperationNode, tuple[str, ...]]],
+    source_path: Path | None,
+) -> list[Diagnostic]:
+    """E_SEM_DEAD_OP for an op no build line ever sees (poly-7pwa.3).
+
+    ``op_scopes`` is every operation in file order with its distinct
+    selectors. On a build for T the engine runs every @any op, then every
+    T op, each in file order (docs/dsl-v0.md, "Target scope rules";
+    models.order_ops_for_target), so a T op can only be replaced by a
+    later op whose selectors include T, and an @any op -- which also runs
+    on lines that have no block of their own -- only by a later @any op.
+    A change to that order is a change to this rule.
+    """
+    effects = [_file_effect(op) for op, _ in op_scopes]
+    diagnostics: list[Diagnostic] = []
+    for i, (op, lines) in enumerate(op_scopes):
+        path = effects[i][0]
+        if path is None:
+            continue
+        killers: dict[str, int] = {}
+        for line in lines:
+            for j in range(i + 1, len(op_scopes)):
+                if line not in op_scopes[j][1]:
+                    continue
+                written, replaces, reads = effects[j]
+                if reads is None or path in reads:
+                    break
+                if replaces and written == path:
+                    killers[line] = j
+                    break
+        if len(killers) != len(lines):
+            continue
+        by_killer: dict[int, list[str]] = {}
+        for line in lines:
+            by_killer.setdefault(killers[line], []).append(
+                "every build line" if line == "@any" else line
+            )
+        clauses = []
+        for j, where in sorted(by_killer.items()):
+            killer = op_scopes[j][0]
+            verb = "removes" if killer.action == "remove" else "writes"
+            clauses.append(
+                f"line {killer.span.line_start} {verb} {path} after it "
+                f"on {' and '.join(where)}"
+            )
+        later = ("that later op was" if len(by_killer) == 1
+                 else "one of those later ops was")
+        here = _lines(op.span)
+        diagnostics.append(_diag(
+            "E_SEM_DEAD_OP",
+            f"{here} ({_FAMILY[type(op)]} {op.action}) never takes "
+            f"effect: {'; '.join(clauses)}, so no build line ever sees "
+            f"its result. If {later} meant for another build line, move "
+            f"it into that line's target block. Otherwise delete {here}, "
+            f"or, to keep it instead, move it to the end of the file "
+            f"under its own 'target {','.join(lines)}' line.",
+            op.span, source_path,
+        ))
+    return diagnostics
 
 
 def _validate_on_missing(
@@ -362,6 +465,7 @@ def analyze_document(
     """Run semantic validation and target scope resolution."""
     diagnostics: list[Diagnostic] = []
     scoped_ops: list[ScopedOperation] = []
+    op_scopes: list[tuple[OperationNode, tuple[str, ...]]] = []
 
     port_count = 0
     type_count = 0
@@ -451,6 +555,9 @@ def analyze_document(
         operation = statement
         for target in current_targets:
             scoped_ops.append(ScopedOperation(target=target, operation=operation))
+        op_scopes.append(
+            (operation, tuple(dict.fromkeys(current_targets)))
+        )
 
         diagnostics.extend(_validate_operation(operation, source_path))
 
@@ -463,6 +570,8 @@ def analyze_document(
                 source_path,
             )
         )
+
+    diagnostics.extend(_validate_dead_ops(op_scopes, source_path))
 
     return SemanticResult(
         ok=not diagnostics,

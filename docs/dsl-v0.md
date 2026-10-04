@@ -131,6 +131,26 @@ on_missing        = "on-missing" ("error" | "warn" | "noop") ;
   2) all `T` operations in source order
   3) all other target-scoped operations, marked skipped with target-mismatch
 
+### Dead operations (normative)
+
+- An operation is dead when, on every build line it applies to, a later
+  operation on that line replaces or removes the file it leaves its result
+  in, and no operation in between reads that file.
+- `file materialize` and `file copy` leave their result in `<dst>` and
+  replace it whole; `file remove` removes `<path>`; `text` operations edit
+  `file <path>` and `mk` operations edit `Makefile` in place. `file copy`
+  reads `<src>`, `text` and `mk` operations read the file they edit, and
+  `patch apply` counts as reading every file. Paths compare after
+  normalization (`./x`, `a/../x` and `x` are one file).
+- Build lines are open: an `@any` operation also runs on build lines that
+  have no block of their own, so only a later `@any` operation can make it
+  dead. An operation scoped to `T`, alone or in a selector list, is dead
+  on `T` when a later operation whose selectors include `T` replaces or
+  removes its file. A `T` operation that overrides an `@any` one, or a
+  selector-list default on one of its lines, is valid.
+- A dead operation is an error, `E_SEM_DEAD_OP`, reported at the dead
+  operation.
+
 ---
 
 ## Operation Forms
@@ -381,6 +401,16 @@ port category/name
 mk set VAR "shared-quarter-change"
 ```
 
+### Valid (per-target override)
+
+```text
+port category/name
+file materialize dragonfly/patch-a -> dragonfly/patch-a
+
+target @main
+file materialize dragonfly/@main/patch-a -> dragonfly/patch-a
+```
+
 ### Invalid (missing `port`)
 
 ```text
@@ -408,4 +438,12 @@ port category/name
 ```text
 target @main, @2026Q1
 port category/name
+```
+
+### Invalid (dead operation)
+
+```text
+port category/name
+file materialize dragonfly/patch-a -> dragonfly/patch-a
+file materialize dragonfly/patch-b -> dragonfly/patch-a
 ```

@@ -82,8 +82,13 @@ def test_a_copy_reads_the_materialized_file(tmp_path: Path) -> None:
 def test_a_remove_removes_the_materialized_file(
     tmp_path: Path, upstream: str | None
 ) -> None:
+    # poly-7pwa.3: a materialize and a remove of one file in the same block
+    # would make the materialize a dead op (E_SEM_DEAD_OP). The @any
+    # materialize still runs first on @main, so this still pins poly-bz7n.1.
     result, port = _apply(
-        tmp_path, MATERIALIZE + "file remove files/x\n", upstream=upstream
+        tmp_path,
+        "target @any\n" + MATERIALIZE + "target @main\nfile remove files/x\n",
+        upstream=upstream,
     )
 
     assert result.ok
