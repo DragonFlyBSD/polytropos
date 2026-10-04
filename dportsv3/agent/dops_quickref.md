@@ -42,6 +42,7 @@ mk set    DRAGONFLY_NEEDS_FOO "yes"
 mk unset  USES_BROKEN_ON_DRAGONFLY
 mk add    USES libtool
 mk remove USES gmake
+mk bump   PORTREVISION         # +1 on whatever upstream says; never mk set it
 
 # Immediate assignment (`:=`) — appends a verbatim `:=` line at the end of the
 # port Makefile body. Use for ANY `:=` source assignment, and ALWAYS for a

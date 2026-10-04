@@ -263,6 +263,29 @@ def _validate_operation(
                         source_path,
                     )
                 )
+        elif op.action == "bump":
+            if op.var != "PORTREVISION":
+                diagnostics.append(
+                    _diag(
+                        "E_SEM_INVALID_OPERATION_STATE",
+                        "mk bump supports PORTREVISION only",
+                        op.span,
+                        source_path,
+                    )
+                )
+            elif (
+                op.value is None
+                or not (op.value.isascii() and op.value.isdigit())
+                or not 1 <= int(op.value) <= 99
+            ):
+                diagnostics.append(
+                    _diag(
+                        "E_SEM_INVALID_OPERATION_STATE",
+                        "mk bump by takes an integer from 1 to 99",
+                        op.span,
+                        source_path,
+                    )
+                )
         elif op.action == "ensure-include":
             if op.include is None:
                 diagnostics.append(
@@ -314,6 +337,7 @@ def _validate_operation(
             )
 
         on_missing_allowed = op.action not in {
+            "bump",
             "eval",
             "shell",
             "block-set",

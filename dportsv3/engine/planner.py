@@ -74,6 +74,23 @@ def _map_operation(
                 diagnostics,
             )
 
+        if op.action == "bump":
+            if op.var is None or op.value is None or not op.value.isdecimal():
+                diagnostics.append(
+                    _diag(
+                        "E_PLAN_INVALID_OPERATION",
+                        "mk bump requires var and an integer amount",
+                        op.span,
+                        source_path,
+                    )
+                )
+                return None, {}, diagnostics
+            return (
+                "mk.var.bump",
+                {"name": op.var, "by": int(op.value)},
+                diagnostics,
+            )
+
         if op.action == "eval":
             if op.var is None or op.value is None:
                 diagnostics.append(

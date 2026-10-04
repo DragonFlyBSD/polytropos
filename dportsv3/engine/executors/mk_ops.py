@@ -14,6 +14,7 @@ from dportsv3.engine.apply_common import (
 )
 from dportsv3.engine.fsops import FileTransaction
 from dportsv3.engine.makefile_cst import (
+    AssignmentNode,
     DirectiveElifNode,
     DirectiveEndifNode,
     DirectiveIfNode,
@@ -179,34 +180,166 @@ def exec_mk_var_set(
             source_path=path,
         )
 
-    replacement = f"{name}= {value}"
-    if intent.node_indices:
-        node = document.nodes[intent.node_indices[0]]
-        updated = _replace_line_range(
+    updated = _write_assignment(
+        text,
+        document,
+        intent.node_indices[0] if intent.node_indices else None,
+        f"{name}= {value}",
+    )
+    txn.stage_write(path, updated)
+    return _success_row(op, "mk-var-set")
+
+
+def _write_assignment(
+    text: str, document, node_index: int | None, line: str
+) -> str:
+    """Write one assignment ``line`` into the Makefile ``text``.
+
+    It replaces node ``node_index``'s line range; with no node it goes
+    before the first target or ``.include``, else at the end of the file.
+    mk set and mk bump both write through here, so a bump of an absent
+    PORTREVISION lands exactly where mk set would put it.
+    """
+    if node_index is not None:
+        node = document.nodes[node_index]
+        return _replace_line_range(
             text,
             start=node.span.line_start,
             end=node.span.line_end,
-            new_lines=[replacement],
+            new_lines=[line],
+        )
+    insert_before = _mk_var_set_insert_line(document)
+    if insert_before is None:
+        line_count = len(text.splitlines(keepends=False))
+        return _replace_line_range(
+            text,
+            start=line_count + 1,
+            end=line_count,
+            new_lines=[line],
+        )
+    return _replace_line_range(
+        text,
+        start=insert_before,
+        end=insert_before - 1,
+        new_lines=[line],
+    )
+
+
+def _bump_unsupported(op: PlanOp, message: str, path) -> ApplyOpResult:
+    return _failed_row(
+        op, code="E_APPLY_BUMP_UNSUPPORTED", message=message, source_path=path
+    )
+
+
+def exec_mk_var_bump(
+    op: PlanOp, context: ApplyContext, txn: FileTransaction
+) -> ApplyOpResult:
+    """``mk bump PORTREVISION [by N]``: the line's value as it stands, plus N.
+
+    Relative, so it never pins a number: compose applies the op to a
+    fresh upstream copy every time, so the bump computes from upstream's
+    value on every run and cannot walk upward. Every Makefile shape a
+    lexical bump would get wrong is refused with the reason, never
+    skipped: a slave port, more than one assignment, one inside a
+    conditional, an operator other than = or ?=, a value that is not an
+    integer, and no assignment where a quoted .include may set it.
+    """
+    name = op.payload.get("name")
+    by = op.payload.get("by")
+    if not isinstance(name, str) or not isinstance(by, int):
+        return _failed_row(
+            op,
+            code="E_APPLY_INVALID_OPERATION",
+            message="mk.var.bump requires name and by",
+        )
+
+    try:
+        path = _resolve_path(context.port_root, None, default="Makefile")
+    except ValueError as exc:
+        return _failed_row(
+            op,
+            code="E_APPLY_INVALID_PATH",
+            message=str(exc),
+            source_path=context.port_root,
+        )
+
+    loaded = _load_makefile(txn, path)
+    if loaded is None:
+        return _missing_row(
+            op,
+            policy="error",
+            message="Makefile does not exist",
+            source_path=path,
+        )
+
+    text, document = loaded
+    depth = 0
+    slave = False
+    found: list[tuple[int, AssignmentNode, bool]] = []
+    first_quoted_include: str | None = None
+    for index, node in enumerate(document.nodes):
+        if isinstance(node, DirectiveIfNode):
+            depth += 1
+        elif isinstance(node, DirectiveEndifNode):
+            depth -= 1
+        elif isinstance(node, AssignmentNode):
+            if node.name == "MASTERDIR" and depth == 0:
+                slave = True
+            if node.name == name:
+                found.append((index, node, depth > 0))
+        elif isinstance(node, IncludeNode):
+            if first_quoted_include is None and node.include.startswith('"'):
+                first_quoted_include = node.include
+
+    if slave:
+        return _bump_unsupported(
+            op,
+            f"slave port: {name} comes from or is overridden by its master; "
+            "bump the master",
+            path,
+        )
+    if len(found) > 1:
+        return _failed_row(
+            op,
+            code="E_APPLY_AMBIGUOUS_MATCH",
+            message=f"multiple assignments found for {name}",
+            source_path=path,
+        )
+    if found:
+        index, assignment, conditional = found[0]
+        if conditional:
+            return _bump_unsupported(
+                op, f"{name} is assigned inside a conditional", path
+            )
+        if assignment.operator not in ("=", "?="):
+            return _bump_unsupported(
+                op,
+                f"{name} uses {assignment.operator}; only = and ?= can be "
+                "bumped",
+                path,
+            )
+        current = assignment.value.split("#", 1)[0].strip()
+        if not (current.isascii() and current.isdigit()):
+            return _bump_unsupported(
+                op, f"{name} is '{current}', not an integer", path
+            )
+        updated = _write_assignment(
+            text,
+            document,
+            index,
+            f"{name}{assignment.operator} {int(current) + by}",
+        )
+    elif first_quoted_include is not None:
+        return _bump_unsupported(
+            op,
+            f"{name} may be set by an included file ({first_quoted_include})",
+            path,
         )
     else:
-        insert_before = _mk_var_set_insert_line(document)
-        if insert_before is None:
-            line_count = len(text.splitlines(keepends=False))
-            updated = _replace_line_range(
-                text,
-                start=line_count + 1,
-                end=line_count,
-                new_lines=[replacement],
-            )
-        else:
-            updated = _replace_line_range(
-                text,
-                start=insert_before,
-                end=insert_before - 1,
-                new_lines=[replacement],
-            )
+        updated = _write_assignment(text, document, None, f"{name}= {by}")
+
     txn.stage_write(path, updated)
-    return _success_row(op, "mk-var-set")
+    return _success_row(op, "mk-var-bump")
 
 
 def exec_mk_var_eval(

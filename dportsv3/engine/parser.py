@@ -339,14 +339,54 @@ class _Parser:
             return self._parse_mk_target_op(start)
         if action.value == "ensure-include":
             return self._parse_mk_ensure_include(start)
+        if action.value == "bump":
+            return self._parse_mk_bump_op(start)
 
         self._error(
             "E_PARSE_UNEXPECTED_TOKEN",
-            "unexpected mk action; expected set|eval|shell|unset|add|remove|disable-if|replace-if|block|target|ensure-include",
+            "unexpected mk action; expected set|eval|shell|unset|add|remove|bump|disable-if|replace-if|block|target|ensure-include",
             action,
         )
         self._sync_line()
         return None
+
+    def _parse_mk_bump_op(self, start: Token) -> MkOpNode | None:
+        """``mk bump <VAR> [by <N>]``.
+
+        The amount stays the raw WORD (default "1"); semantic validation
+        decides whether it is an integer in range.
+        """
+        var = self._expect_word("after 'mk bump'")
+        if var is None:
+            self._sync_line()
+            return None
+
+        value = "1"
+        end_span = var.span
+        if self._at("WORD", "by"):
+            self._advance()
+            amount = self._expect_word("after 'by'")
+            if amount is None:
+                self._sync_line()
+                return None
+            value = amount.value
+            end_span = amount.span
+
+        if not (self._at("NEWLINE") or self._at("EOF")):
+            self._error(
+                "E_PARSE_UNEXPECTED_TOKEN",
+                "unexpected token after mk bump; expected 'by <N>' or end of line",
+            )
+            self._sync_line()
+            return None
+
+        self._finish_statement()
+        return MkOpNode(
+            span=_join_span(start.span, end_span),
+            action="bump",
+            var=var.value,
+            value=value,
+        )
 
     def _parse_mk_ensure_include(self, start: Token) -> MkOpNode | None:
         name = self._expect_word("after 'mk ensure-include'")

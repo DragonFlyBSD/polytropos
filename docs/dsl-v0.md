@@ -84,7 +84,8 @@ mk_op             = mk_var_op | mk_block_op | mk_target_op ;
 mk_var_op         = "mk" "set" var string [on_missing]
                   | "mk" "unset" var [on_missing]
                   | "mk" "add" var token [on_missing]
-                  | "mk" "remove" var token [on_missing] ;
+                  | "mk" "remove" var token [on_missing]
+                  | "mk" "bump" var ["by" integer] ;
 
 mk_block_op       = "mk" "disable-if" "condition" string [contains] [on_missing]
                   | "mk" "replace-if" "from" string "to" string [contains] [on_missing]
@@ -166,6 +167,7 @@ mk shell <VAR> "<value>"
 mk unset <VAR> [on-missing error|warn|noop]
 mk add <VAR> <token> [on-missing error|warn|noop]
 mk remove <VAR> <token> [on-missing error|warn|noop]
+mk bump PORTREVISION [by <N>]
 ```
 
 `mk set` v1 behavior:
@@ -174,6 +176,33 @@ mk remove <VAR> <token> [on-missing error|warn|noop]
 - if `<VAR>` does not exist, create a new top-level `<VAR>= <value>` assignment
   before the first target or `.include`, whichever appears first
 - if `<VAR>` exists more than once, fail with an ambiguous-match error
+
+`mk bump` v1 behavior (`PORTREVISION` only; `<N>` is an integer from 1 to 99,
+default 1; `on-missing` is not allowed). The composed value is the build
+line's `PORTREVISION` as it stands when the op runs, plus `<N>`, so no number
+is pinned: compose applies the op to a fresh upstream copy every time, and a
+later upstream bump is kept. Checks, in this order:
+
+- no `Makefile`: fail
+- a slave port (`MASTERDIR=` at top level): refused, its `PORTREVISION` comes
+  from or is overridden by its master; bump the master
+- more than one assignment: fail with an ambiguous-match error
+- one assignment inside a conditional: refused
+- one assignment with an operator other than `=` or `?=`: refused
+- one assignment whose value, after stripping a trailing `#` comment and
+  whitespace, is not an integer: refused
+- one assignment: rewritten as `PORTREVISION= <v+N>`, or
+  `PORTREVISION?= <v+N>` when it used `?=`
+- no assignment and any quoted `.include`: refused, the included file may set
+  it
+- no assignment: `PORTREVISION= <N>` is inserted where `mk set` would insert
+  it
+
+A refusal is `E_APPLY_BUMP_UNSUPPORTED` with the reason; nothing is skipped
+silently.
+
+Bumps on one build line add up in apply order (@any first, then the line's
+own); a bump after a mk set adds to that value.
 
 `mk eval` renders an immediate `<VAR>:= <value>` line appended before the last
 `.include`. It is the faithful op for an immediate (`:=`) source assignment —
@@ -320,6 +349,7 @@ Determinism:
   - `mk unset` -> `mk.var.unset`
   - `mk add` -> `mk.var.token_add`
   - `mk remove` -> `mk.var.token_remove`
+  - `mk bump` -> `mk.var.bump`
   - `mk disable-if` -> `mk.block.disable`
   - `mk replace-if` -> `mk.block.replace_condition`
   - `mk block set` -> `mk.block.set`

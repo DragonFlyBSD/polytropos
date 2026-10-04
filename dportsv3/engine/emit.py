@@ -101,6 +101,10 @@ def mk_unset(name: str, *, on_missing: str | None = None) -> str:
     return f"mk unset {name}{_on_missing(on_missing)}"
 
 
+def mk_bump(name: str, *, by: int = 1) -> str:
+    return f"mk bump {name}" + (f" by {by}" if by != 1 else "")
+
+
 # --- mk token ops --------------------------------------------------------
 
 def mk_add(name: str, token: str, *, on_missing: str | None = None) -> str:

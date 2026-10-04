@@ -189,9 +189,6 @@ literal section header.
 Leave `on-missing` at its default, `error`: a missing anchor or file is
 how another line learns an op no longer fits it.
 
-PORTREVISION is the exception: scope it to the build line you are
-building, never `@any` (see "Bumping PORTREVISION").
-
 ## Order is by scope, not by position
 
 For a build on target `T` the engine executes **every `@any` op first, in
@@ -371,24 +368,14 @@ the diff, so the removal is part of the delivered fix.
 
 ## Bumping PORTREVISION
 
-When the port already builds at this upstream version but you changed
-*how* it builds (added a patch, edited flags), bump PORTREVISION so
-packagers rebuild the binary package. Write it as an explicit
-`mk set PORTREVISION "<N>"` (compute `<N>` from the current value — a
-hardcoded `"1"` is wrong if upstream already declares a higher
-revision). Make the bump the **last** edit of the attempt: bumping
-before you've confirmed the behavior change works leaves a stray
-revision an operator has to walk back. PORTREVISION is not for the
-first time a port is touched — that's an introduction, not a rebuild.
-
-### Scope it to the build line you are on
-
-Put the bump in the `target` block of the line `get_effective_overlay`
-reports, never in `@any`. A revision counts rebuilds of one PORTVERSION,
-and lines differ: in 2026-09 graphics/gdal was 3.13.3 (no PORTREVISION)
-on main and 3.13.1 (2) on 2026Q3. `mk set` never fails because the
-variable is absent, so an `@any` value is a **permanent pin**: every
-compose rewrites the other lines' revision, and no build sees it. A
-missed bump ends at that line's next bump; a pin never ends. Move an
-existing `@any` PORTREVISION op into a target block; a scoped op added
-on top leaves the pin everywhere else.
+When the port already builds at this upstream version and you
+changed how it builds (added a patch, edited flags), bump the
+revision with mk bump PORTREVISION, in the same target block as the
+change it accounts for (target @any when the change is shared). It
+adds one to whatever that build line's upstream Makefile says, on
+every compose, so it never pins a number. Do not write mk set
+PORTREVISION: an absolute number reverts every later upstream bump.
+If the overlay already writes PORTREVISION, leave that op alone and
+say so in your report: replacing it can lower a revision already
+shipped, which an operator decides. A port's first fix is not a
+rebuild: do not bump it.
