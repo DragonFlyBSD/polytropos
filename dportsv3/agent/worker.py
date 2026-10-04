@@ -1836,7 +1836,7 @@ def get_effective_overlay(env: str, origin: str) -> dict:
 
     - Env target not in the cache (runner didn't call
       ``set_env_target``) → refuse with a calling-context-bug
-      message. Same surfacing as ``_append_overlay``'s @current path.
+      message.
     - Overlay parses but fails semantic checks (operator hand-edit,
       invalid scope, etc.) → refuse with the engine's first diagnostic.
     - Overlay parses but emits no scoped ops → return empty lists.

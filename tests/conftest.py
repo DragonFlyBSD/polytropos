@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -159,3 +160,93 @@ def set_setting(tmp_path, monkeypatch):
         return target
 
     return _set
+
+
+# ------------------------------------------------------------------------
+# The real DeltaPorts tree, for tests that read it (poly-7pwa.3)
+# ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MultiLinePort:
+    """A DeltaPorts port whose overlay names two or more build lines.
+
+    Every field is read from the overlay's plan, never written down, so
+    a test built on it survives a quarter rollover (@2026Q3 -> @2026Q4)
+    and a re-cut that renames a patch.
+    """
+
+    origin: str                  # "lang/rust"
+    overlay: Path                # <delta>/ports/lang/rust/overlay.dops
+    lines: tuple[str, ...]       # concrete targets its ops name, sorted
+    last_lines: tuple[str, ...]  # where an op appended at EOF lands
+    materializes: tuple[tuple[str, str, str], ...]  # (scope, src, dst)
+
+    def scoped(self, line: str) -> list[tuple[str, str]]:
+        """(src, dst) of the materializes bound to ``line`` itself."""
+        return [(s, d) for t, s, d in self.materializes if t == line]
+
+    def flat(self) -> list[tuple[str, str]]:
+        """(src, dst) of the ``@any`` materializes."""
+        return [(s, d) for t, s, d in self.materializes if t == "@any"]
+
+
+@pytest.fixture(scope="session")
+def delta_ports() -> Path:
+    """DeltaPorts' ports/ dir, through paths.resolve_delta_root.
+
+    Skips when no checkout is configured ($DPORTS_DELTA_ROOT or the
+    paths.delta_root setting): a hardcoded path would run these tests
+    on one machine and silently skip them everywhere else.
+    """
+    from dportsv3.paths import resolve_delta_root
+
+    try:
+        root = resolve_delta_root() / "ports"
+    except Exception:  # noqa: BLE001
+        root = None
+    if root is None or not root.is_dir():
+        pytest.skip("DeltaPorts checkout not present")
+    return root
+
+
+@pytest.fixture(scope="session")
+def multi_line_ports(delta_ports: Path) -> list[MultiLinePort]:
+    """Every port whose overlay names at least two build lines.
+
+    Skips when none does: below two lines there is nothing multi-line
+    to test, and a test that passed over an empty list would claim
+    coverage it does not have.
+    """
+    from dportsv3.engine.api import build_plan
+
+    found: list[MultiLinePort] = []
+    for overlay in sorted(delta_ports.glob("*/*/overlay.dops")):
+        text = overlay.read_text()
+        if "target @" not in text:
+            continue
+        planned = build_plan(text, overlay)
+        if not planned.ok or planned.plan is None:
+            continue
+        ops = planned.plan.ops
+        lines = tuple(sorted({o.target for o in ops} - {"@any"}))
+        if len(lines) < 2:
+            continue
+        sep = "" if text.endswith("\n") else "\n"
+        probe = build_plan(text + sep + 'mk set FIXTURE_PROBE "x"\n',
+                           overlay).plan
+        last = probe.ops[-1].span
+        found.append(MultiLinePort(
+            origin=str(overlay.parent.relative_to(delta_ports)),
+            overlay=overlay,
+            lines=lines,
+            last_lines=tuple(o.target for o in probe.ops
+                             if o.span == last),
+            materializes=tuple(
+                (o.target, o.payload["src"], o.payload["dst"])
+                for o in ops if o.kind == "file.materialize"
+            ),
+        ))
+    if not found:
+        pytest.skip("no DeltaPorts overlay names two or more build lines")
+    return found

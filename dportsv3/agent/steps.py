@@ -1252,16 +1252,16 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
         if not planned.ok or planned.plan is None:
             return "".join(brief)
 
-        # plan.ops, not to_dict(): that flattens the payload over `target`,
-        # so a future payload key of that name would silently make every
-        # such op read as universal. scope_check documents the same hazard.
+        from dportsv3.agent.scope_check import payload_identity  # noqa: PLC0415
+
+        # plan.ops, not to_dict(): identity is scope_check.payload_identity.
         scopes: set[str] = set()
         effective_payloads: set[tuple] = set()
         elsewhere: dict[str, set[tuple]] = {}
         scoped_lanes: set[str] = set()
         for op in planned.plan.ops:
             scope = op.target or "@any"
-            key = (op.kind, tuple(sorted((k, repr(v)) for k, v in op.payload.items())))
+            key = payload_identity(op)
             if scope != "@any":
                 scopes.add(scope)
             if scope in ("@any", target):

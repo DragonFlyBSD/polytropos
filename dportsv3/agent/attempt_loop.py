@@ -213,8 +213,8 @@ def _scope_drift_note(env: str, origin: str | None, before: str | None) -> str:
     in whatever block is last -- ``@main``, for both multi-target ports in
     the tree. A job on another build line then edits a file its own compose
     skips, the build fails unchanged, and every remaining attempt repeats
-    it. This is the channel that stops that: ``notes`` is already carried
-    into the next attempt's prompt (poly-7pwa.1).
+    it. This is the check that stops that (poly-7pwa.1); it reaches the next
+    attempt through _state_notes.
 
     Swallowed whole. A note is not worth failing an attempt over.
     """
@@ -230,6 +230,22 @@ def _scope_drift_note(env: str, origin: str | None, before: str | None) -> str:
         return drift.note()
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _state_notes(env: str, origin: str | None,
+                 overlay_before: str | None) -> list[str]:
+    """What the harness found after this attempt, for the next one.
+
+    The agent's own ``note`` calls are events and accumulate. These are
+    state: run() recomputes them after every attempt and REPLACES the
+    previous list, so a finding the agent has fixed is gone from the next
+    retry message, and one it has not fixed is shown once, not once per
+    attempt. Each entry is a complete instruction, remedy first, cut at
+    _MAX_NOTE_CHARS like any carried note. A new harness check adds its
+    note here; nothing harness-made goes into ``notes``.
+    """
+    return [n for n in (
+        _scope_drift_note(env, origin, overlay_before),) if n]
 
 
 def _last_proof_failure(tool_log: list[dict]) -> str:
@@ -294,6 +310,7 @@ def _failure_context_message(
     tool_log: list[dict] | None = None,
     stop_reason: str | None = None,
     notes: list[str] | None = None,
+    state_notes: list[str] | None = None,
 ) -> dict:
     """Build the user message that opens a retry.
 
@@ -339,6 +356,13 @@ def _failure_context_message(
                          f"- {n[:_MAX_NOTE_CHARS]}"
                          f"{'…' if len(n) > _MAX_NOTE_CHARS else ''}\n"
                          for n in shown))
+
+    if state_notes:
+        parts.append("## Found by the harness after that attempt\n"
+                     + "".join(
+                         f"- {n[:_MAX_NOTE_CHARS]}"
+                         f"{'…' if len(n) > _MAX_NOTE_CHARS else ''}\n"
+                         for n in state_notes))
 
     read = _targets(tool_log, _READ_TOOLS, limit=20)
     searched = _searches(tool_log)
@@ -460,6 +484,7 @@ def run(
     prev_tools: list[dict] = []
     prev_stop: str | None = None
     notes: list[str] = []
+    state_notes: list[str] = []
     final_text = ""
     winning_proof: dict | None = None
     # Default for the needs-help return, which sits outside the attempt
@@ -510,6 +535,7 @@ def run(
                     tool_log=prev_tools,
                     stop_reason=prev_stop,
                     notes=notes,
+                    state_notes=state_notes,
                 )
             ]
 
@@ -671,9 +697,7 @@ def run(
         prev_tools = this_attempt_tools
         prev_stop = seen.get("stop_reason")
         notes += _notes(this_attempt_tools)
-        scope_note = _scope_drift_note(env, origin, overlay_before)
-        if scope_note:
-            notes.append(scope_note)
+        state_notes = _state_notes(env, origin, overlay_before)
 
         # Optional full-session dump (gated by DP_HARNESS_DUMP_SESSION
         # at the callback's construction site). messages is the final

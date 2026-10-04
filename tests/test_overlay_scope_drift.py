@@ -16,34 +16,12 @@ patch. Those fixtures are here because they are the ones that matter.
 
 from __future__ import annotations
 
-import inspect
-import pathlib
+import re
 from types import SimpleNamespace
 
 import pytest
 
 from dportsv3.agent.scope_check import UNREADABLE, scope_drift
-
-def _delta_ports() -> pathlib.Path | None:
-    """The DeltaPorts ports dir, via the repo's own resolver.
-
-    CLAUDE.md: site-owned inputs are named by --delta-root /
-    $DPORTS_DELTA_ROOT and dportsv3/paths.py is the single resolver. A
-    hardcoded developer path would silence these tests everywhere but one
-    machine -- including this repo's own second working directory -- and
-    the whole-tree sweep is the one thing standing between this check and
-    a tree-wide regression.
-    """
-    from dportsv3.paths import resolve_delta_root
-
-    try:
-        root = resolve_delta_root() / "ports"
-    except Exception:  # noqa: BLE001
-        return None
-    return root if root.is_dir() else None
-
-
-DELTA = _delta_ports()
 
 HEAD = 'port x/y\ntype port\nreason "fixture"\n'
 
@@ -210,19 +188,41 @@ def test_a_deleted_overlay_is_not_a_finding():
     assert scope_drift(BASE, None, "@2026Q3").ok is True
 
 
-def test_a_payload_key_named_target_cannot_mask_the_scope():
-    """Identity is built explicitly, not from to_dict()'s flattening.
+def test_a_payload_key_named_target_cannot_mask_the_scope(monkeypatch):
+    """Identity is read from PlanOp fields, not from to_dict()'s flattening.
 
-    to_dict() spreads the payload over id/target/kind, so a future payload
-    key named `target` would overwrite the op's scope and make every such
-    op read as universally effective -- a silent false negative in this
-    check's core predicate.
+    to_dict() spreads the payload over id/target/kind, so a payload key
+    named `target` would overwrite the op's scope and make the op read as
+    universally effective -- a silent false negative in the core predicate.
     """
-    from dportsv3.agent import scope_check
+    from dportsv3.engine import api
+    from dportsv3.engine.models import Plan, PlanOp, PlanResult
 
-    src = inspect.getsource(scope_check._key)
-    assert 'k not in ("id", "target", "kind")' in src
-    assert 'op.get("target"), op.get("kind")' in src
+    def fake_build_plan(text, path):
+        ops = []
+        if text == APPENDED:
+            ops = [PlanOp(id="op-0001-mk.var.set", target="@main",
+                          kind="mk.var.set",
+                          payload={"target": "@any", "var": "X"})]
+        return PlanResult(ok=True, plan=Plan(port="x/y", ops=ops))
+
+    monkeypatch.setattr(api, "build_plan", fake_build_plan)
+    drift = scope_drift(BASE, APPENDED, "@2026Q3")
+    assert drift.ok is False
+    assert drift.stranded[0].startswith("scope @main")
+
+
+def test_the_remedy_survives_the_retry_prompt_cap():
+    """The remedy comes first, so the per-note cap never cuts it off."""
+    from dportsv3.agent import attempt_loop
+
+    names = [f"patch-library_std_src_sys_pal_unix_mod{i}.rs" for i in range(5)]
+    after = BASE + "".join(
+        f"file materialize dragonfly/{n} -> dragonfly/{n}\n" for n in names)
+    note = scope_drift(BASE, after, "@2026Q3").note()
+    shown = note[:attempt_loop._MAX_NOTE_CHARS]
+    assert "`target @any` block" in shown
+    assert "get_effective_overlay" in shown
 
 
 # --------------------------------------------------------------------------
@@ -230,28 +230,39 @@ def test_a_payload_key_named_target_cannot_mask_the_scope():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(DELTA is None, reason="DeltaPorts checkout not present")
-def test_a_real_comma_list_block_in_lang_rust_is_not_flagged():
-    """The live instance: lang/rust's `target @2026Q3,@main` block."""
-    overlay = (DELTA / "lang/rust/overlay.dops").read_text()
-    assert "target @2026Q3,@main" in overlay, "fixture premise moved"
-    after = overlay.replace(
-        'mk add MAKE_ENV "LDVER=ld.bfd"',
-        'mk add MAKE_ENV "LDVER=ld.bfd"\nmk add MAKE_ENV "LDFLAGS=-Wl,-z"',
-        1,
-    )
-    for target in ("@2026Q3", "@main"):
-        assert scope_drift(overlay, after, target).ok is True, target
+_PROBE = 'mk set POLY_SCOPE_PROBE "x"'
 
 
-@pytest.mark.skipif(DELTA is None, reason="DeltaPorts checkout not present")
-def test_an_eof_append_to_a_real_overlay_is_flagged_on_the_other_line():
-    """Same two ports, the actual defect."""
-    for origin in ("lang/rust", "ports-mgmt/pkg"):
-        overlay = (DELTA / origin / "overlay.dops").read_text()
-        after = overlay + "\nmk set SOMETHING \"x\"\n"
-        assert scope_drift(overlay, after, "@2026Q3").ok is False, origin
-        assert scope_drift(overlay, after, "@main").ok is True, origin
+def test_a_real_comma_list_block_is_not_flagged(multi_line_ports):
+    """An op added inside a real `target A,B` block applies on A and B."""
+    checked = 0
+    for port in multi_line_ports:
+        text = port.overlay.read_text()
+        for m in re.finditer(r"^target\s+(@\S*,\S*)\s*$", text, re.M):
+            after = text[:m.end()] + "\n" + _PROBE + text[m.end():]
+            for line in m.group(1).split(","):
+                assert scope_drift(text, after, line).ok is True, (
+                    port.origin, line)
+            checked += 1
+    if not checked:
+        pytest.skip("no multi-line port has a comma-list block")
+
+
+def test_an_eof_append_to_a_real_overlay_is_flagged_on_the_other_lines(
+        multi_line_ports):
+    """The actual defect: an append lands in whatever block is last."""
+    flagged = 0
+    for port in multi_line_ports:
+        text = port.overlay.read_text()
+        sep = "" if text.endswith("\n") else "\n"
+        after = text + sep + _PROBE + "\n"
+        for line in port.lines:
+            ok = scope_drift(text, after, line).ok
+            assert ok is ("@any" in port.last_lines
+                          or line in port.last_lines), (port.origin, line)
+            flagged += not ok
+    if not flagged:
+        pytest.skip("no multi-line port ends in a scoped block")
 
 
 # --------------------------------------------------------------------------
@@ -259,23 +270,70 @@ def test_an_eof_append_to_a_real_overlay_is_flagged_on_the_other_line():
 # --------------------------------------------------------------------------
 
 
-def test_the_attempt_loop_carries_the_finding_into_the_next_attempt():
-    """The bead's cost is attempts 2..N repeating the mistake.
+def _drive_attempts(tmp_path, monkeypatch, edits, iterations):
+    """Run attempt_loop.run with a stub tool loop; return the retry messages.
 
-    `notes` is the channel already carried into the retry prompt, and the
-    finding is appended to it beside the agent's own notes -- not reported
-    after the loop, by which time every attempt it could have saved is
-    spent.
+    ``edits`` maps an attempt number to the overlay text that attempt
+    writes. Every attempt fails, so each one after the first opens with
+    the harness's retry message, which is what is returned.
     """
-    from dportsv3.agent import attempt_loop
+    from dportsv3.agent import attempt_loop, worker
 
-    src = inspect.getsource(attempt_loop.run)
-    assert "overlay_before = _overlay_text(env, origin)" in src
-    note_at = src.index("notes.append(scope_note)")
-    baseline_at = src.index("overlay_before = _overlay_text")
-    loop_at = src.index("for attempt_idx in range(")
-    # Baseline before the loop; the note appended inside it.
-    assert baseline_at < loop_at < note_at
+    port = tmp_path / "DeltaPorts" / "ports" / "x" / "y"
+    port.mkdir(parents=True)
+    overlay = port / "overlay.dops"
+    overlay.write_text(BASE)
+    retries: list[str] = []
+
+    def fake_run(messages, **kw):
+        idx = kw["attempt_idx"]
+        if idx > 1:
+            retries.append(messages[-1]["content"])
+        if idx in edits:
+            overlay.write_text(edits[idx])
+        return (SimpleNamespace(text="no fix", tool_calls=[]),
+                attempt_loop.Usage(), False)
+
+    monkeypatch.setattr(attempt_loop.tool_loop, "run", fake_run)
+    monkeypatch.setattr(attempt_loop, "_current_diff", lambda *a: "")
+    monkeypatch.setattr(worker, "reset_attempt_workspace", lambda *a, **k: {})
+    monkeypatch.setattr(worker, "reset_attempt_caches", lambda: None)
+    monkeypatch.setattr(
+        worker, "env_paths",
+        lambda env: SimpleNamespace(deltaports=tmp_path / "DeltaPorts"),
+    )
+    worker.set_env_target("loop-env", "@2026Q3")
+    try:
+        attempt_loop.run(
+            "payload",
+            tier=SimpleNamespace(max_tokens=0, max_iterations=iterations),
+            env="loop-env", model="m", origin="x/y",
+        )
+    finally:
+        worker.set_env_target("loop-env", None)
+    return retries
+
+
+def test_the_next_attempt_carries_one_current_scope_note(tmp_path, monkeypatch):
+    """The finding is state, not an event: shown once, and gone once fixed.
+
+    Attempt 1 strands an op, attempt 2 does nothing, attempt 3 moves the
+    op under `target @any`, attempt 4 does nothing. Appending the note to
+    the agent's notes showed it 1, 2, 2 times, so attempt 4 was told to
+    move an op it had already moved.
+    """
+    fixed = HEAD + (
+        'target @any\nmk set A "1"\n'
+        "file materialize dragonfly/patch-NEW -> dragonfly/patch-NEW\n"
+        'target @main\nmk set B "2"\n'
+    )
+    retries = _drive_attempts(tmp_path, monkeypatch,
+                              {1: APPENDED, 3: fixed}, iterations=4)
+    assert [r.count("SCOPE:") for r in retries] == [1, 1, 0]
+    assert "did not reach @2026Q3" in retries[0]
+    assert "Notes recorded in earlier attempts" not in retries[0]
+    assert (retries[0].index("## Found by the harness after that attempt")
+            < retries[0].index("SCOPE:"))
 
 
 def test_the_note_helper_never_raises(monkeypatch):
@@ -319,35 +377,22 @@ def test_the_runner_still_records_it_for_the_operator(tmp_path, monkeypatch):
     assert events[0][2]["extra"]["stranded"]
 
 
-def test_a_broken_reporter_says_so_instead_of_vanishing(tmp_path):
+def test_a_broken_reporter_says_so_instead_of_vanishing(tmp_path, monkeypatch):
     """A silently dead check is worse than no check."""
-    from dportsv3.agent import steps
+    from dportsv3.agent import scope_check, steps
 
+    def broken(*a, **k):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(scope_check, "scope_drift", broken)
     logged: list[tuple] = []
     services = SimpleNamespace(
         log=lambda root, level, msg: logged.append((level, msg)),
-        activity_log=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("nope")),
+        activity_log=lambda *a, **k: None,
     )
     steps._report_scope_drift(
         services, SimpleNamespace(job_id="j1"), tmp_path, "drift-env",
         baseline={"x/y": BASE},
     )
-    # Either nothing to report, or a WARN -- never a silent swallow of a
-    # real failure.
-    assert all(level == "WARN" for level, _ in logged)
-
-
-def test_the_runner_snapshots_below_the_dirty_tree_refusal():
-    """The baseline's trustworthiness must be LOCAL, not 54 lines away.
-
-    It holds only because every dirty path has already returned. Read the
-    baseline above that refusal and the property survives by accident,
-    which a later warn-and-continue mode would silently break.
-    """
-    from dportsv3.agent import steps
-
-    src = inspect.getsource(steps.PatchAttemptStep)
-    snap = src.index('ctx.state["overlay_baseline"]')
-    refusal = src.index("patch_preflight_dirty")
-    harness = src.index("harness_patch.run(")
-    assert refusal < snap < harness
+    assert any(level == "WARN" and "scope-drift report failed" in msg
+               for level, msg in logged), logged

@@ -35,6 +35,11 @@ and correctly authored two-target overlay reported.
 
 Pure functions over overlay TEXT, deliberately: no env, no chroot, so the
 rule is testable on its own and the callers keep the I/O.
+
+INTERIM. poly-7pwa.8 replaces this module: its MISSED note replaces this
+check's agent note through the state_notes list in attempt_loop.run, and
+it moves payload_identity to dportsv3/engine/models.op_identity and
+deletes this file.
 """
 
 from __future__ import annotations
@@ -95,50 +100,46 @@ class ScopeDrift:
         if self.ok:
             return ""
         return (
-            f"SCOPE: your overlay edits did not reach {self.target}. "
+            f"SCOPE: your overlay edits did not reach {self.target}: every "
+            f"op this job added is in another build line's block. An op takes "
+            f"the scope of the last `target` line above it, so an append at "
+            f"the end of the file lands in the last block. Move them into the "
+            f"`target @any` block, or the `target {self.target}` block if they "
+            f"are only right for this build line, and re-check with "
+            f"get_effective_overlay. Added: "
             + "; ".join(self.stranded)
-            + f". An op takes the scope of the last `target` block above it, "
-            f"so an edit appended at the end of the file lands in whatever "
-            f"block is last — not in `{self.target}`. Put the op inside the "
-            f"`target {self.target}` block, or under `target @any` if it is "
-            f"correct for every build line, then re-check with "
-            f"get_effective_overlay."
         )
 
 
-def _key(op: dict) -> tuple:
-    """Identity of an op for set-difference purposes.
+def payload_identity(op) -> tuple:
+    """What a PlanOp does, without its scope or its position.
 
-    Built from the op's scope, kind and payload explicitly rather than
-    from ``to_dict()``: that flattens the payload over ``id``/``target``/
-    ``kind``, so a future payload key named ``target`` would overwrite the
-    op's scope and make every such op read as universally effective -- a
-    silent false negative in this check's core predicate.
-
-    ``id`` is excluded on purpose. The planner builds it as
-    ``op-<ordinal>-<kind>``, so inserting a line above an op would
-    otherwise make every op below it look new.
+    Read from the PlanOp's fields, never from ``to_dict()``: that spreads
+    the payload over ``id``/``target``/``kind``, so a payload key named
+    ``target`` would overwrite the op's scope. ``id`` is left out because
+    op ids encode position (``op-<ordinal>-<kind>``), so inserting a line
+    above an op would otherwise make every op below it look new. Shared
+    with steps._build_line_brief.
     """
-    payload = tuple(
-        sorted(
-            (k, repr(v))
-            for k, v in op.items()
-            if k not in ("id", "target", "kind")
-        )
-    )
-    return (op.get("target"), op.get("kind"), payload)
+    return (op.kind, tuple(sorted(
+        (k, repr(v)) for k, v in op.payload.items())))
 
 
-def _describe(op: dict) -> str:
-    scope = op.get("target") or "@any"
-    kind = op.get("kind") or "?"
+def _key(op) -> tuple:
+    """Identity of an op for set-difference purposes: scope plus payload."""
+    return (op.target, payload_identity(op))
+
+
+def _describe(op) -> str:
+    scope = op.target or "@any"
+    kind = op.kind or "?"
     subject = next(
-        (str(op[k]) for k in _SUBJECT_KEYS if op.get(k)), ""
+        (str(op.payload[k]) for k in _SUBJECT_KEYS if op.payload.get(k)), ""
     )
     return f"scope {scope}: {kind}{' ' + subject if subject else ''}"
 
 
-def _plan_ops(text: str) -> list[dict] | None:
+def _plan_ops(text: str) -> list | None:
     from dportsv3.engine.api import build_plan  # noqa: PLC0415
 
     try:
@@ -147,7 +148,7 @@ def _plan_ops(text: str) -> list[dict] | None:
         return None
     if not result.ok or result.plan is None:
         return None
-    return list(result.plan.to_dict()["ops"])
+    return list(result.plan.ops)
 
 
 def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrift:
@@ -184,7 +185,7 @@ def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrif
         k = _key(op)
         seen[k] = seen.get(k, 0) + 1
 
-    added: list[dict] = []
+    added: list = []
     for op in after_ops:
         k = _key(op)
         if seen.get(k):
@@ -198,6 +199,6 @@ def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrif
     # other-target ops alongside it are the convention, not drift -- see
     # the module docstring for the three shapes that look like drift and
     # are not.
-    if any((op.get("target") or "@any") in ("@any", target) for op in added):
+    if any((op.target or "@any") in ("@any", target) for op in added):
         return ScopeDrift(target=target)
     return ScopeDrift(target=target, stranded=tuple(_describe(op) for op in added))
