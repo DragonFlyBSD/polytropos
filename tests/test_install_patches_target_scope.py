@@ -17,7 +17,7 @@ libpkg patches flat in @any and one scoped per target, in one file.
 
 from __future__ import annotations
 
-import pathlib
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -81,6 +81,14 @@ def _install(env):
     return worker.install_patches("scope-env", "devel/thing")
 
 
+def _diff(path):
+    return f"--- {path}.orig\n+++ {path}\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+
+
+def _port(env):
+    return env.deltaports / "ports" / "devel" / "thing"
+
+
 def test_a_recut_lands_in_the_scoped_dir_its_own_op_reads(env):
     """The defect: this used to go to a flat path nothing stages."""
     _overlay(env, SCOPED)
@@ -117,11 +125,15 @@ def test_the_result_says_why_it_was_redirected(env):
     _genpatch(env, "patch-src_lib.rs")
 
     note = _install(env).get("scope_note") or ""
-    assert "patch-src_lib.rs" in note
-    # It must say the existing op already stages it, or the agent adds a
-    # second materialize op and poly-7pwa.3's collision follows.
-    assert "needs NO edit" in note
-    assert "collide" in note
+    assert "dragonfly/@main/patch-src_lib.rs" in note
+    # It must say the existing op already stages it, and what a second op
+    # would do: the decision-1 sentences live here, not in a playbook.
+    assert "needs no edit" in note
+    assert "Do not add a second `file materialize`" in note
+    assert "never lands" in note
+    assert "validate_dops rejects it" in note
+    assert "overridden here" in note
+    assert "collide" not in note and "refused" not in note
 
 
 def test_a_flat_port_is_untouched(env):
@@ -134,21 +146,31 @@ def test_a_flat_port_is_untouched(env):
     assert "scope_note" not in result
 
 
-def test_a_new_patch_follows_the_ports_convention_for_this_target(env):
-    """No op names this file yet, but the port scopes its payload here."""
+def test_a_new_patch_goes_flat_and_the_note_gives_the_op(env):
+    """Decision 5: a new agent patch is flat, with its op under @any."""
     _overlay(env, SCOPED)
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-brand_new.rs")
     result = _install(env)
     assert result["installed"] == [
-        "ports/devel/thing/dragonfly/@main/patch-brand_new.rs"
+        "ports/devel/thing/dragonfly/patch-brand_new.rs"
     ]
-    # This one DOES need an op, and the note must say so and where.
+    assert not (_port(env) / "dragonfly/@main/patch-brand_new.rs").exists()
     note = result.get("scope_note") or ""
-    assert "dragonfly/@main/patch-brand_new.rs" in note
-    assert "still needs an op" in note
-    assert "file materialize" in note
-    assert "`target @main` block" in note
+    assert ("file materialize dragonfly/patch-brand_new.rs -> "
+            "dragonfly/patch-brand_new.rs") in note
+    assert "`target @any` block" in note
+    assert "appended at the end of the file it lands in the last block" in note
+
+
+def test_a_new_patch_on_a_single_scope_overlay_gets_no_block_warning(env):
+    _overlay(env, FLAT)
+    worker.set_env_target("scope-env", "@main")
+    _genpatch(env, "patch-brand_new.rs")
+    note = _install(env).get("scope_note") or ""
+    assert ("file materialize dragonfly/patch-brand_new.rs -> "
+            "dragonfly/patch-brand_new.rs") in note
+    assert "per-target blocks" not in note
 
 
 def test_a_recut_of_a_flat_patch_stays_flat_even_on_a_scoped_port(env):
@@ -198,16 +220,17 @@ def test_the_note_does_not_both_forbid_and_order_an_op(env):
     """Two notes concatenated read as a contradiction."""
     _overlay(env, SCOPED)
     worker.set_env_target("scope-env", "@main")
-    _genpatch(env, "patch-src_lib.rs")   # existing op -> "needs NO edit"
-    _genpatch(env, "patch-brand_new.rs")  # new -> "still needs an op"
+    _genpatch(env, "patch-src_lib.rs")   # existing op -> "needs no edit"
+    _genpatch(env, "patch-brand_new.rs")  # new -> "No op installs"
     note = _install(env).get("scope_note") or ""
     # Each statement must name which files it is about.
-    assert "patch-src_lib.rs" in note and "patch-brand_new.rs" in note
-    assert note.count("needs NO edit") <= 1
+    assert "dragonfly/@main/patch-src_lib.rs" in note
+    assert "file materialize dragonfly/patch-brand_new.rs" in note
+    assert note.count("needs no edit") == 1
 
 
-def test_an_op_that_renames_is_followed_by_destination_not_basename(env):
-    """src basename may differ from dst; the dst is what identifies the file."""
+def test_a_renaming_op_gets_the_file_it_actually_reads(env):
+    """src basename may differ from dst; the re-cut replaces the src."""
     renaming = HEAD + (
         "target @main\n"
         "file materialize dragonfly/@main/src-name.c -> dragonfly/patch-x\n"
@@ -216,7 +239,7 @@ def test_an_op_that_renames_is_followed_by_destination_not_basename(env):
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-x")
     assert _install(env)["installed"] == [
-        "ports/devel/thing/dragonfly/@main/patch-x"
+        "ports/devel/thing/dragonfly/@main/src-name.c"
     ]
 
 
@@ -236,23 +259,48 @@ def test_no_cached_target_falls_back_to_flat_and_says_so(env):
     assert "could not be decided" in (result.get("scope_note") or "")
 
 
-def test_an_unparseable_overlay_falls_back_to_flat_and_says_so(env):
-    _overlay(env, HEAD + "this is not dops at all\n")
+@pytest.mark.parametrize("overlay", [
+    (HEAD + "this is not dops at all\n").encode(),
+    HEAD.encode() + b'mk set X "caf\xe9"\n',
+], ids=["unparseable", "non-utf8"])
+def test_an_overlay_that_does_not_plan_falls_back_to_flat_and_says_so(
+        env, overlay):
+    (_port(env) / "overlay.dops").write_bytes(overlay)
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-src_lib.rs")
     result = _install(env)
     assert result["installed"] == [
         "ports/devel/thing/dragonfly/patch-src_lib.rs"
     ]
-    assert "Could not read" in (result.get("scope_note") or "")
+    assert "does not plan" in (result.get("scope_note") or "")
 
 
-def test_a_port_with_no_overlay_falls_back_to_flat(env):
+def test_an_overlay_that_does_not_plan_never_overwrites_an_existing_copy(env):
+    """Nothing says which lines read dragonfly/<name>, so leave it alone."""
+    _overlay(env, HEAD + "this is not dops at all\n")
+    shared = _port(env) / "dragonfly" / "patch-src_lib.rs"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("shared\n")
+    worker.set_env_target("scope-env", "@2026Q3")
+    _genpatch(env, "patch-src_lib.rs")
+    result = _install(env)
+    assert shared.read_text() == "shared\n"
+    assert result["installed"] == []
+    assert result["not_installed"] == ["patch-src_lib.rs"]
+    assert result["ok"] is False
+    assert "call install_patches again" in (result.get("scope_note") or "")
+
+
+def test_a_port_without_an_overlay_is_compat_and_gets_no_op(env):
+    """Compat mode copies dragonfly/ as it is; overlay.dops would end that."""
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-src_lib.rs")
-    assert _install(env)["installed"] == [
+    result = _install(env)
+    assert result["installed"] == [
         "ports/devel/thing/dragonfly/patch-src_lib.rs"
     ]
+    assert "scope_note" not in result
+    assert not (_port(env) / "overlay.dops").exists()
 
 
 def test_another_targets_scoped_op_does_not_redirect_this_one(env):
@@ -265,9 +313,12 @@ def test_another_targets_scoped_op_does_not_redirect_this_one(env):
     _overlay(env, only_q3)
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-src_lib.rs")
-    assert _install(env)["installed"] == [
+    result = _install(env)
+    assert result["installed"] == [
         "ports/devel/thing/dragonfly/patch-src_lib.rs"
     ]
+    assert "file materialize dragonfly/patch-src_lib.rs" in (
+        result.get("scope_note") or "")
 
 
 def test_the_decision_comes_from_the_overlay_not_the_directory(env):
@@ -288,67 +339,216 @@ def test_the_decision_comes_from_the_overlay_not_the_directory(env):
     ]
 
 
+@pytest.mark.parametrize("src", [
+    "../../../ESCAPED/patch-x",
+    "ABSOLUTE",
+    "files/patch-x",
+    "overlay.dops",
+])
+def test_a_source_outside_dragonfly_is_never_followed(env, src):
+    """install_patches writes; only a file under dragonfly/ is followed."""
+    if src == "ABSOLUTE":
+        src = str(env.tmp / "ABSOLUTE" / "patch-x")
+    text = HEAD + f"target @any\nfile materialize {src} -> dragonfly/patch-x\n"
+    _overlay(env, text)
+    worker.set_env_target("scope-env", "@main")
+    _genpatch(env, "patch-x")
+    result = _install(env)
+    assert result["installed"] == ["ports/devel/thing/dragonfly/patch-x"]
+    written = [p for p in env.tmp.rglob("patch-x")
+               if "genpatch-out" not in p.parts]
+    assert written == [_port(env) / "dragonfly" / "patch-x"]
+    assert (_port(env) / "overlay.dops").read_text() == text
+    assert "does not read a file under dragonfly/" in (
+        result.get("scope_note") or "")
+
+
+def test_a_recut_genpatch_named_differently_replaces_the_file_its_op_reads(env):
+    """genpatch names a re-cut after the file it changes, not after the op."""
+    _overlay(env, HEAD + (
+        "target @2026Q3\n"
+        "file materialize dragonfly/@2026Q3/patch-src_ae_epoll.c"
+        " -> dragonfly/patch-src_ae_epoll.c\n"
+        "target @main\n"
+        "file materialize dragonfly/@main/patch-src_ae_epoll.c"
+        " -> dragonfly/patch-src_ae_epoll.c\n"
+    ))
+    old = _diff("src/ae_epoll.c").replace("+new", "+stale")
+    for line in ("@2026Q3", "@main"):
+        f = _port(env) / "dragonfly" / line / "patch-src_ae_epoll.c"
+        f.parent.mkdir(parents=True)
+        f.write_text(old)
+    (env.out / "patch-src_ae__epoll.c").write_text(_diff("src/ae_epoll.c"))
+    worker.set_env_target("scope-env", "@2026Q3")
+    result = _install(env)
+    assert result["installed"] == [
+        "ports/devel/thing/dragonfly/@2026Q3/patch-src_ae_epoll.c"
+    ]
+    port = _port(env)
+    assert (port / "dragonfly/@2026Q3/patch-src_ae_epoll.c").read_text() == (
+        _diff("src/ae_epoll.c"))
+    assert (port / "dragonfly/@main/patch-src_ae_epoll.c").read_text() == old
+    assert not list(port.rglob("patch-src_ae__epoll.c"))
+    assert "No op installs" not in (result.get("scope_note") or "")
+
+
+@pytest.mark.parametrize("line", ["@main", "@2026Q3"])
+def test_an_override_is_resolved_by_apply_order_not_file_order(env, line):
+    """The @any block is written last, but @main's own op runs after it."""
+    _overlay(env, HEAD + (
+        "target @main\n"
+        "file materialize dragonfly/@main/patch-x -> dragonfly/patch-x\n"
+        "target @any\n"
+        "file materialize dragonfly/patch-x -> dragonfly/patch-x\n"
+    ))
+    worker.set_env_target("scope-env", line)
+    _genpatch(env, "patch-x")
+    result = _install(env)
+    expected = ("dragonfly/@main/patch-x" if line == "@main"
+                else "dragonfly/patch-x")
+    assert result["installed"] == [f"ports/devel/thing/{expected}"]
+    assert "No op installs" not in (result.get("scope_note") or "")
+
+
+def test_two_patches_of_one_file_are_not_guessed(env):
+    _overlay(env, HEAD + (
+        "target @any\n"
+        "file materialize dragonfly/patch-one -> dragonfly/patch-one\n"
+        "file materialize dragonfly/patch-two -> dragonfly/patch-two\n"
+    ))
+    port = _port(env)
+    (port / "dragonfly").mkdir(parents=True)
+    for name in ("patch-one", "patch-two"):
+        (port / "dragonfly" / name).write_text(_diff("src/a.c"))
+    (env.out / "patch-src_a.c").write_text(
+        _diff("src/a.c").replace("+new", "+recut"))
+    worker.set_env_target("scope-env", "@main")
+    result = _install(env)
+    assert result["installed"] == ["ports/devel/thing/dragonfly/patch-src_a.c"]
+    for name in ("patch-one", "patch-two"):
+        assert (port / "dragonfly" / name).read_text() == _diff("src/a.c")
+
+
 # --------------------------------------------------------------------------
 # The real overlays are the fixture that caught this
 # --------------------------------------------------------------------------
 
-def _delta_ports() -> pathlib.Path | None:
-    """The DeltaPorts ports dir, via the repo's own resolver.
 
-    CLAUDE.md: site-owned inputs are named by --delta-root /
-    $DPORTS_DELTA_ROOT and dportsv3/paths.py is the single resolver. A
-    hardcoded developer path would silence these tests everywhere but one
-    machine -- including this repo's own second working directory -- and
-    the whole-tree sweep is the one thing standing between this check and
-    a tree-wide regression.
-    """
-    from dportsv3.paths import resolve_delta_root
+def _plus_path(path):
+    """The single '+++ ' path of a diff, else None (the test's own reading)."""
+    import re
 
-    try:
-        root = resolve_delta_root() / "ports"
-    except Exception:  # noqa: BLE001
-        return None
-    return root if root.is_dir() else None
+    found = re.findall(r"^\+\+\+ (\S+)", path.read_text(errors="replace"), re.M)
+    return found[0] if len(found) == 1 else None
 
 
-DELTA = _delta_ports()
+def _genpatch_name(path):
+    """ports-mgmt/genpatch's name for a patch of ``path``."""
+    return "patch-" + path.replace("_", "__").replace("/", "_")
 
 
-@pytest.mark.skipif(DELTA is None, reason="DeltaPorts checkout not present")
-@pytest.mark.parametrize(
-    "origin,target,filename,expected",
-    [
-        # pkg's four libpkg patches are FLAT and @any. Sending a re-cut of
-        # one into @main/ was the defect a layout guess produced.
-        ("ports-mgmt/pkg", "@main", "patch-libpkg_scripts.c", "dragonfly"),
-        ("ports-mgmt/pkg", "@2026Q3", "patch-libpkg_scripts.c", "dragonfly"),
-        # ...and exactly one patch each is scoped, where 2.7.5 and 2.8.4 diverge.
-        ("ports-mgmt/pkg", "@main", "patch-configure.def", "dragonfly/@main"),
-        ("ports-mgmt/pkg", "@2026Q3", "patch-auto.def.c", "dragonfly/@2026Q3"),
-        # rust's @any lane is the cargo crate patches; its own source
-        # patches are scoped per target.
-        ("lang/rust", "@main", "extra-libc-0.2.62", "dragonfly"),
-        ("lang/rust", "@main", "patch-src_bootstrap_src_bin_main.rs",
-         "dragonfly/@main"),
-        ("lang/rust", "@2026Q3", "patch-src_bootstrap_src_bin_main.rs",
-         "dragonfly/@2026Q3"),
-    ],
-)
-def test_the_real_overlays_resolve_the_lane_a_human_would(
-    origin, target, filename, expected, monkeypatch
-):
-    """Every one of these the first version of this fix got wrong but two."""
+def _reads(plan, line):
+    """dst -> src of the materialize/copy that fills it last on ``line``."""
+    from dportsv3.engine.models import order_ops_for_target
+
+    out = {}
+    for op in order_ops_for_target(plan.ops, line):
+        if (op.kind in ("file.materialize", "file.copy")
+                and op.target in ("@any", line)):
+            out[op.payload["dst"]] = op.payload["src"]
+    return out
+
+
+@pytest.mark.parametrize("naming", ["composed", "genpatch"])
+def test_a_recut_lands_on_the_file_each_line_reads_on_the_real_ports(
+        multi_line_ports, tmp_path, monkeypatch, naming):
+    from dportsv3.engine.api import build_plan
+
+    deltaports = tmp_path / "DeltaPorts"
+    out = tmp_path / "writable" / "work" / "genpatch-out"
+    out.mkdir(parents=True)
     monkeypatch.setattr(
         worker, "env_paths",
-        lambda e: SimpleNamespace(
-            deltaports=DELTA.parent, writable=pathlib.Path("/tmp")
-        ),
+        lambda e: SimpleNamespace(deltaports=deltaports,
+                                  writable=tmp_path / "writable"),
     )
-    worker.set_env_target("real-env", target)
+    monkeypatch.setattr(worker, "patch_origin_for", lambda e, o: o)
+    cases = 0
     try:
-        plan = worker._overlay_plan_for("real-env", origin)
-        assert plan is not None, f"{origin} overlay did not plan"
-        lane, _ = worker._dragonfly_payload_dir(plan, target, filename)
+        for port in multi_line_ports:
+            port_dir = deltaports / "ports" / port.origin
+            shutil.copytree(port.overlay.parent, port_dir)
+            plan = build_plan(port.overlay.read_text(), port.overlay).plan
+            for line in port.lines:
+                reads = _reads(plan, line)
+                headers = {}
+                for dst, src in reads.items():
+                    if dst.startswith("dragonfly/patch-"):
+                        headers[dst] = _plus_path(port_dir / src)
+                for dst, src in reads.items():
+                    if not dst.startswith("dragonfly/patch-"):
+                        continue
+                    path = headers[dst]
+                    if naming == "composed":
+                        name = dst.rpartition("/")[2]
+                    else:
+                        if path is None or list(headers.values()).count(path) > 1:
+                            continue
+                        name = _genpatch_name(path)
+                    for f in out.iterdir():
+                        f.unlink()
+                    (out / name).write_text(_diff(path or "x"))
+                    worker.set_env_target("scope-env", line)
+                    result = worker.install_patches(
+                        "scope-env", port.origin, patches=[name])
+                    assert result["installed"] == [
+                        f"ports/{port.origin}/{src}"
+                    ], (port.origin, line, dst, name)
+                    cases += 1
     finally:
-        worker.set_env_target("real-env", None)
-    assert lane == expected
+        worker.set_env_target("scope-env", None)
+    assert cases
+
+
+def test_the_file_each_line_reads_is_what_apply_installs_on_the_real_ports(
+        multi_line_ports, tmp_path):
+    """The lane rule above, checked against the engine's own apply."""
+    from dportsv3.engine.api import build_plan
+    from dportsv3.engine.apply import apply_plan
+    from dportsv3.engine.models import Plan
+
+    checked = 0
+    for port in multi_line_ports:
+        plan = build_plan(port.overlay.read_text(), port.overlay).plan
+        ops = [op for op in plan.ops if op.kind == "file.materialize"]
+        sentinels = tmp_path / "src" / port.origin
+        for op in ops:
+            f = sentinels / op.payload["src"]
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(op.payload["src"])
+        for line in port.lines:
+            root = tmp_path / "out" / port.origin / line
+            root.mkdir(parents=True)
+            result = apply_plan(Plan(port=port.origin, ops=ops),
+                                source_root=sentinels, port_root=root,
+                                target=line, oracle_profile="off")
+            assert result.ok, (port.origin, line)
+            for dst, src in _reads(Plan(port=port.origin, ops=ops),
+                                   line).items():
+                assert (root / dst).read_text() == src, (port.origin, line, dst)
+                checked += 1
+    assert checked
+
+
+def test_no_cached_target_still_writes_over_an_existing_flat_file(env):
+    """The hold rule is for an overlay that does not plan, not a missing target."""
+    _overlay(env, SCOPED)
+    flat = _port(env) / "dragonfly" / "patch-src_lib.rs"
+    flat.parent.mkdir(parents=True)
+    flat.write_text("shared\n")
+    worker.set_env_target("scope-env", None)
+    _genpatch(env, "patch-src_lib.rs")
+    result = _install(env)
+    assert result["installed"] == ["ports/devel/thing/dragonfly/patch-src_lib.rs"]
+    assert "not_installed" not in result
+    assert flat.read_text() != "shared\n"

@@ -267,11 +267,11 @@ produce the diff rather than hand-writing one:
    is post-`do-patch`, the hunk context matches what `do-patch` sees at
    build time and the patch applies cleanly.
 6. `install_patches(origin)` — copies the generated patch into the
-   port's payload lane for this build line. **Read `installed` for the
-   path and `scope_note` for what to do next**; do not assume
-   `dragonfly/<name>`, and do not add a `file materialize` line the note
-   says is already there. When a line IS needed, put it inside the block
-   for your target — see "Order is by scope, not by position".
+   port's payload. A re-cut replaces the file its existing
+   `file materialize` line reads, and that line stays as it is. A new
+   patch goes to `dragonfly/<name>`, and `scope_note` gives the line to
+   add to the `target @any` block. **Read `installed` for the path and
+   `scope_note`, when present, for what to do next.**
 
 **`dupe` is only one step of this flow.** It exists solely to support
 patch generation — it is not an investigation tool, not a "before"

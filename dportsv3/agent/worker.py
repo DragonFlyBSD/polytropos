@@ -3462,7 +3462,8 @@ def genpatch(env: str, path: str) -> dict:
 
 
 def _overlay_plan_for(env: str, port_origin: str):
-    """The port's plan, or None when there is nothing usable to read.
+    """The port's plan, or None when overlay.dops cannot be read or does not
+    plan. Callers check that the file exists first.
 
     Hoisted out of the per-file loop: install_patches may carry ten
     patches, and re-planning an 86-op overlay once per file is ten full
@@ -3474,83 +3475,109 @@ def _overlay_plan_for(env: str, port_origin: str):
         overlay = (
             env_paths(env).deltaports / "ports" / port_origin / "overlay.dops"
         )
-        if not overlay.is_file():
-            return None
         planned = build_plan(overlay.read_text(), overlay)
-    except (OSError, RuntimeError):
+    except Exception:  # noqa: BLE001 -- e.g. a non-UTF-8 overlay
         return None
     if not planned.ok or planned.plan is None:
         return None
     return planned.plan
 
 
-def _dragonfly_payload_dir(
-    plan, target: str, filename: str
-) -> tuple[str, str | None]:
-    """Where THIS FILE's source lives for ``target``.
+def _patched_path(path: Path) -> str | None:
+    """The one file a unified diff changes (its single '+++ ' path), else None.
 
-    Returns ``(port-relative dir, reason)``. ``reason`` is None when the
-    answer is the plain ``dragonfly`` lane and nothing needs explaining.
-
-    THE DESTINATION IS THE KEY, NOT THE DIRECTORY LAYOUT. ``filename`` is
-    the composed name -- what ``do-patch`` globs, i.e. an op's ``dst``. So
-    the question "where does this file's source live" is answered by
-    finding the op that fills ``dragonfly/<filename>`` and taking the
-    directory of ITS ``src``. That is robust for the case that matters and
-    that a layout guess gets wrong: ports-mgmt/pkg keeps four libpkg
-    patches flat under ``@any`` and one scoped per target, in one overlay.
-    Guessing "this port scopes its payload for @main" from the presence of
-    a scoped directory sends a re-cut of a FLAT patch into ``@main/``,
-    where no op reads it -- poly-7pwa.2's own defect with the lanes
-    swapped, and lang/rust has 60+ flat sources in that position.
-
-    APPLY ORDER PICKS THE WINNER when more than one op fills the
-    destination, because that is what the build gets: @any first, then the
-    target's own (poly-7pwa.11). Shared helper, not a fourth hand-rolled
-    copy of the scope rule.
+    genpatch names its output after that path, so a re-cut and the patch
+    it replaces share it even when their names differ; a diff of several
+    files never matches.
     """
-    from dportsv3.engine.models import order_ops_for_target  # noqa: PLC0415
+    try:
+        found = re.findall(r"^\+\+\+ (\S+)",
+                           path.read_text(errors="replace"), re.M)
+    except OSError:
+        return None
+    return found[0] if len(found) == 1 else None
 
-    scoped = f"dragonfly/{target}"
+
+def _payload_destination(plan, target: str, filename: str,
+                         port_dir: Path, patched: str | None
+                         ) -> tuple[str, str]:
+    """Where install_patches writes ``filename`` for ``target``: (rel, kind).
+
+    ``rel`` is relative to the port dir. ``kind`` is one of:
+
+    - "existing": the op that fills dragonfly/<filename> last on this line
+      is a file.materialize reading a file under dragonfly/; the path is
+      that file. When nothing fills that name: the one dragonfly/patch-*
+      destination on the line whose file changes the same single path (the
+      header key; none or several, no match). The destination is the key,
+      not the layout: pkg keeps four libpkg patches flat under @any and one
+      scoped per line.
+    - "new": nothing on this line fills it. Flat, and scope_note gives the
+      @any op. A wrongly shared patch fails loudly on the other line; a
+      wrongly scoped one is silently absent there (poly-7pwa.4's notes).
+    - "unsafe": the winner does not read a file under dragonfly/: a
+      file.copy (it reads the composed port, not the payload), or a source
+      that is absolute, contains "..", or lies outside dragonfly/. Never
+      followed.
+
+    WHY dragonfly/ AND NOT THE ENGINE'S RULE. apply accepts any relative
+    source inside the port dir; that is a rule for reading. install_patches
+    writes. The op "file materialize overlay.dops -> dragonfly/patch-x"
+    plans and applies, and with the engine's rule install_patches would
+    write the re-cut over overlay.dops.
+    """
+    import posixpath
+    from pathlib import PurePosixPath
+    from dportsv3.engine.models import order_ops_for_target
+
+    def payload_file(op) -> str | None:
+        if op.kind != "file.materialize":
+            return None
+        src = posixpath.normpath(str(op.payload.get("src") or ""))
+        parts = PurePosixPath(src).parts
+        if (len(parts) < 2 or parts[0] != "dragonfly"
+                or ".." in parts):
+            return None
+        return src
+
+    winners = {}
+    for op in order_ops_for_target(plan.ops, target):
+        if (op.kind in ("file.materialize", "file.copy")
+                and op.target in ("@any", target)):
+            dst = posixpath.normpath(
+                str(op.payload.get("dst") or ""))
+            winners[dst] = op
     wanted = f"dragonfly/{filename}"
-    ordered = order_ops_for_target(plan.ops, target)
-
-    fillers = [
-        op for op in ordered
-        if op.kind in ("file.materialize", "file.copy")
-        and op.target in ("@any", target)
-        and op.payload.get("dst") == wanted
-    ]
-    if fillers:
-        src = str(fillers[-1].payload.get("src") or "")
-        lane = src.rpartition("/")[0] or "dragonfly"
-        if lane == scoped:
-            return lane, "recut-scoped"
-        return lane, "recut-flat" if lane != "dragonfly" else None
-
-    # No op fills that destination: a genuinely new patch. Follow the
-    # port's convention FOR THIS TARGET if it has one.
-    for op in ordered:
-        if op.kind not in ("file.materialize", "file.copy"):
-            continue
-        if op.target not in ("@any", target):
-            continue
-        if str(op.payload.get("src") or "").startswith(f"{scoped}/"):
-            return scoped, "new-scoped"
-    return "dragonfly", None
+    op = winners.get(wanted)
+    if op is None and patched:
+        same = [src for dst, w in winners.items()
+                if dst.startswith("dragonfly/patch-")
+                and (src := payload_file(w)) is not None
+                and _patched_path(port_dir / src) == patched]
+        if len(same) == 1:
+            return same[0], "existing"
+    if op is None:
+        return wanted, "new"
+    src = payload_file(op)
+    if src is None:
+        return wanted, "unsafe"
+    return src, "existing"
 
 
 def install_patches(env: str, origin: str, patches: list[str] | None = None) -> dict:
     """Copy patches from ``/work/genpatch-out/`` into DeltaPorts overlay.
 
-    Destination is the lane inside
-    ``<env_dir/writable>/work/DeltaPorts/ports/<origin>/`` that this build
-    line's op actually reads -- ``dragonfly/`` or ``dragonfly/@<target>/``,
-    decided per file from the overlay (see ``_dragonfly_payload_dir``).
-    ``installed`` carries the real paths and ``scope_note`` explains any
-    that are not flat. Host-side file copy; no chroot exec needed since both source and
-    destination are in the writable overlay. If ``patches`` is None,
-    every ``patch-*`` file in ``genpatch-out/`` is installed.
+    A re-cut replaces the file this build line's existing op reads --
+    ``dragonfly/<name>`` or ``dragonfly/@<target>/<name>``, found per
+    file from the overlay by destination, else by the file the patch
+    changes (``_payload_destination``). A new patch goes to flat
+    ``dragonfly/<name>`` and ``scope_note`` gives the @any op it
+    needs. A port with no overlay.dops is composed in compat mode,
+    which copies dragonfly/ as it is: flat, and no op. ``installed``
+    carries the real paths. Host-side file copy; no chroot exec
+    needed since both source and destination are in the writable
+    overlay. If ``patches`` is None, every ``patch-*`` file in
+    ``genpatch-out/`` is installed.
 
     Two things this refuses to do quietly, both measured in poly-7jw:
 
@@ -3622,24 +3649,40 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     # per target, in one overlay (poly-7pwa.2).
     port_dir = paths.deltaports / "ports" / dest_origin
     target = peek_env_target(env) or ""
-    plan = _overlay_plan_for(env, dest_origin) if target else None
+    compat = not (port_dir / "overlay.dops").is_file()
+    plan = (_overlay_plan_for(env, dest_origin)
+            if target and not compat else None)
 
     installed: list[str] = []
-    recut_scoped: list[str] = []
-    new_scoped: list[str] = []
+    held: list[str] = []
+    rerouted: list[str] = []
+    needs_op: list[str] = []
+    unsafe: list[str] = []
+    undecided: list[str] = []
     for f in candidates:
         if plan is None:
-            rel_dir, reason = "dragonfly", None
+            rel = f"dragonfly/{f.name}"
+            kind = "compat" if compat else "undecided"
         else:
-            rel_dir, reason = _dragonfly_payload_dir(plan, target, f.name)
-        dest_dir = port_dir / rel_dir
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(f, dest_dir / f.name)
-        installed.append(str((dest_dir / f.name).relative_to(paths.deltaports)))
-        if reason == "recut-scoped":
-            recut_scoped.append(f.name)
-        elif reason == "new-scoped":
-            new_scoped.append(f"{rel_dir}/{f.name}")
+            rel, kind = _payload_destination(
+                plan, target, f.name, port_dir, _patched_path(f))
+        dest = port_dir / rel
+        if kind == "undecided" and target and dest.exists():
+            # The overlay does not plan, so nothing says which build
+            # lines read that file: do not overwrite it.
+            held.append(f.name)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dest)
+        installed.append(str(dest.relative_to(paths.deltaports)))
+        if kind == "existing" and rel != f"dragonfly/{f.name}":
+            rerouted.append(rel)
+        elif kind == "new":
+            needs_op.append(f.name)
+        elif kind == "unsafe":
+            unsafe.append(f.name)
+        elif kind == "undecided":
+            undecided.append(f.name)
 
     result = {
         "origin": origin,
@@ -3650,46 +3693,76 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         "destination": str(port_dir / "dragonfly"),
         "installed": installed,
     }
+    if held:
+        result["not_installed"] = held
 
-    # ONE explanation plus a list, not the explanation once per file: a
-    # ten-patch re-cut emitted ~2.5KB of near-identical prose, and the two
-    # kinds of note read as a contradiction when concatenated ("do not add
-    # a second one" immediately followed by "stage it with ...").
+    # ONE explanation plus a list, not the explanation once per file.
     parts: list[str] = []
-    if plan is None and target:
-        parts.append(
-            f"Could not read {dest_origin}'s overlay to decide which "
-            f"dragonfly lane {target} reads, so everything went to the flat "
-            f"dragonfly/. If this port scopes its payload per target the "
-            f"patch is in the wrong lane -- check the `file materialize` op "
-            f"that names it."
-        )
-    elif not target:
-        parts.append(
-            "No compose target is cached for this env, so the lane could "
-            "not be decided and everything went to the flat dragonfly/. "
-            "Check the `file materialize` op that names the patch."
-        )
-    if recut_scoped:
-        parts.append(
-            f"Re-cut into the scoped lane its own op already reads: "
-            f"{', '.join(recut_scoped)}. That op stages it at compose time, "
-            f"so overlay.dops needs NO edit for these -- adding a second "
-            f"`file materialize` would collide on one destination and is "
-            f"refused by the engine."
-        )
-    if new_scoped:
-        parts.append(
-            f"New patch, placed to match this port's lane for {target}: "
-            f"{', '.join(new_scoped)}. Each still needs an op -- "
-            f"`file materialize <that path> -> dragonfly/<name>` (source "
-            f"scoped, destination flat), written INSIDE the "
-            f"`target {target}` block of "
-            f"ports/{dest_origin}/overlay.dops: an op appended at the end "
-            f"of the file takes the scope of whatever block is last."
-        )
+    if not compat:
+        if not target:
+            parts.append(
+                "No compose target is cached for this env, so the lane could "
+                "not be decided and everything went to the flat dragonfly/. "
+                "Check the `file materialize` op that names the patch."
+            )
+        elif plan is None:
+            part = (
+                f"ports/{dest_origin}/overlay.dops does not plan (see "
+                f"validate_dops), so the file {target} reads could not be "
+                f"decided."
+            )
+            if undecided:
+                part += (
+                    f" Written to the flat dragonfly/: {', '.join(undecided)}; "
+                    f"once the overlay plans, check the `file materialize` op "
+                    f"that names each."
+                )
+            if held:
+                part += (
+                    f" Not installed, because dragonfly/ already has a file of "
+                    f"that name and another build line may read it: "
+                    f"{', '.join(held)}. Fix the overlay (validate_dops) and "
+                    f"call install_patches again."
+                )
+            parts.append(part)
+        if rerouted:
+            parts.append(
+                f"Written where {target}'s existing op reads them: "
+                f"{', '.join(rerouted)}. overlay.dops needs no edit for these. Do "
+                f"not add a second `file materialize` for them: under the same "
+                f"`target` as the existing op, the earlier of the two never lands "
+                f"and validate_dops rejects it; under `target @any` while the "
+                f"existing op is in this build line's own block, yours is "
+                f"overridden here and every build line without its own op "
+                f"switches to your patch untested."
+            )
+        if unsafe:
+            parts.append(
+                f"The op that fills {', '.join(unsafe)} on {target} does not read "
+                f"a file under dragonfly/, so install_patches did not follow it: "
+                f"the patch went to dragonfly/, where that op does not read it. "
+                f"Point the op's source at that file."
+            )
+        if needs_op:
+            part = (
+                f"No op installs {', '.join(needs_op)} yet, so the build will not "
+                f"see {'it' if len(needs_op) == 1 else 'them'}. Add to the "
+                f"`target @any` block of ports/{dest_origin}/overlay.dops:\n"
+                + "\n".join(f"file materialize dragonfly/{n} -> dragonfly/{n}"
+                            for n in needs_op)
+            )
+            if any((op.target or "@any") != "@any" for op in plan.ops):
+                part += (
+                    "\nThis overlay has per-target blocks, so put the line in the "
+                    "`target @any` block itself: appended at the end of the file "
+                    "it lands in the last block."
+                )
+            parts.append(part)
     if parts:
         result["scope_note"] = " ".join(parts)
+    if held and not installed:
+        result["ok"] = False
+        result["error"] = "install_patches: nothing installed; see scope_note."
     if dest_origin != origin:
         result["note"] = (
             f"{origin} is a slave port; its DFLY_PATCHDIR resolves into "
