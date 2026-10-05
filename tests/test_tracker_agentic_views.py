@@ -1537,11 +1537,12 @@ def test_view_runner_renders_active_env_banner_unset(client: TestClient) -> None
     resp = client.get("/agentic/runner")
     assert resp.status_code == 200
     body = resp.text
-    # Banner shows the "none" message when unset. Reads "Default env" since
-    # poly-fij.13: it is the fallback for a builder that has not chosen, not
-    # the one answer for the deployment.
-    assert "Default env" in body
+    # Banner shows the "none" message when unset. Reads "Preferred env" since
+    # poly-p2ve: jobs route to an env of their own build line, and the
+    # selection only decides between several envs of one line.
+    assert "Preferred env" in body
     assert "none" in body
+    assert '<th scope="col">Line</th>' in body
     # Per-row "set" button is present for the seeded env.
     assert 'data-env="test-env"' in body
     assert "fix python runtime" in body

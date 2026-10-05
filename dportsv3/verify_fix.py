@@ -421,11 +421,42 @@ def _resolve_env_from_tracker(tracker_url: str | None) -> str | None:
         return None
 
 
+def _bundle_target(bundle_id: str, tracker_url: str | None) -> str | None:
+    """The bundle's target from the tracker, or None if it cannot be read."""
+    base = (tracker_url or _tracker_url()).rstrip("/")
+    try:
+        bundle = _get_json(
+            f"{base}/api/bundles/{urllib.parse.quote(bundle_id)}", timeout=5)
+    except Exception:
+        return None
+    target = bundle.get("target")
+    return target if isinstance(target, str) and target else None
+
+
+def _resolve_env_for_bundle(bundle_id: str, tracker_url: str | None) -> str | None:
+    """--env omitted: an env of the bundle's build line (poly-p2ve).
+
+    The tracker's active env is the preference when it composes that line
+    and the answer when the line cannot be routed; run_verify_fix refuses
+    an env of another line either way.
+    """
+    preferred = _resolve_env_from_tracker(tracker_url)
+    target = _bundle_target(bundle_id, tracker_url)
+    if not target:
+        return preferred
+    from dportsv3.agent import env_resolver  # noqa: PLC0415
+    routed = env_resolver.resolve_env_for_job(
+        {"target": target}, None, cli_env=preferred)
+    if routed.source == "ambiguous":
+        raise SystemExit(f"verify-fix: {routed.refusal_reason}")
+    return routed.env or preferred
+
+
 def cmd_verify_fix(args: argparse.Namespace) -> int:
     """CLI entrypoint. See module docstring."""
     env = args.env
     if not env:
-        env = _resolve_env_from_tracker(args.tracker_url)
+        env = _resolve_env_for_bundle(args.bundle_id, args.tracker_url)
     if not env:
         raise SystemExit(
             "verify-fix: no dev-env specified. Pass --env NAME, "

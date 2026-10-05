@@ -67,6 +67,7 @@ def test_cli_falls_back_when_env_omitted(monkeypatch):
         vf, "_resolve_env_from_tracker",
         lambda url: "from-tracker",
     )
+    monkeypatch.setattr(vf, "_bundle_target", lambda b, u: None)
     captured = {}
     def fake_run(**kw):
         captured["env"] = kw["env"]
@@ -84,8 +85,45 @@ def test_cli_errors_when_neither_arg_nor_tracker_has_env(monkeypatch):
     monkeypatch.setattr(
         vf, "_resolve_env_from_tracker", lambda url: None,
     )
+    monkeypatch.setattr(vf, "_bundle_target", lambda b, u: None)
     with pytest.raises(SystemExit) as exc:
         vf.cmd_verify_fix(_make_args(env=None))
     msg = str(exc.value)
     assert "--env" in msg
     assert "active env" in msg
+
+
+def _route(monkeypatch, *, active, lines):
+    from dportsv3.agent import env_resolver
+    monkeypatch.setattr(vf, "_resolve_env_from_tracker", lambda url: active)
+    monkeypatch.setattr(vf, "_bundle_target", lambda b, u: "@main")
+    monkeypatch.setattr(env_resolver, "list_available_envs",
+                        lambda: tuple(sorted(lines)))
+    monkeypatch.setattr(env_resolver, "env_compose_target",
+                        lambda env: lines[env])
+
+
+def test_env_omitted_routes_to_the_bundle_s_line(monkeypatch):
+    # poly-p2ve: the tracker's active env composes another line.
+    _route(monkeypatch, active="2026Q3",
+           lines={"2026Q3": "@2026Q3", "main": "@main"})
+    assert vf._resolve_env_for_bundle("b-1", None) == "main"
+
+
+def test_the_active_env_breaks_a_tie_within_the_line(monkeypatch):
+    _route(monkeypatch, active="main-b",
+           lines={"main-a": "@main", "main-b": "@main"})
+    assert vf._resolve_env_for_bundle("b-1", None) == "main-b"
+
+
+def test_an_unroutable_line_falls_back_to_the_active_env(monkeypatch):
+    _route(monkeypatch, active="2026Q3", lines={"2026Q3": "@2026Q3"})
+    assert vf._resolve_env_for_bundle("b-1", None) == "2026Q3"
+
+
+def test_an_ambiguous_line_says_so(monkeypatch):
+    _route(monkeypatch, active="2026Q3",
+           lines={"main-a": "@main", "main-b": "@main", "2026Q3": "@2026Q3"})
+    with pytest.raises(SystemExit) as exc:
+        vf._resolve_env_for_bundle("b-1", None)
+    assert "2 dev-envs compose @main (main-a, main-b)" in str(exc.value)

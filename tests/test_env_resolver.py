@@ -133,3 +133,64 @@ def test_tracker_pointing_at_missing_env_still_returned(db):
     )
     assert r.env == "ghost-env"
     assert r.source == "tracker"
+
+
+
+# --- routing by build line (poly-p2ve) ----------------------------------------
+
+_LINES = {"main": "@main", "q3": "@2026Q3"}
+
+
+def test_a_job_routes_to_the_one_env_of_its_line():
+    r = resolve_env_for_job({"target": "@2026Q3"}, None, env_lines=_LINES)
+    assert (r.env, r.source) == ("q3", "line")
+
+
+def test_a_bare_target_routes_the_same():
+    r = resolve_env_for_job({"target": "2026Q3"}, None, env_lines=_LINES)
+    assert r.env == "q3"
+
+
+def test_the_preference_breaks_a_tie_within_the_line():
+    lines = {"a": "@main", "b": "@main"}
+    r = resolve_env_for_job({"target": "@main"}, None, cli_env="b",
+                            env_lines=lines)
+    assert (r.env, r.source) == ("b", "cli_flag")
+
+
+def test_a_preference_of_another_line_does_not_win():
+    r = resolve_env_for_job({"target": "@main"}, None, cli_env="q3",
+                            env_lines=_LINES)
+    assert (r.env, r.source) == ("main", "line")
+
+
+def test_several_envs_of_the_line_and_no_preference_is_ambiguous():
+    lines = {"a": "@main", "b": "@main"}
+    r = resolve_env_for_job({"target": "@main"}, None, env_lines=lines)
+    assert (r.env, r.source) == (None, "ambiguous")
+    assert r.refusal_reason.startswith("2 dev-envs compose @main (a, b)")
+
+
+def test_a_line_no_env_composes_takes_the_old_precedence():
+    r = resolve_env_for_job({"target": "@2026Q2"}, None, cli_env="main",
+                            env_lines=_LINES)
+    assert (r.env, r.source) == ("main", "cli_flag")
+
+
+def test_a_pinned_env_wins_even_for_another_line():
+    # The job-start check refuses it; routing never second-guesses a pin.
+    r = resolve_env_for_job({"target": "@main", "dev_env": "q3"}, None,
+                            env_lines=_LINES)
+    assert (r.env, r.source) == ("q3", "job")
+
+
+def test_a_pinned_env_that_is_gone_routes_by_line():
+    r = resolve_env_for_job({"target": "@main", "dev_env": "old"}, None,
+                            env_lines=_LINES)
+    assert (r.env, r.source) == ("main", "line")
+
+
+def test_a_pin_is_kept_when_the_env_list_is_unknown():
+    r = resolve_env_for_job({"target": "@main", "dev_env": "old"}, None,
+                            available_envs=(), env_lines={})
+    assert (r.env, r.source) == ("old", "job")

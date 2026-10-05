@@ -200,7 +200,7 @@ def test_one_builder_renders_exactly_as_before(tmp_path):
     until there are two builders to tell apart."""
     with _client(tmp_path, [("b1", "host-a", None)]) as client:
         body = client.get("/agentic/runner").text
-    assert 'Default env' in body
+    assert 'Preferred env' in body
     assert '<th scope="col">Builder</th>' not in body
     assert "Env in use" not in body
 

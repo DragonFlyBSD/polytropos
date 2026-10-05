@@ -2,11 +2,12 @@
 
 A dev-env composes one build line (state.target). Hook-created jobs name no
 env, so before this change every job ran in whichever env was selected,
-whatever line it was for. The runner now holds an unpinned job at claim
-time while the selected env composes another line some env here composes,
-keeps such a row across a restart, holds a confirm build the same way
-without spending its budget, fails a verify request for another line with
-a reason, and refuses at job start a job pinned to an env of another line.
+whatever line it was for. Since poly-p2ve an unpinned job routes to the
+env of its own line; it is held at claim time only when several envs
+compose that line and none is selected, kept across a restart while held,
+and a confirm build waits the same way without spending its budget. A
+verify request for another line fails with a reason, and a job pinned to an
+env of another line is refused at job start.
 
 Every build line here is a stub value: no test reads DeltaPorts.
 Names this change adds are read with getattr and stubbed with
@@ -124,25 +125,46 @@ def _pending(queue: Path, name: str, **meta) -> Path:
     return path
 
 
-def test_a_db_job_for_another_line_stays_queued_until_its_line_is_selected(
+def test_a_db_job_for_another_line_routes_to_its_line_s_env(
         conn, queue, monkeypatch):
+    # poly-p2ve: nothing to select; the job runs in the env of its line.
     _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+    _seed_db_job(conn, job_id="j1.job", target=Q3)
+
+    batch = runner.claim_next_job_batch(queue)
+    assert batch is not None and batch[0].name == "j1.job"
+    assert runner.resolve_env(runner.parse_job_file(batch[0])) == "q3"
+
+
+def test_a_db_job_waits_while_several_envs_compose_its_line(
+        conn, queue, monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3a": Q3, "q3b": Q3}, selected="main")
     _seed_db_job(conn, job_id="j1.job", target=Q3)
 
     assert runner.claim_next_job_batch(queue) is None
     assert _job_row(conn, "j1.job")["state"] == "queued"
-    idle_stage = getattr(runner, "_idle_stage", None)
-    assert idle_stage is not None
-    assert idle_stage() == ("waiting: queued jobs need an env of their "
-                            "build line (1 for @2026Q3)")
+    assert runner._idle_stage() == (
+        "waiting: queued jobs cannot route to an env of their line: "
+        "1 for @2026Q3 (2 envs compose it (q3a, q3b); select one)")
 
-    _select(monkeypatch, "q3")
+    _select(monkeypatch, "q3b")
     batch = runner.claim_next_job_batch(queue)
     assert batch is not None and batch[0].name == "j1.job"
+    assert runner.resolve_env(runner.parse_job_file(batch[0])) == "q3b"
+
+
+def test_a_line_whose_env_is_broken_waits(conn, queue, monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+    monkeypatch.setattr(runner, "_cached_health_broken",
+                        lambda env=None: env == "q3")
+    _seed_db_job(conn, job_id="j1.job", target=Q3)
+
+    assert runner.claim_next_job_batch(queue) is None
+    assert "env q3 is broken" in runner._idle_stage()
 
 
 def test_a_held_db_job_survives_a_runner_restart(conn, queue, monkeypatch):
-    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+    _host(monkeypatch, {"main": MAIN, "q3a": Q3, "q3b": Q3}, selected="main")
     _seed_db_job(conn, job_id="j1.job", target=Q3, old=True)
     assert runner.claim_next_job_batch(queue) is None
 
@@ -152,7 +174,7 @@ def test_a_held_db_job_survives_a_runner_restart(conn, queue, monkeypatch):
     row = _job_row(conn, "j1.job")
     assert (row["state"], row["retire_reason"]) == ("queued", None)
 
-    _select(monkeypatch, "q3")
+    _select(monkeypatch, "q3a")
     batch = runner.claim_next_job_batch(queue)
     assert batch is not None and batch[0].name == "j1.job"
 
@@ -174,13 +196,21 @@ def test_a_stale_row_the_db_claim_never_takes_is_still_reaped(
     assert (row["state"], row["retire_reason"]) == ("dead", "runner_restart")
 
 
-def test_a_pending_file_for_another_line_is_not_claimed(conn, queue,
-                                                       monkeypatch):
-    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+def test_a_pending_file_for_an_ambiguous_line_is_not_claimed(conn, queue,
+                                                            monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3a": Q3, "q3b": Q3}, selected="main")
     path = _pending(queue, "j1.job", target=Q3)
 
     assert runner.claim_next_job_batch(queue) is None
     assert path.exists()
+
+
+def test_a_pending_file_for_another_line_is_claimed(conn, queue, monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+    _pending(queue, "j1.job", target=Q3)
+
+    batch = runner.claim_next_job_batch(queue)
+    assert batch is not None and batch[0].name == "j1.job"
 
 
 def test_a_pinned_job_is_not_held(conn, queue, monkeypatch):
@@ -245,9 +275,9 @@ def _confirm_jobs(queue: Path) -> list[Path]:
     return sorted((queue / "pending").glob("*confirm.job"))
 
 
-def test_a_confirm_for_another_build_line_waits_and_costs_no_budget(
+def test_a_confirm_for_an_ambiguous_line_waits_and_costs_no_budget(
         conn, queue, monkeypatch):
-    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
+    _host(monkeypatch, {"main": MAIN, "q3a": Q3, "q3b": Q3}, selected="main")
     _resolving_issue(conn, target=Q3)
 
     for _ in range(4):
@@ -260,9 +290,9 @@ def test_a_confirm_for_another_build_line_waits_and_costs_no_budget(
     assert tuple(row) == (None, 0, "resolving")
 
 
-def test_it_builds_once_an_env_of_its_line_is_selected_and_runs_there(
+def test_a_confirm_for_another_line_is_pinned_to_that_line_s_env(
         conn, queue, monkeypatch):
-    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="q3")
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected="main")
     _resolving_issue(conn, target=Q3)
 
     runner.process_build_requests(queue)
@@ -291,6 +321,62 @@ def test_a_confirm_for_a_line_no_env_here_composes_is_not_held(
 
     runner.process_build_requests(queue)
     assert len(_confirm_jobs(queue)) == 1
+
+
+def test_a_job_pinned_to_a_broken_env_waits_until_it_is_repaired(
+        conn, queue, monkeypatch):
+    # Claimed, it would be retired ENV_BROKEN; before poly-p2ve the global
+    # health pause kept it queued.
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected=None)
+    broken = {"q3"}
+    monkeypatch.setattr(runner, "_cached_health_broken",
+                        lambda env=None: env in broken)
+    path = _pending(queue, "j1.job", type="patch", target=Q3, dev_env="q3")
+
+    assert runner.claim_next_job_batch(queue) is None
+    assert path.exists()
+    assert "env q3 is broken" in runner._idle_stage()
+
+    broken.clear()
+    batch = runner.claim_next_job_batch(queue)
+    assert batch is not None and batch[0].name == "j1.job"
+
+
+def test_a_job_without_a_target_waits_while_several_envs_exist(
+        conn, queue, monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected=None)
+    path = _pending(queue, "j1.job", target="")
+
+    assert runner.claim_next_job_batch(queue) is None
+    assert path.exists()
+    assert "(no target)" in runner._idle_stage()
+
+    _select(monkeypatch, "main")
+    assert runner.claim_next_job_batch(queue) is not None
+
+
+# --- the gate (poly-p2ve) --------------------------------------------------------
+
+
+def test_two_lines_and_nothing_selected_watch_both_envs(monkeypatch):
+    # Before poly-p2ve this paused the runner: "2 dev-envs exist; select one".
+    _host(monkeypatch, {"main": MAIN, "q3": Q3}, selected=None)
+    assert runner._watched_envs(None) == ["main", "q3"]
+
+
+def test_an_ambiguous_line_s_envs_are_not_watched(monkeypatch):
+    _host(monkeypatch, {"main": MAIN, "q3a": Q3, "q3b": Q3}, selected=None)
+    assert runner._watched_envs(None) == ["main"]
+
+
+def test_no_env_anywhere_watches_nothing(monkeypatch):
+    _host(monkeypatch, {}, selected=None)
+    assert runner._watched_envs(None) == []
+
+
+def test_unreadable_lines_fall_back_to_the_selected_env(monkeypatch):
+    _host(monkeypatch, {"main": LookupError("unreadable")}, selected="main")
+    assert runner._watched_envs("main") == ["main"]
 
 
 # --- verify requests ------------------------------------------------------------
@@ -404,7 +490,8 @@ def test_a_patch_job_for_another_build_line_is_refused_before_its_worktree(
     seen = _stub_patch_path(monkeypatch)
 
     result = _run_patch(queue, lead, [sib], {
-        "origin": "lang/rust", "bundle_id": "b1", "target": Q3})
+        "origin": "lang/rust", "bundle_id": "b1", "target": Q3,
+        "dev_env": "main"})
 
     assert result is not None
     success, status = result
@@ -424,7 +511,8 @@ def test_a_patch_job_for_another_build_line_is_refused_before_its_worktree(
 
 @pytest.mark.parametrize("envs,start", [
     ({"main": MAIN, "q3": Q3},
-     "select env q3 (it composes @2026Q3) in the tracker UI"),
+     "the job is pinned to env main; run it in env q3, which composes "
+     "@2026Q3"),
     ({"main": MAIN},
      "no env on this host composes @2026Q3: create one with "
      "'dportsv3 dev-env create --target @2026Q3'"),
@@ -435,7 +523,7 @@ def test_the_refusal_names_the_way_out(conn, queue, monkeypatch, envs, start):
     _stub_patch_path(monkeypatch)
 
     _run_patch(queue, lead, [], {"origin": "lang/rust", "bundle_id": "b1",
-                                  "target": Q3})
+                                  "target": Q3, "dev_env": "main"})
 
     rows = _activity(conn, "patch_refused_env_target_mismatch")
     assert len(rows) == 1
@@ -517,7 +605,7 @@ def test_a_refused_job_records_the_env_that_refused_it(conn, queue,
     _stub_patch_path(monkeypatch)
 
     _run_patch(queue, lead, [], {"origin": "lang/rust", "bundle_id": "b1",
-                                  "target": Q3})
+                                  "target": Q3, "dev_env": "main"})
 
     row = _job_row(conn, "j1.job")
     assert (row["dev_env"], row["retire_reason"]) == (
@@ -551,8 +639,8 @@ def test_a_triage_job_for_another_build_line_is_refused_before_the_model(
 
     try:
         runner.process_triage_job(queue, lead, [], {
-            "origin": "lang/rust", "bundle_id": "b1", "target": Q3},
-            None, None)
+            "origin": "lang/rust", "bundle_id": "b1", "target": Q3,
+            "dev_env": "main"}, None, None)
     except _Stop:
         pass
 

@@ -4,16 +4,25 @@ Single helper, single precedence rule, single test surface.
 Replaces the prior pattern of every callsite doing
 ``job.get("dev_env") or os.environ.get("...")``.
 
-Precedence (top wins):
+A job with a target routes to an env of its build line (poly-p2ve):
 
 1. ``job.dev_env`` -- the job carries its own env: a patch job the
    env its triage ran in, a verify job the env the operator
-   picked, a confirm build the env its feed checked. Hook-created
-   jobs carry none (hook_common.sh writes no dev_env), so they
-   resolve through 2-4, none of which looks at the job's target.
-   The runner matches the two: it leaves such a job queued while
-   the selected env composes another build line, and checks again
-   at job start (poly-7pwa.14; ``other_build_line``).
+   picked, a confirm build the env its line routed to. Hook-created
+   jobs carry none (hook_common.sh writes no dev_env). An env that
+   no longer exists is routed past.
+2. The tracker's selection (per builder, then the default), if it
+   composes the job's line.
+3. ``--env NAME``, if it composes the job's line.
+4. The only env that composes the line.
+5. Several envs compose it and none is preferred: refuse with
+   source ``ambiguous``; the runner holds such jobs.
+
+A job without a target, or for a line no env is known to compose, takes
+the precedence below; the job-start check refuses a wrong line
+(poly-7pwa.14; ``other_build_line``):
+
+1. ``job.dev_env``.
 2. ``tracker_active_env`` row in state.db — what the operator
    selected in the tracker UI (or via the PUT endpoint).
 3. ``--env NAME`` CLI flag at runner startup. The trackerless
@@ -184,47 +193,88 @@ def resolve_env_for_job(
     *,
     available_envs: Iterable[str] | None = None,
     enumeration_error: str | None = None,
+    env_lines: dict[str, str] | None = None,
 ) -> EnvResolution:
     """Resolve the dev-env to use for ``job``.
+
+    A job with a target routes to an env of its build line (poly-p2ve):
+    its own ``dev_env`` when that env still exists; else the operator's
+    selection or ``--env`` if it composes the line; else the one env that
+    does. Several envs of the line and no preference among them refuses
+    with source ``ambiguous``. When no env is known to compose the line,
+    resolution falls back to the precedence in the module docstring and
+    the job-start check refuses a wrong line (poly-7pwa.14).
 
     ``available_envs`` is the enumerable env list; if not supplied
     we call :func:`list_available_envs_detailed`. Pass an explicit
     value in tests to avoid touching the host filesystem, with
-    ``enumeration_error`` to simulate an unreadable store.
+    ``enumeration_error`` to simulate an unreadable store, and
+    ``env_lines`` ({env: line}) to avoid reading env state.
     """
+    job = job if isinstance(job, dict) else None
+    line = build_line(job.get("target")) if job is not None else ""
+    job_env = job.get("dev_env") if job is not None else None
+    job_env = job_env if isinstance(job_env, str) and job_env else None
+
+    if available_envs is not None:
+        names: tuple[str, ...] | None = tuple(available_envs)
+    elif env_lines is not None:
+        names = tuple(env_lines)
+    else:
+        names = None
+
+    def _names() -> tuple[str, ...]:
+        # The same listing envs_by_build_line reads. Empty when the store
+        # cannot be read, which nothing below treats as "no env exists".
+        nonlocal names
+        if names is None:
+            names = tuple(list_available_envs())
+        return names
+
     # Step 1: the job carries its own env (patch, verify and confirm
-    # jobs; a hook-created job never does).
-    if job is not None:
-        job_env = job.get("dev_env") if isinstance(job, dict) else None
-        if isinstance(job_env, str) and job_env:
+    # jobs; a hook-created job never does). A job with a line whose env is
+    # known to be gone -- the listing has envs, and not that one -- routes
+    # again rather than fail on a ghost.
+    if job_env:
+        if not line or not _names() or job_env in _names():
             return EnvResolution(env=job_env, source="job")
+        _log.warning("env_resolver: job env %s no longer exists; routing "
+                     "by build line %s", job_env, line)
+
+    active = _active_env(db_conn)
+
+    if line:
+        if env_lines is None:
+            env_lines = {}
+            for name in _names():
+                try:
+                    env_lines[name] = env_compose_target(name)
+                except LookupError:
+                    continue
+        candidates = tuple(n for n in _names() if env_lines.get(n) == line)
+        if active in candidates:
+            return EnvResolution(env=active, source="tracker",
+                                 available_envs=candidates)
+        if cli_env in candidates:
+            return EnvResolution(env=cli_env, source="cli_flag",
+                                 available_envs=candidates)
+        if len(candidates) == 1:
+            return EnvResolution(env=candidates[0], source="line",
+                                 available_envs=candidates)
+        if len(candidates) > 1:
+            return EnvResolution(
+                env=None, source="ambiguous", available_envs=candidates,
+                refusal_reason=(
+                    f"{len(candidates)} dev-envs compose {line} "
+                    f"({', '.join(candidates)}); select one of them in the "
+                    f"tracker UI or pass --env NAME"),
+            )
+        # No env is known to compose the line: the old precedence, and the
+        # job-start check refuses it if the env it lands in is wrong.
 
     # Step 2: tracker active env.
-    if db_conn is not None:
-        try:
-            # Local import to keep agent package decoupled from
-            # tracker imports at module load time.
-            from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
-                get_active_env,
-            )
-            # This builder's own choice first, the deployment default
-            # behind it. Without the runner_id a per-builder selection could
-            # never take effect (poly-fij.13).
-            from dportsv3.agent.runner import runner_id  # noqa: PLC0415
-            active = get_active_env(db_conn, runner_id())
-            if active:
-                return EnvResolution(env=active, source="tracker")
-        except Exception as exc:
-            # Schema not yet migrated, or query raised — fall through
-            # to the lower-precedence sources rather than crash the
-            # runner. Log at WARN so a persistent failure is visible
-            # (operator might expect tracker selection to take effect
-            # but the read keeps failing for a real reason).
-            _log.warning(
-                "env_resolver: tracker active-env read failed "
-                "(%s: %s); falling through to lower precedence",
-                type(exc).__name__, exc,
-            )
+    if active:
+        return EnvResolution(env=active, source="tracker")
 
     # Step 3: CLI flag passed to the runner at startup.
     if cli_env:
@@ -260,3 +310,30 @@ def resolve_env_for_job(
         refusal_reason=reason, available_envs=envs,
         enumeration_error=enumeration_error,
     )
+
+
+def _active_env(db_conn: sqlite3.Connection | None) -> str | None:
+    """The operator's selection: this builder's, else the default."""
+    if db_conn is None:
+        return None
+    try:
+        # Local import to keep agent package decoupled from
+        # tracker imports at module load time.
+        from dportsv3.tracker.agentic_queries import (  # noqa: PLC0415
+            get_active_env,
+        )
+        # This builder's own choice first, the deployment default
+        # behind it. Without the runner_id a per-builder selection could
+        # never take effect (poly-fij.13).
+        from dportsv3.agent.runner import runner_id  # noqa: PLC0415
+        return get_active_env(db_conn, runner_id()) or None
+    except Exception as exc:
+        # Schema not yet migrated, or query raised — fall through
+        # to the lower-precedence sources rather than crash the
+        # runner. Log at WARN so a persistent failure is visible.
+        _log.warning(
+            "env_resolver: tracker active-env read failed "
+            "(%s: %s); falling through to lower precedence",
+            type(exc).__name__, exc,
+        )
+        return None

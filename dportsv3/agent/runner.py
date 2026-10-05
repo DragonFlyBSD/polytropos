@@ -1360,11 +1360,12 @@ def sweep_stale_worktrees(queue_root: Path, env: str) -> list[str]:
     claimed anything yet, so every ``/work/job-*`` directory is by definition
     a leftover. Nothing is checked for liveness because nothing can be live.
 
-    Single env by design. Sweeping envs this runner is not using would mean
-    running ``rm -rf`` inside a tree an operator might be sitting in — the
-    lock says nothing about ``dev-env shell``, which does not mark an env
-    busy. When a runner owns several envs (poly-s9m) this loops over the set
-    it owns, which is still the set it can reason about.
+    main() calls it for every env on the host, because jobs route to the
+    env of their build line (poly-p2ve), so a crashed job's worktree can be
+    in any of them. Only ``/work/job-*`` directories are removed, which
+    ``dev-env shell`` never creates; but each sweep also points
+    ``/work/ports`` back at the main checkout (worker.sweep_job_worktrees),
+    which an operator mid-``dev-env shell`` in that env would notice.
 
     Returns the worktree directory names removed.
     """
@@ -1836,10 +1837,10 @@ def process_build_requests(queue_root: Path) -> None:
     :func:`_record_confirm_failure` (C4), so the feed backs off instead of
     re-deriving the same doomed work every pass.
 
-    An issue whose build line the selected env does not compose, while
-    another env on this host does, waits here, unclaimed and uncounted,
-    until an env of its line is selected; the job is then pinned to the env
-    it was checked against (poly-7pwa.14).
+    A build is pinned to the env its line routes to (_line_routes). An issue
+    whose line cannot route -- several envs compose it and none is
+    preferred, or that env is broken -- waits here, unclaimed and uncounted
+    (poly-p2ve).
     """
     if _state_db_conn is None:
         return
@@ -1854,7 +1855,7 @@ def process_build_requests(queue_root: Path) -> None:
     if not issues:
         return
     gate_env = resolve_env_for_gate()
-    held = _lines_held_back(gate_env)
+    routes, held = _line_routes(gate_env)
     for issue in issues:
         issue_key = issue.get("issue_key")
         bundle_id = issue.get("delivery_bundle_id")
@@ -1875,7 +1876,7 @@ def process_build_requests(queue_root: Path) -> None:
             job_path = enqueue_confirm_build_job(
                 queue_root, issue_key=issue_key, bundle_id=bundle_id,
                 origin=origin, target=target, generation=generation,
-                dev_env=gate_env,
+                dev_env=routes.get(build_line(target)) or gate_env,
             )
         except Exception as exc:
             # An enqueue that fails is an attempt that produced no verdict,
@@ -2857,49 +2858,97 @@ def _write_job_file(dest_dir: Path, meta: dict, job_id: str) -> Path:
     return path
 
 
-# --- jobs that wait for an env of their build line (poly-7pwa.14) ----------
+# --- jobs routed to an env of their build line (poly-p2ve) -----------------
 #
-# A dev-env composes one build line, and a hook-created job names no env, so
-# it would run in whichever env is selected. While the selected env composes
-# another line that some env on this host composes, such a job is left
-# QUEUED instead: it runs once an env of its line is selected. A line no env
-# here composes is never held -- nothing could ever release it -- and goes on
-# to the job-start refusal (_check_env_build_line).
+# A dev-env composes one build line. A job runs in an env of its own line
+# (env_resolver.resolve_env_for_job), so a host with an env per line serves
+# every line with nothing selected. A line's unpinned jobs wait only when it
+# cannot route: several envs compose it and none is preferred, or the env it
+# routes to is broken. A line no env here composes is never held -- nothing
+# could release it -- and goes on to the job-start refusal
+# (_check_env_build_line, poly-7pwa.14).
 
-#: Jobs left queued on the last claim pass, per build line. Read by the
-#: idle runner status (_idle_stage).
+#: Jobs left queued on the last claim pass, per build line, and why. Read by
+#: the idle runner status (_idle_stage).
 _HELD_FOR_LINE: dict[str, int] = {}
+_HELD_REASON: dict[str, str] = {}
 
 
-def _lines_held_back(gate_env: str | None) -> frozenset[str]:
-    """The build lines whose unpinned jobs wait while ``gate_env`` is selected.
+def _line_routes(pref_env: str | None) -> tuple[dict[str, str], dict[str, str]]:
+    """``({line: env}, {line: why it waits})`` for every line some env composes.
 
-    Every line some env on this host composes, except ``gate_env``'s own.
-    Empty when no env is selected or its line cannot be read: nothing is
-    held on a guess.
+    The same choice as env_resolver.resolve_env_for_job: ``pref_env`` (the
+    operator's selection, or --env, or the sole env) when it composes the
+    line, then --env, then the only env of the line. Health comes from the
+    probe cache only; the gate is what probes (_cached_health_broken).
     """
     from dportsv3.agent import env_resolver  # noqa: PLC0415
-    if not gate_env:
-        return frozenset()
-    try:
-        own = env_resolver.env_compose_target(gate_env)
-    except LookupError:
-        return frozenset()
-    return frozenset(env_resolver.envs_by_build_line()) - {own}
+    routes: dict[str, str] = {}
+    held: dict[str, str] = {}
+    for line, envs in env_resolver.envs_by_build_line().items():
+        if pref_env in envs:
+            env = pref_env
+        elif _CLI_ENV_DEFAULT in envs:
+            env = _CLI_ENV_DEFAULT
+        elif len(envs) == 1:
+            env = envs[0]
+        else:
+            held[line] = (f"{len(envs)} envs compose it ({', '.join(envs)}); "
+                          f"select one")
+            continue
+        routes[line] = env
+        if _cached_health_broken(env):
+            held[line] = f"env {env} is broken"
+    # A job with no target cannot route by line. It needs a preferred env
+    # once there is more than one to choose from.
+    if not pref_env:
+        envs = env_resolver.list_available_envs()
+        if len(envs) > 1:
+            held[""] = (f"the job names no build line and {len(envs)} envs "
+                        f"exist; select one")
+    return routes, held
 
 
-def _waits_for_its_line(meta: dict, held: frozenset[str]) -> bool:
-    """True when the job ``meta`` describes waits for an env of its line.
+def _watched_envs(pref_env: str | None) -> list[str]:
+    """The envs the gate probes: every env some build line routes to.
 
-    A job pinned to an env (``dev_env``) never waits: its env cannot
-    change, so it would wait forever; the job-start check refuses it
-    instead. Counts each waiting job in _HELD_FOR_LINE.
+    Empty when no line routes and nothing is preferred: no env, none whose
+    line can be read, or every line ambiguous. That is when the gate holds
+    the runner (poly-i7y). Two envs of two lines and nothing selected watch
+    both (poly-p2ve).
+    """
+    routes, _held = _line_routes(pref_env)
+    return sorted(set(routes.values()) or ({pref_env} if pref_env else set()))
+
+
+def _lines_held_back(pref_env: str | None) -> dict[str, str]:
+    """The build lines whose unpinned jobs wait, with the reason.
+
+    Empty when env lines cannot be read: nothing is held on a guess.
+    """
+    _routes, held = _line_routes(pref_env)
+    _HELD_REASON.clear()
+    _HELD_REASON.update(held)
+    return held
+
+
+def _waits_for_its_line(meta: dict, held) -> bool:
+    """True when the job ``meta`` describes waits for its line to route.
+
+    A job pinned to an env (``dev_env``) does not wait for its line: its env
+    cannot change, so it would wait forever; the job-start check refuses a
+    wrong one instead. It does wait while that env is broken, which would
+    otherwise retire it ENV_BROKEN. Counts each waiting job in
+    _HELD_FOR_LINE.
     """
     from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
-    if meta.get("dev_env"):
-        return False
     line = build_line(meta.get("target"))
-    if line not in held:
+    pinned = meta.get("dev_env")
+    if pinned:
+        if not _cached_health_broken(pinned):
+            return False
+        _HELD_REASON.setdefault(line, f"env {pinned} is broken")
+    elif line not in held:
         return False
     _HELD_FOR_LINE[line] = _HELD_FOR_LINE.get(line, 0) + 1
     return True
@@ -2909,9 +2958,11 @@ def _idle_stage() -> str:
     """The idle runner status, naming the build lines whose jobs wait."""
     if not _HELD_FOR_LINE:
         return "waiting"
-    counts = ", ".join(f"{n} for {line}"
-                       for line, n in sorted(_HELD_FOR_LINE.items()))
-    return f"waiting: queued jobs need an env of their build line ({counts})"
+    counts = "; ".join(
+        f"{n} for {line or '(no target)'}"
+        + (f" ({_HELD_REASON[line]})" if _HELD_REASON.get(line) else "")
+        for line, n in sorted(_HELD_FOR_LINE.items()))
+    return f"waiting: queued jobs cannot route to an env of their line: {counts}"
 
 
 def _reap_stale_queued_at_startup(queue_root: Path, max_age: int) -> list[str]:
@@ -2939,7 +2990,7 @@ def _reap_stale_queued_at_startup(queue_root: Path, max_age: int) -> list[str]:
 
 
 def claim_stranded_db_jobs(
-    queue_root: Path, *, held: frozenset[str] | None = None,
+    queue_root: Path, *, held: dict[str, str] | None = None,
 ) -> tuple[Path, list[Path]] | None:
     """Claim queued triage jobs whose .job file this runner cannot see.
 
@@ -2950,8 +3001,8 @@ def claim_stranded_db_jobs(
     to the next candidate.
 
     Returns ``(lead_path, sibling_paths)`` as ``claim_next_job_batch``
-    does, or ``None``. ``held`` is the set of build lines whose jobs wait
-    for their env (_lines_held_back); None computes it.
+    does, or ``None``. ``held`` is the build lines whose jobs wait for an
+    env (_lines_held_back); None computes it.
     """
     from dportsv3.agent.lifecycle import JobEvent
 
@@ -2970,8 +3021,8 @@ def claim_stranded_db_jobs(
             f"left alone: {','.join(r['job_id'] for r in incomplete[:5])}")
         rows = [r for r in rows if r.get("profile")]
 
-    # A row for a line another env here composes waits for that env to be
-    # selected (poly-7pwa.14). DB rows carry no dev_env.
+    # A row whose line cannot route to an env waits (poly-p2ve). DB rows
+    # carry no dev_env.
     if held is None:
         held = _lines_held_back(resolve_env_for_gate())
     rows = [r for r in rows
@@ -3024,7 +3075,7 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
 
     from dportsv3.agent.steps import job_held_back  # noqa: PLC0415
 
-    # Once per pass: which build lines wait for their env (poly-7pwa.14).
+    # Once per pass: which build lines cannot route to an env (poly-p2ve).
     _HELD_FOR_LINE.clear()
     held = _lines_held_back(resolve_env_for_gate())
 
@@ -3036,7 +3087,7 @@ def claim_next_job_batch(queue_root: Path) -> tuple[Path, list[Path]] | None:
         # A requeued job sits in pending/ like any other; what keeps it
         # from being re-claimed on the very next pass is its own backoff,
         # carried in the job file we just parsed. A job whose build line
-        # the selected env does not compose waits for an env of its line.
+        # cannot route to an env waits (poly-p2ve).
         if job_held_back(lead_meta) or _waits_for_its_line(lead_meta, held):
             continue
         lead_key = _job_dedup_key(lead_meta)
@@ -3898,8 +3949,10 @@ def _check_env_build_line(
 
     composing = env_resolver.envs_by_build_line().get(job_line)
     if composing:
-        hint = (f"select env {' or '.join(composing)} (it composes "
-                f"{job_line}) in the tracker UI")
+        # An unpinned job routes to one of these (poly-p2ve), so only a
+        # job pinned to another line's env gets here.
+        hint = (f"the job is pinned to env {env}; run it in env "
+                f"{' or '.join(composing)}, which composes {job_line}")
     else:
         hint = (f"no env on this host composes {job_line}: create one with "
                 f"'dportsv3 dev-env create --target {job_line}', or correct "
@@ -4190,7 +4243,7 @@ def process_triage_job(
     # job's build line. The pin makes the port-relation probe, the overlay
     # bootstrap and the patch job this triage enqueues use the checked env.
     env = resolve_env(job)
-    if env and not job.get("dev_env"):
+    if env and job.get("dev_env") != env:
         job["dev_env"] = env
     _, refused = _check_env_build_line(
         queue_root=queue_root, job=job, job_id=job_id,
@@ -4891,7 +4944,7 @@ def process_patch_job(
     # and process_job's branch drop use the env checked here, even if the
     # tracker selection moves mid-job.
     env = resolve_env(job)
-    if env and not job.get("dev_env"):
+    if env and job.get("dev_env") != env:
         job["dev_env"] = env
     env_line, refused = _check_env_build_line(
         queue_root=queue_root, job=job, job_id=job_id,
@@ -5688,31 +5741,36 @@ def main(argv: list[str] | None = None) -> int:
     # without a runner restart. Empty = no gate (no env to watch);
     # operator gets a one-time WARN at startup.
     runner_env = resolve_env(None) or ""
+    from dportsv3.agent.env_resolver import list_available_envs  # noqa: PLC0415
+    all_envs = list_available_envs()
 
     # B3: with the lock held and nothing claimed yet, every /work/job-*
-    # directory in our env is a leftover from a runner that died mid-job.
-    if runner_env:
-        swept = sweep_stale_worktrees(queue_root, runner_env)
+    # directory is a leftover from a runner that died mid-job -- in every
+    # env, since jobs route to the env of their line (poly-p2ve).
+    for sweep_env in (all_envs or ((runner_env,) if runner_env else ())):
+        swept = sweep_stale_worktrees(queue_root, sweep_env)
         if swept:
             log(queue_root, "INFO",
-                f"swept {len(swept)} stale worktree(s) in {runner_env}: "
+                f"swept {len(swept)} stale worktree(s) in {sweep_env}: "
                 + ", ".join(swept[:5])
                 + ("..." if len(swept) > 5 else ""))
             activity_log(queue_root, "worktrees_swept",
                          f"removed {len(swept)} stale worktree(s) in "
-                         f"{runner_env}",
-                         extra={"env": runner_env, "removed": swept[:20]})
+                         f"{sweep_env}",
+                         extra={"env": sweep_env, "removed": swept[:20]})
 
-    if not runner_env:
+    if not runner_env and not all_envs:
         log(queue_root, "WARN",
-            "no dev-env resolved at runner start; the runner will hold "
-            "instead of processing jobs, because without an env there is "
-            "no dsynth-busy gate and concurrent dsynth runs corrupt "
-            "buildbase. Set an active env in the tracker UI or pass "
-            "--env NAME.")
+            "no dev-env exists at runner start; the runner will hold "
+            "instead of processing jobs. Create one with "
+            "`dportsv3 dev-env create NAME --target TARGET`.")
 
     _last_busy_reason = ""
-    _last_health_reason = ""
+    # Envs broken on the last gate, and whether that paused the runner
+    # (every routed env broken). One broken env of several only holds its
+    # line's jobs (poly-p2ve).
+    _last_broken_envs: set[str] = set()
+    _last_health_full = False
     _last_no_env_reason = ""
     # None means "not paused as far as this loop has noticed", which is
     # different from "" -- a pause with no reason given.
@@ -5722,7 +5780,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     def _gate_blocked() -> bool:
-        nonlocal _last_busy_reason, _last_health_reason, _last_no_env_reason
+        nonlocal _last_busy_reason, _last_no_env_reason
+        nonlocal _last_broken_envs, _last_health_full
         nonlocal _last_operator_pause
         # The operator's pause outranks all three self-pauses, and is
         # checked before them: ordered the other way, a health pause
@@ -5756,47 +5815,63 @@ def main(argv: list[str] | None = None) -> int:
             _last_operator_pause = None
 
         # Re-resolve per cycle (cached for 1 s) so operator selection
-        # in the tracker UI takes effect without a runner restart.
+        # in the tracker UI takes effect without a runner restart. The
+        # selection is a preference: each build line routes to an env of
+        # its own (poly-p2ve), so the gate watches every env a line routes
+        # to. A broken one holds its line's jobs (_lines_held_back); the
+        # runner pauses only when none of them can take work.
         runner_env = resolve_env_for_gate() or ""
-        # Health probe first. If broken, we pause regardless of
-        # dsynth-busy state — there's no point running anything until
-        # the env is repaired. Cache keeps this cheap (default 60s);
-        # tool errors that look env-suspicious invalidate the cache
-        # so a freshly-broken env is detected on the next gate.
-        if runner_env:
-            eh = probe_health_cached(runner_env, health_cache_seconds)
+        watched = _watched_envs(runner_env or None)
+        # Health probe first. Cache keeps this cheap (default 60s); tool
+        # errors that look env-suspicious invalidate the cache so a
+        # freshly-broken env is detected on the next gate.
+        broken: dict[str, str] = {}
+        for env in watched:
+            eh = probe_health_cached(env, health_cache_seconds)
             if eh.status == "broken":
-                reason = (eh.operator_action
-                          or f"env {runner_env} status=broken")
-                if reason != _last_health_reason:
-                    log(queue_root, "INFO",
-                        f"runner paused: health broken: {reason}")
-                    activity_log(queue_root, "health_broken",
-                                 f"env {runner_env} broken; pausing runner",
-                                 extra={"operator_action": reason[:500]})
-                    _last_health_reason = reason
-                update_runner_status(
-                    "paused", job_id=None,
-                    stage=f"health_broken: {reason[:120]}",
-                )
-                return True
-            if _last_health_reason and eh.status == "ready":
-                log(queue_root, "INFO", "runner resumed: health ready")
+                broken[env] = eh.operator_action or f"env {env} status=broken"
+        health_reason = "; ".join(broken[e] for e in sorted(broken))
+        full = bool(watched) and len(broken) == len(watched)
+        if set(broken) != _last_broken_envs or full != _last_health_full:
+            names = ", ".join(sorted(broken))
+            if full:
+                log(queue_root, "INFO",
+                    f"runner paused: health broken: {health_reason}")
+                activity_log(queue_root, "health_broken",
+                             f"env {names} broken; pausing runner",
+                             extra={"operator_action": health_reason[:500]})
+            elif broken:
+                log(queue_root, "INFO",
+                    f"env {names} broken; its line's jobs wait: "
+                    f"{health_reason}")
+                activity_log(queue_root, "health_broken",
+                             f"env {names} broken; its line's jobs wait",
+                             extra={"operator_action": health_reason[:500]})
+            else:
+                log(queue_root, "INFO", "health ready")
                 activity_log(queue_root, "health_ready",
-                             f"env {runner_env} healthy; resuming")
-                _last_health_reason = ""
+                             f"env {', '.join(watched)} healthy")
+            if _last_health_full and not full:
+                log(queue_root, "INFO", "runner resumed: an env is healthy")
+                update_runner_status("idle", job_id=None, stage="waiting")
+            _last_broken_envs = set(broken)
+            _last_health_full = full
+        if full:
+            update_runner_status(
+                "paused", job_id=None,
+                stage=f"health_broken: {health_reason[:120]}",
+            )
+            return True
 
-        if not runner_env:
-            # poly-i7y: no env means dsynth_active() has nothing to ask
-            # about, so the busy gate is not "off" — it is unanswerable.
-            # Hold rather than run ungated. Reversible from the tracker
-            # UI: selecting an env re-resolves on the next tick.
+        if not watched:
+            # poly-i7y: no env anywhere (or none readable). Hold rather than
+            # run. Reversible: creating or selecting an env re-resolves on
+            # the next tick.
             reason = _no_env_reason()
             if reason != _last_no_env_reason:
                 log(queue_root, "INFO", f"runner paused: {reason}")
                 activity_log(queue_root, "no_env",
-                             "no dev-env resolved; holding jobs "
-                             "(dsynth-busy gate unavailable)",
+                             "no dev-env resolved; holding jobs",
                              extra={"reason": reason[:500]})
                 _last_no_env_reason = reason
             update_runner_status(
@@ -5806,8 +5881,10 @@ def main(argv: list[str] | None = None) -> int:
             return True
         if _last_no_env_reason:
             log(queue_root, "INFO",
-                f"runner resumed: dev-env {runner_env} resolved")
+                f"runner resumed: dev-env {', '.join(watched)} resolved")
             _last_no_env_reason = ""
+        # dsynth_active is host-wide (pgrep -x dsynth); its env is unused.
+        runner_env = runner_env or watched[0]
         busy, reason = dsynth_active(runner_env, queue_root)
         if busy and reason != _last_busy_reason:
             log(queue_root, "INFO", f"runner paused: {reason}")
@@ -5836,7 +5913,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             while True:
                 if _gate_blocked():
-                    if _last_health_reason:
+                    if _last_health_full:
                         # Don't hammer the chroot probing while the env
                         # is known broken; the cache (default 60s) is
                         # what limits the rate. Sleep aligns with that.

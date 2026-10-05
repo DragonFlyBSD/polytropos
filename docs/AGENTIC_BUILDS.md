@@ -82,17 +82,17 @@ and having claimed nothing yet, it knows every leftover is a leftover:
 - `inflight/` job files are moved to `failed/` with a note. Their rows were
   already marked dead; the files were previously stranded, since only
   `pending/` is ever scanned again.
-- Per-job worktrees (`/work/job-*`) in the runner's dev-env are removed and
-  the ports link is put back on the main checkout. Only that env is swept —
-  `dev-env shell` does not mark an env busy, so sweeping envs the runner
-  does not own could mean `rm -rf` inside a tree someone is working in.
+- Per-job worktrees (`/work/job-*`) are removed in every dev-env on the
+  host, since jobs route to the env of their line, and each env's
+  `/work/ports` link is put back on the main checkout. `dev-env shell` never
+  creates a `job-*` directory, so no one's tree is deleted, but someone in a
+  `dev-env shell` would see `/work/ports` move.
 
-**No env, no jobs.** The dsynth-busy gate asks "is a build running in this
-env?", so with no env resolved there is nothing to ask. The runner holds
-instead of processing jobs ungated, and reports `no_dev_env` with the reason.
-Selecting an env in the tracker UI resumes it on the next tick; `--env NAME`
-does the same at startup. A single env on the host is auto-picked and needs
-no action.
+**No env, no jobs.** With no env on the host (or none whose line can be
+read and nothing selected), the runner holds and reports `no_dev_env` with
+the reason. Creating an env, or selecting one in the tracker UI, resumes it
+on the next tick; `--env NAME` does the same at startup. Envs need no
+selection otherwise: see below.
 
 If the env store cannot be *read* at all, that is a different situation and
 the runner exits `4` at startup rather than holding. Every `dev-env`
@@ -100,23 +100,30 @@ subcommand requires root, so a runner that cannot enumerate envs could not
 exec into one either — "no envs exist" and "you are not root" take opposite
 operator actions and must not read the same.
 
-**A job runs only in an env of its own build line.** A dev-env composes one
-target, and a job, a verify and a confirm build are each for one.
-Hook-created jobs name no env, so a queued job whose line the selected env
-does not compose, while another env on this host does, waits in the queue,
-also across a runner restart: the runner status says how many, and for
-which line, and the job runs once an env of that line is selected. A
-confirm build waits the same way and spends none of its retry budget. A
-verify asked for in an env of another line never starts; its request says
-why. Before triage or a patch attempt the runner checks the pairing once
-more, and a job pinned to an env of another line, or for a line no env on
-this host composes, is retired with retire_reason `env_target_mismatch`
-and an activity row naming both lines. The port is triaged again the next
-time it fails on its line, or through Retry, which waits like any queued
-job until an env of its line is selected (for a line no env here composes,
-create that env first); Retry's required note reaches the agent and lets a
-MANUAL decision run an attempt. `dportsv3 verify-fix --env` refuses an env
-of another line.
+**A job runs in an env of its own build line.** A dev-env composes one
+target, and a job, a verify and a confirm build are each for one. A job
+routes to an env of its line (poly-p2ve): its own `dev_env` if it has one;
+else the env selected in the tracker UI, or `--env`, when that env composes
+the line; else the only env that does. So a host with one env per line
+serves every line with nothing selected: the selection only breaks a tie
+between several envs of one line. The gate probes every env a line routes
+to; a broken env holds its line's jobs and the runner pauses only when no
+routed env is healthy.
+
+A queued job waits, also across a runner restart, only when its line cannot
+route: several envs compose it and none is selected, or its env is broken.
+The runner status says how many wait, for which line, and why. A confirm
+build waits the same way and spends none of its retry budget, and is pinned
+to its line's env. A verify asked for in an env of another line never
+starts; its request says why. Before triage or a patch attempt the runner
+checks the pairing once more, and a job pinned to an env of another line,
+or for a line no env on this host composes, is retired with retire_reason
+`env_target_mismatch` and an activity row naming both lines. The port is
+triaged again the next time it fails on its line, or through Retry (for a
+line no env here composes, create that env first); Retry's required note
+reaches the agent and lets a MANUAL decision run an attempt.
+`dportsv3 verify-fix` without `--env` routes by the bundle's line, and
+refuses an env of another line.
 
 ## Environment
 
