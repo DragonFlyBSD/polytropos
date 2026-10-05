@@ -229,6 +229,68 @@ def bundle_actions(
     }
 
 
+@dataclass(frozen=True)
+class VerifyEnvChoices:
+    """The Verify env picker: what to list, what to pre-select."""
+    offered: tuple[str, ...]
+    default: str | None
+    #: Known to compose another build line than the bundle's, so left out.
+    excluded: tuple[str, ...]
+
+
+def verify_env_choices(
+    health_rows: list[dict[str, Any]],
+    bundle_target: str | None,
+    active_env: str | None,
+) -> VerifyEnvChoices:
+    """Envs the Verify picker offers for one bundle (poly-ti0f).
+
+    The runner refuses a verify in an env that composes another build line
+    than the bundle's target (poly-7pwa.14), so listing such an env, or
+    pre-selecting it, only queues a request that fails. An env's line comes
+    from its health rows, where the runner records it as ``target``; an env
+    no row gives a line for stays listed, because only a known mismatch is a
+    mismatch -- the same rule the runner applies.
+
+    Pre-selects the active env when it is listed and either composes the
+    bundle's line or no listed env is known to; otherwise the first env
+    known to compose it; otherwise the first listed.
+    """
+    from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
+
+    line = build_line(bundle_target)
+    names: list[str] = []
+    lines: dict[str, str] = {}
+    for row in health_rows:
+        name = row.get("env")
+        if not name:
+            continue
+        name = str(name)
+        if name not in names:
+            names.append(name)
+        detail = row.get("detail")
+        known = detail.get("target") if isinstance(detail, dict) else None
+        if isinstance(known, str) and known:
+            lines[name] = build_line(known)
+
+    if not line:
+        offered = list(names)
+    else:
+        offered = [n for n in names if lines.get(n) in (None, line)]
+    excluded = tuple(n for n in names if n not in offered)
+    matching = [n for n in offered if line and lines.get(n) == line]
+
+    if active_env in offered and (
+        not line or lines.get(active_env) == line or not matching
+    ):
+        default: str | None = active_env
+    elif matching:
+        default = matching[0]
+    else:
+        default = offered[0] if offered else None
+    return VerifyEnvChoices(tuple(offered), default, excluded)
+
+
 # --- State projection (consumed by templates for the status pill) ----------
 
 # In-flight job states — a bundle with resolution=NULL whose job is still

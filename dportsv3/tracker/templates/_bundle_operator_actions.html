@@ -16,7 +16,7 @@
                   data-bundle="{{ bundle.bundle_id }}"
                   {% if not operator_actions.verify_envs %}
                   disabled
-                  title="No dev-envs registered with the tracker. Provision one with `dportsv3 dev-env create ...` first."
+                  title="{{ operator_actions.verify_envs_note }}"
                   {% endif %}>
             Verify
           </button>

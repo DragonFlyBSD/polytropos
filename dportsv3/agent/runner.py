@@ -338,6 +338,20 @@ def probe_health_cached(env: str, ttl_seconds: int):
     return eh
 
 
+def _env_target_detail(env: str) -> dict[str, str]:
+    """``{"target": "@T"}`` for ``env``'s build line, or ``{}`` if unreadable.
+
+    Recorded in env_health_status.detail_json because the tracker runs
+    unprivileged and cannot read an env's env.json, yet its Verify picker
+    needs the line to leave out envs the runner would refuse (poly-ti0f).
+    """
+    from dportsv3.agent.env_resolver import env_compose_target  # noqa: PLC0415
+    try:
+        return {"target": env_compose_target(env)}
+    except LookupError:
+        return {}
+
+
 def stub_unprobed_envs() -> int:
     """Insert a placeholder ``env_health_status`` row for every env
     on disk that isn't already in the table.
@@ -368,9 +382,10 @@ def stub_unprobed_envs() -> int:
                     """INSERT OR IGNORE INTO env_health_status
                        (runner_id, env, status, probed_at, operator_action,
                         detail_json, updated_at)
-                       VALUES (?, ?, 'unprobed', NULL, NULL,
-                               '{"checks":[]}', ?)""",
-                    (runner_id(), env, ts),
+                       VALUES (?, ?, 'unprobed', NULL, NULL, ?, ?)""",
+                    (runner_id(), env,
+                     json.dumps({"checks": [], **_env_target_detail(env)}),
+                     ts),
                 )
                 if cur.rowcount:
                     inserted += 1
@@ -394,6 +409,8 @@ def record_env_health(env_health) -> None:
         detail = env_health.to_dict()
     except Exception:
         detail = {"env": env, "status": status}
+    if isinstance(detail, dict) and "target" not in detail:
+        detail.update(_env_target_detail(env))
     ts = datetime.now(timezone.utc).isoformat()
     try:
         with _state_db_lock:

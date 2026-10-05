@@ -99,3 +99,46 @@ def test_stub_no_db_conn_is_safe(monkeypatch):
     )
     # Must not raise.
     assert runner.stub_unprobed_envs() == 0
+
+
+def _detail(conn, env):
+    import json
+    raw = conn.execute(
+        "SELECT detail_json FROM env_health_status WHERE env = ?", (env,)
+    ).fetchone()["detail_json"]
+    return json.loads(raw)
+
+
+def _targets(env):
+    if env == "unreadable":
+        raise LookupError("no env.json")
+    return {"main": "@main", "q3": "@2026Q3"}[env]
+
+
+def test_stub_records_each_env_build_line(in_memory_db, monkeypatch):
+    """The tracker's Verify picker reads the line from here (poly-ti0f)."""
+    monkeypatch.setattr(
+        env_resolver, "list_available_envs",
+        lambda: ("main", "q3", "unreadable"),
+    )
+    monkeypatch.setattr(env_resolver, "env_compose_target", _targets)
+    runner.stub_unprobed_envs()
+    assert _detail(in_memory_db, "main") == {"checks": [], "target": "@main"}
+    assert _detail(in_memory_db, "q3")["target"] == "@2026Q3"
+    # Unknown stays unknown: no target key rather than a guess.
+    assert _detail(in_memory_db, "unreadable") == {"checks": []}
+
+
+def test_a_probe_records_the_build_line(in_memory_db, monkeypatch):
+    class _Health:
+        env = "main"
+        status = "ready"
+        probed_at = None
+        operator_action = None
+
+        def to_dict(self):
+            return {"env": "main", "status": "ready", "checks": []}
+
+    monkeypatch.setattr(env_resolver, "env_compose_target", _targets)
+    runner.record_env_health(_Health())
+    assert _detail(in_memory_db, "main")["target"] == "@main"

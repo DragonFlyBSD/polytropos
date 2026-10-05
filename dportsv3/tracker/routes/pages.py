@@ -1098,36 +1098,38 @@ def register(app, ctx):
         acts = fix_state.bundle_actions(bundle, can_operate=can_operate())
         # Env picker for the Verify button — a live DB read, so it stays
         # here rather than in the pure policy. Populate only when Verify
-        # is eligible; default-select the active env, falling back to the
-        # first known env when the active one is cleared/decommissioned.
+        # is eligible. fix_state.verify_env_choices leaves out envs known
+        # to compose another build line than the bundle's, which the runner
+        # would refuse, and picks the default (poly-ti0f).
         verify_envs: list[str] = []
         verify_default_env: str | None = None
+        verify_envs_note = (
+            "No dev-envs registered with the tracker. Provision one with "
+            "`dportsv3 dev-env create ...` first."
+        )
         if acts["can_verify"]:
             with _conn() as _envs_conn:
-                # DISTINCT names, order preserved: health rows are per
-                # (builder, env) since poly-fij.13, so two builders carrying
-                # 2026Q3 produce two rows and this picker would list it
-                # twice. verify-fix is a CLI the operator runs on some host,
-                # and the tracker cannot know which -- so the union of names
-                # is the right set here, not one builder's.
-                verify_envs = list(dict.fromkeys(
-                    str(r.get("env"))
-                    for r in env_health_statuses(_envs_conn)
-                    if r.get("env")
-                ))
-                verify_default_env = get_active_env(_envs_conn)
-            if (
-                verify_default_env is not None
-                and verify_default_env not in verify_envs
-            ):
-                verify_default_env = verify_envs[0] if verify_envs else None
-            elif verify_default_env is None and verify_envs:
-                verify_default_env = verify_envs[0]
+                # Names are the union over builders: health rows are per
+                # (builder, env) since poly-fij.13, and verify-fix is a CLI
+                # the operator runs on some host the tracker cannot know.
+                choices = fix_state.verify_env_choices(
+                    env_health_statuses(_envs_conn),
+                    bundle.get("target"),
+                    get_active_env(_envs_conn),
+                )
+            verify_envs = list(choices.offered)
+            verify_default_env = choices.default
+            if not verify_envs and choices.excluded:
+                verify_envs_note = (
+                    f"No dev-env composes {bundle.get('target')}: "
+                    f"{', '.join(choices.excluded)} compose other build lines."
+                )
 
         operator_actions = {
             **acts,
             "verify_envs": verify_envs,
             "verify_default_env": verify_default_env,
+            "verify_envs_note": verify_envs_note,
         }
         # Fix-review chat: offer the panel when the tracker has a chat
         # model configured (llm.chat.model) AND there is something to
