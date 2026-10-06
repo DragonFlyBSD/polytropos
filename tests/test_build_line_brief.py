@@ -73,32 +73,52 @@ def test_it_says_nothing_here_can_check_the_others(env):
     assert "whether a change also works on the rest" in brief
 
 
-def test_the_always_on_line_defaults_to_any_and_names_the_exception(env):
-    """On 5085 of 5087 ports this is ALL the agent gets.
+def test_a_port_with_an_overlay_keeps_the_change_on_its_line(env):
+    """On almost every port this is ALL the agent gets (poly-7pwa.27).
 
-    New work defaults to @any and scoping answers a divergence the agent can
-    show; a port needing its first per-target split is in that population,
-    so the exception is named too.
+    It used to say "@any unless you can show it is this line's alone",
+    which the agent could never show: devel/glib20's @main patch went to
+    @any and would have broken @2026Q3, whose older glib it did not fit.
     """
     brief = _brief(env, SINGLE)
-    assert "Put a change in `target @any`" in brief
-    assert "unless you can show" in brief
     assert "`target @main` block" in brief
-    assert "decide which it is" not in brief
-    assert "usually the second" not in brief
-    assert "nothing here can check" not in brief
+    assert "Do not edit or delete an `@any` op" in brief
+    assert "override it in that block" in brief
+    assert "Put a change in `target @any`" not in brief
+    assert "unless you can show" not in brief
+
+
+def test_a_port_without_an_overlay_gets_any(env):
+    """Row 1: nothing was built with an overlay on any line."""
+    brief = _brief(env, None)
+    assert "no overlay ops yet" in brief
+    assert "`target @any`" in brief
+    assert "`target @main` block" not in brief
+
+
+def test_a_bootstrap_header_is_still_row_1(env):
+    """The preflight can commit triage's header before the attempt: a file
+    with no ops is still a port nothing was built with."""
+    brief = _brief(env, HEAD + "target @any\n")
+    assert "no overlay ops yet" in brief
+    assert "`target @main` block" not in brief
 
 
 def test_the_always_on_brief_stays_small(env):
-    """It rides on every turn of every patch attempt."""
-    assert len(_brief(env, SINGLE)) <= 540
+    """It rides on every turn of every patch attempt.
+
+    About 620 characters with the longest build line name; the table it
+    states replaced a shorter line that sent every fix to @any.
+    """
+    assert len(_brief(env, None)) <= 320  # before any overlay is written
+    assert len(_brief(env, SINGLE, target="@2026Q3")) <= 640
 
 
-def test_a_single_scope_port_gets_only_the_one_line(env):
-    """The long form is noise on 5085 of 5087 ports."""
+def test_a_single_scope_port_gets_only_the_short_form(env):
+    """The long form is noise on all but a handful of ports."""
     brief = _brief(env, SINGLE)
     assert "per-target blocks" not in brief
-    assert "install_patches" not in brief
+    assert "last `target` block" not in brief
 
 
 def test_a_multi_target_port_is_told_where_an_appended_op_lands(env):
@@ -121,9 +141,10 @@ def test_it_forbids_deleting_the_other_build_lines_ops(env):
     # And it says what to do instead: a prohibition alone gets improvised on.
     # Splitting an @any op into per-target blocks drops it from later lines.
     assert "split it into per-target blocks" not in brief
-    assert "undo or replace it with an op in the `target @main` block" in brief
-    assert "including later ones" in brief
-    assert "no later op can fix that" in brief
+    # Row 4: another line's op that is exactly what this line needs is
+    # shared by widening its target list in place, not copied.
+    assert "share it rather than copy it" in brief
+    assert "`target <its line>,@main`" in brief
 
 
 MAKEFILE = "PORTNAME=\tthing\n\n.include <bsd.port.mk>\n"

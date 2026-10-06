@@ -118,12 +118,17 @@ before classifying the target is the #1 mistake here (it produces a fragile
 reads on this build line — `dragonfly/@<target>/<name>` on a port that
 keeps this patch per build line — so do not assume the path is
 `dragonfly/<name>`; take it from `installed`. Do not add a second
-`file materialize` for it.
+`file materialize` for it, unless `scope_note` gives you one: when
+other build lines read that file too, `install_patches` leaves it alone
+and writes this line's own copy under `dragonfly/@<target>/`, and names
+the one op to add in this line's block. The other lines may still build
+with the old patch; only this one was built with yours.
 
-**`overlay.dops` is not edited at all in this flow.** If you find
-yourself removing that line, stop — you are about to delete the fix
-rather than repair it. A drifted patch is not a broken patch: it is
-still the change DragonFly needs, aimed at lines that moved.
+**`overlay.dops` is not edited at all in this flow**, apart from that
+one op. If you find yourself removing that line, stop — you are about
+to delete the fix rather than repair it. A drifted patch is not a
+broken patch: it is still the change DragonFly needs, aimed at lines
+that moved.
 
 That failure has happened. The port then builds **green** with the
 DragonFly fix gone, and nothing reports it — the worst shape a change can

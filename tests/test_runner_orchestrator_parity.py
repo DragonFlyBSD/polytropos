@@ -262,6 +262,77 @@ def test_patch_gave_up(queue_env, tmp_path, monkeypatch):
     ]
 
 
+def test_a_shared_op_failing_at_preflight_escalates_before_the_agent(
+        queue_env, tmp_path, monkeypatch):
+    """poly-7pwa.27 row 6: an @any op fails to compose on this line. The
+    operator decides; it is not the agent failing to fix the port, and no
+    model is called."""
+    from dportsv3.agent import patch as patch_module
+    from dportsv3.agent import worker
+
+    bdir = _make_bundle_dir(tmp_path)
+    handoffs: list[dict] = []
+
+    def no_agent(*a, **kw):
+        raise AssertionError("the agent ran")
+
+    monkeypatch.setattr(patch_module, "run", no_agent)
+    monkeypatch.setattr(worker, "materialize_dports", lambda env, origin: {
+        "ok": False, "origin": origin, "stderr_tail": "E_COMPOSE_APPLY_FAILED"})
+    monkeypatch.setattr(worker, "invariant_origins", lambda env, o: [o])
+    monkeypatch.setattr(
+        worker, "materialize_dports_with_report", lambda env, o: {
+            "ok": False, "report": {"ports": [{
+                "origin": o, "dops_failed_op_results": [{
+                    "id": "op-0001-text-replace-once",
+                    "kind": "text.replace_once", "target": "@any",
+                    "status": "failed",
+                    "diagnostics": [{"code": "E_APPLY_MISSING_SUBJECT",
+                                     "message": "pattern not found"}],
+                }]}]}})
+    monkeypatch.setattr(runner, "_write_manual_handoff",
+                        lambda *a, **kw: handoffs.append(kw))
+
+    job_path = _drop_patch_job(queue_env, job_id="job-scope.job", bundle_dir=bdir)
+    inflight = _claim(queue_env, job_path)
+    runner.process_job(queue_env["queue_root"], inflight, [],
+                       dry_run=False, playbooks_dir=None)
+
+    events = [r["event_name"]
+              for r in lifecycle.history(queue_env["conn"], "job-scope.job")]
+    assert events == [
+        "hook_enqueued", "claim", "patch_start", "escalate_manual",
+    ], events
+    assert [h["reason"] for h in handoffs] == ["patch_scope_decision"]
+    assert "op-0001-text-replace-once" in handoffs[0]["reason_detail"]
+    row = queue_env["conn"].execute(
+        "SELECT retire_reason FROM jobs WHERE job_id = ?", ("job-scope.job",)
+    ).fetchone()
+    assert row["retire_reason"] != "patch_gave_up"
+
+
+def test_a_preflight_failure_of_this_lines_own_op_is_still_refused(
+        queue_env, tmp_path, monkeypatch):
+    """Not row 6: nothing shared failed, so the old refusal stands."""
+    from dportsv3.agent import worker
+
+    bdir = _make_bundle_dir(tmp_path)
+    monkeypatch.setattr(worker, "materialize_dports", lambda env, origin: {
+        "ok": False, "origin": origin, "stderr_tail": "boom"})
+    monkeypatch.setattr(worker, "invariant_origins", lambda env, o: [o])
+    monkeypatch.setattr(
+        worker, "materialize_dports_with_report",
+        lambda env, o: {"ok": False, "report": {"ports": []}})
+
+    job_path = _drop_patch_job(queue_env, job_id="job-own.job", bundle_dir=bdir)
+    inflight = _claim(queue_env, job_path)
+    runner.process_job(queue_env["queue_root"], inflight, [],
+                       dry_run=False, playbooks_dir=None)
+    events = [r["event_name"]
+              for r in lifecycle.history(queue_env["conn"], "job-own.job")]
+    assert events[-1] == "patch_gave_up", events
+
+
 # --- sibling fan-out ---------------------------------------------------------
 
 

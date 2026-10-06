@@ -49,6 +49,11 @@ REASON_TRIAGE_FAILED = "triage_failed"
 # human — deliberately NOT re-triaged automatically (an accepted-then-failing
 # fix is a judgement call, not more agent work).
 REASON_CONFIRM_RED = "confirm_build_red"
+# poly-7pwa.27, row 6: an op another build line also reads (@any, or a
+# target list) fails to compose on the job's line. Changing it changes the
+# other lines too, and the job builds only one, so the job stops before the
+# agent runs and the operator decides.
+REASON_PATCH_SCOPE_DECISION = "patch_scope_decision"
 
 _REASON_LABELS = {
     REASON_MANUAL_TIER:   "triage classified as MANUAL",
@@ -57,6 +62,8 @@ _REASON_LABELS = {
     REASON_PATCH_GAVE_UP: "patch agent gave up",
     REASON_TRIAGE_FAILED: "triage failed to run",
     REASON_CONFIRM_RED:   "confirm build failed (accepted fix did not hold)",
+    REASON_PATCH_SCOPE_DECISION:
+        "a shared op fails on this build line; changing it is your call",
 }
 
 
@@ -234,6 +241,17 @@ def _question(ctx: HandoffCtx) -> str:
             "For example: a known good FreeBSD-side fix, a specific file to "
             "look at, or an instruction to convert a static patch to a "
             "semantic `dops` / `REINPLACE_CMD` operation."
+        )
+    if ctx.reason == REASON_PATCH_SCOPE_DECISION:
+        line = f"`{ctx.target}`" if ctx.target else "this build line"
+        return (
+            f"An op other build lines also read (under `target @any`, or a "
+            f"`target` list) fails to compose on {line} (see Detail). "
+            f"Changing it changes those lines too, and only {line} is built "
+            "here, so the job stopped before the agent ran. Decide: drop the "
+            "op everywhere if it is obsolete, or move it into the other "
+            f"build lines' `target` blocks so {line} no longer runs it. Then "
+            "retry."
         )
     if ctx.reason == REASON_TRIAGE_FAILED:
         detail = (ctx.reason_detail or "").strip()

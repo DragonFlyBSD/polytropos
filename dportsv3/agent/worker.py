@@ -3500,10 +3500,12 @@ def _patched_path(path: Path) -> str | None:
 
 def _payload_destination(plan, target: str, filename: str,
                          port_dir: Path, patched: str | None
-                         ) -> tuple[str, str]:
-    """Where install_patches writes ``filename`` for ``target``: (rel, kind).
+                         ) -> tuple[str, str, str]:
+    """Where install_patches writes ``filename`` for ``target``: (rel, kind, dst).
 
-    ``rel`` is relative to the port dir. ``kind`` is one of:
+    ``rel`` is relative to the port dir; ``dst`` is the composed
+    destination the file fills, which a line's own copy keeps. ``kind`` is
+    one of:
 
     - "existing": the op that fills dragonfly/<filename> last on this line
       is a file.materialize reading a file under dragonfly/; the path is
@@ -3512,9 +3514,9 @@ def _payload_destination(plan, target: str, filename: str,
       header key; none or several, no match). The destination is the key,
       not the layout: pkg keeps four libpkg patches flat under @any and one
       scoped per line.
-    - "new": nothing on this line fills it. Flat, and scope_note gives the
-      @any op. A wrongly shared patch fails loudly on the other line; a
-      wrongly scoped one is silently absent there (poly-7pwa.4's notes).
+    - "new": nothing on this line fills it. The flat name; install_patches
+      decides the lane, because it depends on whether the port had an
+      overlay when the job started (poly-7pwa.27).
     - "unsafe": the winner does not read a file under dragonfly/: a
       file.copy (it reads the composed port, not the payload), or a source
       that is absolute, contains "..", or lies outside dragonfly/. Never
@@ -3550,18 +3552,84 @@ def _payload_destination(plan, target: str, filename: str,
     wanted = f"dragonfly/{filename}"
     op = winners.get(wanted)
     if op is None and patched:
-        same = [src for dst, w in winners.items()
+        same = [(src, dst) for dst, w in winners.items()
                 if dst.startswith("dragonfly/patch-")
                 and (src := payload_file(w)) is not None
                 and _patched_path(port_dir / src) == patched]
         if len(same) == 1:
-            return same[0], "existing"
+            return same[0][0], "existing", same[0][1]
     if op is None:
-        return wanted, "new"
+        return wanted, "new", wanted
     src = payload_file(op)
     if src is None:
-        return wanted, "unsafe"
-    return src, "existing"
+        return wanted, "unsafe", wanted
+    return src, "existing", wanted
+
+
+def _read_on_another_line(plan, target: str, src: str) -> bool:
+    """True when an op that does not run only on ``target`` reads ``src``.
+
+    That is an @any op, or another line's: a comma list expands to one op
+    per line, so ``target @2026Q3,@main`` counts as @2026Q3's too. Writing
+    such a file changes a build line nothing here built (poly-7pwa.27).
+    """
+    import posixpath
+
+    for op in plan.ops:
+        if op.kind != "file.materialize" or op.target == target:
+            continue
+        if posixpath.normpath(str(op.payload.get("src") or "")) == src:
+            return True
+    return False
+
+
+def _committed_paths(env: str, rels: list[str]) -> set[str] | None:
+    """Which of ``rels`` (relative to the DeltaPorts tree) the job started with.
+
+    The job's tree is a worktree whose HEAD is where the job began; the
+    agent's edits stay uncommitted until the job ends. So a path in HEAD
+    existed before this job, and one that is not was written by it. None
+    when git could not say: callers must then assume the safer answer.
+
+    In the chroot, because host-side git cannot read a linked worktree
+    (see _git_diff_with_untracked).
+    """
+    if not rels:
+        return set()
+    try:
+        p = _exec(env, "git", "-C", PORTS_DIR, "ls-tree", "-r",
+                  "--name-only", "HEAD", "--", *rels, cwd=PORTS_DIR)
+    except Exception:  # noqa: BLE001 -- an env that cannot exec
+        return None
+    if p.returncode != 0:
+        return None
+    return {line.strip() for line in (p.stdout or "").splitlines()
+            if line.strip()}
+
+
+def _head_text(env: str, rel: str) -> str | None:
+    """``rel`` as the job's HEAD has it, or None when git cannot show it."""
+    try:
+        p = _exec(env, "git", "-C", PORTS_DIR, "show", f"HEAD:{rel}",
+                  cwd=PORTS_DIR)
+    except Exception:  # noqa: BLE001
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def _plan_op_count(text: str | None) -> int | None:
+    """How many ops an overlay text plans to, or None when it does not plan."""
+    if text is None:
+        return None
+    from dportsv3.engine.api import build_plan  # noqa: PLC0415
+
+    try:
+        planned = build_plan(text, None)
+    except Exception:  # noqa: BLE001
+        return None
+    if not planned.ok or planned.plan is None:
+        return None
+    return len(planned.plan.ops)
 
 
 def install_patches(env: str, origin: str, patches: list[str] | None = None) -> dict:
@@ -3570,14 +3638,23 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     A re-cut replaces the file this build line's existing op reads --
     ``dragonfly/<name>`` or ``dragonfly/@<target>/<name>``, found per
     file from the overlay by destination, else by the file the patch
-    changes (``_payload_destination``). A new patch goes to flat
-    ``dragonfly/<name>`` and ``scope_note`` gives the @any op it
-    needs. A port with no overlay.dops is composed in compat mode,
-    which copies dragonfly/ as it is: flat, and no op. ``installed``
-    carries the real paths. Host-side file copy; no chroot exec
-    needed since both source and destination are in the writable
-    overlay. If ``patches`` is None, every ``patch-*`` file in
+    changes (``_payload_destination``). A new patch, and a re-cut of a
+    file other build lines read too, go to this line's own
+    ``dragonfly/@<target>/`` and ``scope_note`` gives the op for its
+    block; only a port that had no overlay when the job started gets a
+    flat patch and an @any op (poly-7pwa.27). A port with no
+    overlay.dops is composed in compat mode, which copies dragonfly/ as
+    it is: flat, and no op. ``installed`` carries the real paths. The
+    copy is host-side; one chroot git call asks which files the job
+    started with. If ``patches`` is None, every ``patch-*`` file in
     ``genpatch-out/`` is installed.
+
+    NEVER OVER A SHARED FILE (poly-7pwa.27, row 5a). A file an @any op or
+    another line's op reads is not overwritten when the job started with
+    it: the env builds one line, so nothing here can show the re-cut is
+    right for the others. Overwriting it made the lines ping-pong -- a
+    @main re-cut broke @2026Q3, whose own re-cut landed on the same file
+    and broke @main. A file this job wrote itself is its own to replace.
 
     Two things this refuses to do quietly, both measured in poly-7jw:
 
@@ -3663,19 +3740,66 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
     plan = (_overlay_plan_for(env, dest_origin)
             if target and not compat else None)
 
+    decided: list[tuple[Path, str, str, str]] = []
+    for f in candidates:
+        if plan is None:
+            rel = dst = f"dragonfly/{f.name}"
+            kind = "compat" if compat else "undecided"
+        else:
+            rel, kind, dst = _payload_destination(
+                plan, target, f.name, port_dir, _patched_path(f))
+        decided.append((f, rel, kind, dst))
+
+    # WHAT THE JOB STARTED WITH (poly-7pwa.27), in one git call: whether
+    # the port had an overlay -- a port without one gets @any, the rest
+    # get this line's block -- and which shared files predate the job.
+    # When git cannot say, assume the overlay and the files were there:
+    # that only ever keeps a change on this line.
+    shared: set[str] = set()
+    fresh_overlay = False
+    if plan is not None:
+        shared = {rel for _, rel, kind, _ in decided
+                  if kind == "existing"
+                  and _read_on_another_line(plan, target, rel)}
+        prefix = f"ports/{dest_origin}/"
+        committed = _committed_paths(
+            env, [prefix + "overlay.dops", *(prefix + r for r in sorted(shared))])
+        if committed is not None:
+            shared = {r for r in shared if prefix + r in committed}
+            # Row 1 is "no ops at job start", not "no file": the preflight
+            # can commit a bootstrap header before the attempt, and a
+            # header has no ops. A HEAD that cannot be read counts as ops.
+            fresh_overlay = (
+                prefix + "overlay.dops" not in committed
+                or _plan_op_count(_head_text(env, prefix + "overlay.dops")) == 0
+            )
+    lane = f"dragonfly/{target}/"
+
     installed: list[str] = []
     held: list[str] = []
+    held_shared: list[str] = []
     rerouted: list[str] = []
     needs_op: list[str] = []
     unsafe: list[str] = []
     undecided: list[str] = []
-    for f in candidates:
-        if plan is None:
-            rel = f"dragonfly/{f.name}"
-            kind = "compat" if compat else "undecided"
-        else:
-            rel, kind = _payload_destination(
-                plan, target, f.name, port_dir, _patched_path(f))
+    kept_shared: list[str] = []
+    new_on_line: list[str] = []
+    line_ops: list[tuple[str, str]] = []
+    for f, rel, kind, dst in decided:
+        if kind == "new" and not fresh_overlay:
+            rel = lane + dst.rsplit("/", 1)[-1]
+            kind = "line"
+            new_on_line.append(f.name)
+        elif kind == "existing" and rel in shared:
+            own = lane + dst.rsplit("/", 1)[-1]
+            if own == rel:
+                # A target list reads this line's own folder: no copy of
+                # it is this line's alone.
+                held_shared.append(f.name)
+                continue
+            kept_shared.append(rel)
+            rel = own
+            kind = "line"
         dest = port_dir / rel
         if kind == "undecided" and target and dest.exists():
             # The overlay does not plan, so nothing says which build
@@ -3687,6 +3811,8 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         installed.append(str(dest.relative_to(paths.deltaports)))
         if kind == "existing" and rel != f"dragonfly/{f.name}":
             rerouted.append(rel)
+        elif kind == "line":
+            line_ops.append((rel, dst))
         elif kind == "new":
             needs_op.append(f.name)
         elif kind == "unsafe":
@@ -3703,8 +3829,8 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         "destination": str(port_dir / "dragonfly"),
         "installed": installed,
     }
-    if held:
-        result["not_installed"] = held
+    if held or held_shared:
+        result["not_installed"] = held + held_shared
 
     # ONE explanation plus a list, not the explanation once per file.
     parts: list[str] = []
@@ -3753,11 +3879,49 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
                 f"the patch went to dragonfly/, where that op does not read it. "
                 f"Point the op's source at that file."
             )
+        if held_shared:
+            parts.append(
+                f"Not installed: {', '.join(held_shared)}. {target} reads the "
+                f"file through an op it shares with another build line (a "
+                f"`target` list), and the file sits in {target}'s own folder, "
+                f"so there is no other path for {target}'s copy and writing "
+                f"it would change that line too. Leave it uninstalled and say "
+                f"so in your report: an operator has to give each line its "
+                f"own file."
+            )
+        if line_ops:
+            part = ""
+            if kept_shared:
+                part += (
+                    f"Not written over {', '.join(kept_shared)}: other build "
+                    f"lines read {'it' if len(kept_shared) == 1 else 'them'} "
+                    f"too, and only {target} is built here. {target} gets its "
+                    f"own copy; the shared file and its op stay as they are. "
+                )
+            if new_on_line:
+                part += (
+                    f"No op installs {', '.join(new_on_line)} yet, so the "
+                    f"build will not see "
+                    f"{'it' if len(new_on_line) == 1 else 'them'}. This port "
+                    f"had an overlay before this job, so the patch is "
+                    f"{target}'s alone: no other build line was built with "
+                    f"it. "
+                )
+            part += (
+                f"Add at the end of ports/{dest_origin}/overlay.dops, the "
+                f"`target` line included, so the ops land in {target}'s "
+                f"block whichever block is last now:\n"
+                f"target {target}\n"
+                + "\n".join(f"file materialize {src} -> {dst}"
+                            for src, dst in line_ops)
+            )
+            parts.append(part)
         if needs_op:
             part = (
                 f"No op installs {', '.join(needs_op)} yet, so the build will not "
-                f"see {'it' if len(needs_op) == 1 else 'them'}. Add to the "
-                f"`target @any` block of ports/{dest_origin}/overlay.dops:\n"
+                f"see {'it' if len(needs_op) == 1 else 'them'}. This port had "
+                f"no overlay when the job started, so its ops go in @any. Add "
+                f"to the `target @any` block of ports/{dest_origin}/overlay.dops:\n"
                 + "\n".join(f"file materialize dragonfly/{n} -> dragonfly/{n}"
                             for n in needs_op)
             )
@@ -3770,7 +3934,7 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
             parts.append(part)
     if parts:
         result["scope_note"] = " ".join(parts)
-    if held and not installed:
+    if (held or held_shared) and not installed:
         result["ok"] = False
         result["error"] = "install_patches: nothing installed; see scope_note."
     if dest_origin != origin:

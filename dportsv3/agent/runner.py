@@ -4846,6 +4846,7 @@ def _write_proposed_fix(
     confidence: str = "",
     attempts_max: int = 0,
     patch_result: object | None = None,
+    any_overrides: list[str] | None = None,
 ) -> None:
     """Render and persist ``analysis/proposed_fix.md`` after a
     successful patch attempt. Best-effort: failures are swallowed so
@@ -4871,6 +4872,7 @@ def _write_proposed_fix(
             confidence=confidence,
             attempts_max=attempts_max,
             tracker_url=_tracker_url(),
+            any_overrides=any_overrides,
         )
         body = proposed_fix.render_proposed_fix(ctx).encode("utf-8")
     except Exception as exc:

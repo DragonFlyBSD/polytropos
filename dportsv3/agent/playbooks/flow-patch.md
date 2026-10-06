@@ -167,25 +167,39 @@ whitespace-separated list with fixed per-entry arity. Also worth
 grepping: `Mk/Uses/*.mk` (per-`USES` behavior), `Mk/Features/*.mk`,
 `Mk/Scripts/*.sh`.
 
-## Scoping — `@any` vs a build-line target
+## Scoping — where your change goes
 
 The active scope is set by a `target` directive; ops inherit the most
-recently named scope. `target @any` (the default prologue scope) applies
-on **every** DragonFly build line. A `target @2026Q2` (or `@main`, etc.)
-section applies only on that build line.
+recently named scope. `target @any` applies on **every** DragonFly build
+line, later ones included. A `target @main` (or `@2026Q3`, etc.) section
+applies only on that build line. Your line is the env's compose target,
+`target` in `get_effective_overlay` (and from `env_verify`).
 
-**Most fixes are universal.** DragonFly-vs-FreeBSD differences are
-platform-level — they apply regardless of which quarterly snapshot
-you're on. Keep them in the `@any` scope. Scoping a universal fix to one
-build line over-restricts it: the same failure re-surfaces next quarter.
+Your env builds one line, so nothing here can show a change is right for
+the others. A fix missing from another line leaves it as it was; a wrong
+shared fix breaks a line that was building. So:
 
-Reach for a build-line-specific `target @<quarter>` section only when the
-fix genuinely differs per build line — upstream source that diverges
-between quarterly snapshots so one patch can't cover both, or a framework
-value deprecated between snapshots that older lines still need. The
-concrete target you'd write is the env's compose target, visible as
-`target` in `get_effective_overlay` (and from `env_verify`); write that
-literal section header.
+| Situation | Where it goes |
+|---|---|
+| The port had no overlay ops when the job started (none, or only its bootstrap header) | its ops in `target @any` |
+| It had one, and you add an op or a patch | a `target <your line>` block; `install_patches` puts a patch in `dragonfly/@<your line>/` |
+| The op to change is in your line's block | change it there |
+| The op you need is in another line's block | share it: `target <its line>,<your line>` on the line above it, `target <its line>` on the line below — but not a patch under `dragonfly/@<its line>/`, which is that line's own: write yours with `install_patches` |
+| An `@any` patch no longer applies on your line | re-cut it; `install_patches` writes your line's own copy, never the shared file |
+| An `@any` op composes but is wrong for your line | override it in your line's block |
+| An `@any` op fails to compose on your line | your own change did that: undo it. One that already failed when the job started never reaches you; it goes to an operator |
+
+**Do not edit or delete an `@any` op** on a port that had an overlay
+before the job: every line reads it, and yours is the only one built.
+Overriding works because `@any` ops run first (next section): `mk set` in
+your block replaces the value, `mk remove` takes back a token `@any`
+added, `file remove dragonfly/<name>` drops a shared patch on your line
+only. A compose error is different: no later op can undo an op that
+failed.
+
+When you do write to `@any`, prefer relative ops (`mk add`, `mk remove`)
+to an absolute `mk set`: a relative op is right against every line's
+upstream, an absolute value only against the one you read it from.
 
 Leave `on-missing` at its default, `error`: a missing anchor or file is
 how another line learns an op no longer fits it.
@@ -268,10 +282,13 @@ produce the diff rather than hand-writing one:
    build time and the patch applies cleanly.
 6. `install_patches(origin)` — copies the generated patch into the
    port's payload. A re-cut replaces the file its existing
-   `file materialize` line reads, and that line stays as it is. A new
-   patch goes to `dragonfly/<name>`, and `scope_note` gives the line to
-   add to the `target @any` block. **Read `installed` for the path and
-   `scope_note`, when present, for what to do next.**
+   `file materialize` line reads, and that line stays as it is — unless
+   other build lines read that file too: then it writes your line's own
+   copy under `dragonfly/@<your line>/`. A new patch goes there as well,
+   or to flat `dragonfly/<name>` with an `@any` op on a port that had no
+   overlay when the job started. Either way `scope_note` gives the op to
+   add. **Read `installed` for the path and `scope_note`, when present,
+   for what to do next.**
 
 **`dupe` is only one step of this flow.** It exists solely to support
 patch generation — it is not an investigation tool, not a "before"
@@ -301,7 +318,11 @@ almost identically and two of them have opposite fixes.**
   and its `file materialize` line is correct. It has to be established
   rather than assumed — same file, even same line, is not evidence. See
   `error-prefer-dops-over-static-patches.md`, "has FreeBSD made our
-  patch unnecessary?", which carries a worked counter-example.
+  patch unnecessary?", which carries a worked counter-example. If that
+  op is under `target @any` on a port that had an overlay before the
+  job, drop the patch on your line only, with `file remove
+  dragonfly/<name>` in your line's block: another line's upstream may
+  not have FreeBSD's fix yet.
 - **Malformed** — the patch file itself is garbage: a hunk header that
   disagrees with its own body, a truncated diff, `E_APPLY_PATCH_FAILED`
   with "malformed patch", `E_APPLY_MISSING_SUBJECT`. Nothing in the
@@ -316,7 +337,8 @@ overwrite in place** — in that order:
    op reads — which is **not** necessarily `dragonfly/<name>`: on a port
    that scopes this patch the source is `dragonfly/@<target>/<name>`.
    `install_patches` resolves that from the overlay and reports it in
-   `installed`.
+   `installed`. When other build lines read that file too, it writes
+   your line's own copy instead and `scope_note` gives the one op to add.
 
 **`overlay.dops` needs no edit at all.** Its `file materialize` line
 already names that source, so overwriting the file there is the whole
@@ -348,7 +370,9 @@ them as regenerate-only.
 
 There is no delete tool. To stop applying something, **edit
 `overlay.dops` and remove the relevant line or block**, then
-re-validate:
+re-validate. That is for ops in your line's block, or in an overlay
+this job created; an `@any` op on a port that had an overlay before the
+job is overridden in your block instead (see Scoping):
 
 - A `patch apply` / `file materialize` / `file copy` line → delete the
   line; compose stops applying it. (In dops mode the compat auto-copy is
@@ -372,7 +396,7 @@ the diff, so the removal is part of the delivered fix.
 When the port already builds at this upstream version and you
 changed how it builds (added a patch, edited flags), bump the
 revision with mk bump PORTREVISION, in the same target block as the
-change it accounts for (target @any when the change is shared). It
+change it accounts for. It
 adds one to whatever that build line's upstream Makefile says, on
 every compose, so it never pins a number. Do not write mk set
 PORTREVISION: an absolute number reverts every later upstream bump.

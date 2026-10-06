@@ -89,10 +89,8 @@ class ScopeDrift:
             f"appending at the end of the file puts it in whatever block "
             f"happens to be last:\n"
             + "\n".join(f"  - {s}" for s in self.stranded)
-            + f"\nMove them into the `target {self.target}` block, or into "
-            f"`target @any` if the change is right for every build line. "
-            f"Nothing else reports this: the overlay is valid and compose "
-            f"succeeds."
+            + f"\nMove them into the `target {self.target}` block. Nothing "
+            f"else reports this: the overlay is valid and compose succeeds."
         )
 
     def note(self) -> str:
@@ -104,8 +102,7 @@ class ScopeDrift:
             f"op this job added is in another build line's block. An op takes "
             f"the scope of the last `target` line above it, so an append at "
             f"the end of the file lands in the last block. Move them into the "
-            f"`target @any` block, or the `target {self.target}` block if they "
-            f"are only right for this build line, and re-check with "
+            f"`target {self.target}` block and re-check with "
             f"get_effective_overlay. Added: "
             + "; ".join(self.stranded)
         )
@@ -151,6 +148,26 @@ def _plan_ops(text: str) -> list | None:
     return list(result.plan.ops)
 
 
+def _added(before_ops: list, after_ops: list) -> list:
+    """The ops in ``after_ops`` with no counterpart in ``before_ops``.
+
+    A multiset difference on scope plus payload, so a second copy of an op
+    that was already there counts as added once.
+    """
+    seen: dict[tuple, int] = {}
+    for op in before_ops:
+        k = _key(op)
+        seen[k] = seen.get(k, 0) + 1
+    added: list = []
+    for op in after_ops:
+        k = _key(op)
+        if seen.get(k):
+            seen[k] -= 1
+            continue
+        added.append(op)
+    return added
+
+
 def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrift:
     """Report when every op this attempt added misses ``target``.
 
@@ -180,19 +197,7 @@ def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrif
     if after_ops is None:
         return ScopeDrift(target=target, unavailable="overlay does not plan cleanly")
 
-    seen: dict[tuple, int] = {}
-    for op in before_ops:
-        k = _key(op)
-        seen[k] = seen.get(k, 0) + 1
-
-    added: list = []
-    for op in after_ops:
-        k = _key(op)
-        if seen.get(k):
-            seen[k] -= 1
-            continue
-        added.append(op)
-
+    added = _added(before_ops, after_ops)
     if not added:
         return ScopeDrift(target=target)
     # ANY effective addition means the fix reached this build line. The
@@ -202,3 +207,104 @@ def scope_drift(before: str | None, after: str | None, target: str) -> ScopeDrif
     if any((op.target or "@any") in ("@any", target) for op in added):
         return ScopeDrift(target=target)
     return ScopeDrift(target=target, stranded=tuple(_describe(op) for op in added))
+
+
+#: Kinds that replace what they name, so the same name under @any loses.
+#: The accumulating kinds -- mk add, mk bump, mk target append -- stack
+#: on top of the @any op instead, and two of them are not an override.
+_REPLACING = frozenset({
+    "mk.var.set", "mk.var.unset", "mk.var.eval", "mk.var.shell",
+    "mk.target.set", "mk.target.remove", "mk.target.rename",
+    "file.materialize", "file.copy", "file.remove",
+})
+
+
+def _override_subject(op) -> tuple | None:
+    """What an op writes, for matching an override to the @any op it beats.
+
+    A make variable, a make target, or a composed file. Text and patch ops
+    edit a file without owning it, so they have no subject here.
+    """
+    import posixpath  # noqa: PLC0415
+
+    p = op.payload
+    if op.kind.startswith("mk.var.") and p.get("name"):
+        return ("var", p["name"])
+    if op.kind.startswith("mk.target."):
+        name = p.get("name") or p.get("old")
+        return ("mk-target", name) if name else None
+    if op.kind in ("file.materialize", "file.copy") and p.get("dst"):
+        return ("file", posixpath.normpath(str(p["dst"])))
+    if op.kind == "file.remove" and p.get("path"):
+        return ("file", posixpath.normpath(str(p["path"])))
+    return None
+
+
+def _overridden(op, shared_ops: list) -> object | None:
+    """The @any op ``op`` overrides, or None.
+
+    A replacing op beats any @any op on the same subject. ``mk remove``
+    overrides only the @any ``mk add`` of the same token: taking back a
+    token @any added. Anything else accumulates.
+    """
+    subject = _override_subject(op)
+    if subject is None:
+        return None
+    if op.kind == "mk.var.token_remove":
+        value = op.payload.get("value")
+        for shared in reversed(shared_ops):
+            if (shared.kind == "mk.var.token_add"
+                    and _override_subject(shared) == subject
+                    and shared.payload.get("value") == value):
+                return shared
+        return None
+    if op.kind not in _REPLACING:
+        return None
+    for shared in reversed(shared_ops):  # the last @any op is the one that runs
+        if _override_subject(shared) == subject:
+            return shared
+    return None
+
+
+def _render(op) -> str:
+    p = op.payload
+    if op.kind.startswith("mk.var."):
+        value = p.get("value")
+        return f"`{op.kind} {p.get('name')}" + (
+            f' "{value}"`' if value is not None else "`")
+    if op.kind in ("file.materialize", "file.copy"):
+        return f"`{op.kind} {p.get('src')} -> {p.get('dst')}`"
+    if op.kind == "mk.target.rename":
+        return f"`{op.kind} {p.get('old')} -> {p.get('new')}`"
+    subject = next((str(p[k]) for k in _SUBJECT_KEYS if p.get(k)), "")
+    return f"`{op.kind}{' ' + subject if subject else ''}`"
+
+
+def any_overrides(before: str | None, after: str | None,
+                  target: str) -> tuple[str, ...]:
+    """The ops this attempt added on ``target`` that override an @any op.
+
+    poly-7pwa.27, row 5b. An @any op that composes on this line but is wrong
+    for it is overridden in this line's block, and every other line keeps
+    it. The reviewer is told, one line per override, so a shared value that
+    is wrong everywhere can be split by hand. Only ops the attempt added:
+    an override that was already there is old news.
+    """
+    if not target or after is None or UNREADABLE in (before, after):
+        return ()
+    after_ops = _plan_ops(after)
+    before_ops = _plan_ops(before) if before is not None else []
+    if after_ops is None or before_ops is None:
+        return ()
+    shared_ops = [op for op in after_ops if (op.target or "@any") == "@any"]
+    out: list[str] = []
+    for op in _added(before_ops, after_ops):
+        if op.target != target:
+            continue
+        beaten = _overridden(op, shared_ops)
+        if beaten is not None:
+            out.append(
+                f"`{target}` overrides `@any` {_render(beaten)} "
+                f"with {_render(op)}"
+            )
+    return tuple(out)

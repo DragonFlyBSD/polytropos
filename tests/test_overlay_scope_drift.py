@@ -55,7 +55,9 @@ def test_the_note_tells_the_agent_what_to_do_about_it():
     assert "did not reach @2026Q3" in note
     # A finding with no remedy costs an attempt to act on.
     assert "`target @2026Q3` block" in note
-    assert "@any" in note
+    # poly-7pwa.27: the port has an overlay, so the remedy is this line's
+    # block, never @any -- other lines build that overlay untested.
+    assert "@any" not in note
     assert "get_effective_overlay" in note
 
 
@@ -221,7 +223,7 @@ def test_the_remedy_survives_the_retry_prompt_cap():
         f"file materialize dragonfly/{n} -> dragonfly/{n}\n" for n in names)
     note = scope_drift(BASE, after, "@2026Q3").note()
     shown = note[:attempt_loop._MAX_NOTE_CHARS]
-    assert "`target @any` block" in shown
+    assert "`target @2026Q3` block" in shown
     assert "get_effective_overlay" in shown
 
 

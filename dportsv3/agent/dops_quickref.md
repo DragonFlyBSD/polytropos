@@ -22,8 +22,10 @@ reason "<one-line why this overlay exists>"
 - One origin per file. `port` directive is required exactly once.
 - `target` sets the active scope. Multiple `target` directives are
   allowed; operations inherit the most recently named scope. `@any`
-  reaches every build line, including later ones, and is where a fix goes
-  by default; `target @2026Q3,@main` (no space) is exactly those two.
+  reaches every build line, including later ones; `target @2026Q3,@main`
+  (no space) is exactly those two. A fix goes in `@any` only on a port
+  that had no overlay ops when the job started; otherwise in your build
+  line's block (the playbooks' "Scoping" table).
 - **Scope decides execution order, not file position.** On a build for
   target `T` the engine runs every `@any` op first, in file order, then
   every `T` op, in file order. `mk`/`text` ops are last-wins, so an

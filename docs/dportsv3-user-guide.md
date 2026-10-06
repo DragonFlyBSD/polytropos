@@ -609,9 +609,9 @@ bin/dportsv3 dsl check ../DeltaPorts/ports/category/port/overlay.dops
 bin/dportsv3 dsl plan ../DeltaPorts/ports/category/port/overlay.dops --json
 ```
 
-Note: current auto-conversion emits `target @main` in generated `overlay.dops`.
-If your operational baseline should be quarter-agnostic, edit target scoping to
-fit your policy (`@any` baseline + explicit quarter overrides where needed).
+Note: auto-conversion emits `target @any` in generated `overlay.dops`, because
+the compat artifacts it translates applied on every build line. Add explicit
+quarter overrides by hand where a line needs one.
 
 ### Step 3b: authoring pattern for multi-quarter maintenance
 

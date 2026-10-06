@@ -929,6 +929,7 @@ def _try_write_proposed_fix(
             model=model,
             attempts_max=attempts_max,
             patch_result=patch_result,
+            any_overrides=list(ctx.state.get("any_overrides") or []),
         )
     except Exception:
         pass
@@ -966,6 +967,70 @@ def _try_write_handoff(
         )
     except Exception:
         pass
+
+
+def _shared_ops_failing(worker_mod: Any, env: str,
+                        origins: list[str]) -> list[str]:
+    """The ops another build line also reads that fail to compose here.
+
+    poly-7pwa.27, row 6. Called when the preflight compose fails. An op
+    under ``target @any``, or one a ``target`` list gives this line and
+    another, cannot be fixed by an op of this line's (``@any`` runs
+    first, and the compose has already failed), and changing it changes a
+    line nothing here builds. That is the operator's call, so the job
+    stops before the agent runs. The live shape: six overlays split by
+    hand on 2026-10-05, each an @any op from a @2026Q3 fix that @main's
+    upstream had moved past.
+
+    ``origins`` is the set the preflight resolved before composing: the
+    job's origin and, for a slave, its master. Re-probing the relation
+    here would read a compose tree the failed apply left behind.
+
+    One line per op: origin, op, first diagnostic. Empty when nothing
+    shared failed, or the report could not be read -- the preflight then
+    refuses as before.
+    """
+    from dportsv3.agent.scope_check import payload_identity  # noqa: PLC0415
+    from dportsv3.engine.api import build_plan  # noqa: PLC0415
+
+    found: list[str] = []
+    try:
+        for current in origins:
+            report = (worker_mod.materialize_dports_with_report(env, current)
+                      or {}).get("report")
+            if not isinstance(report, dict):
+                continue
+            for port in report.get("ports") or []:
+                port_origin = port.get("origin") or current
+                rows = port.get("dops_failed_op_results") or []
+                if not rows:
+                    continue
+                text = _read_overlay_text(worker_mod, env, port_origin)
+                planned = (build_plan(text, None)
+                           if isinstance(text, str) else None)
+                ops = (list(planned.plan.ops)
+                       if planned is not None and planned.ok
+                       and planned.plan is not None else [])
+                by_id = {op.id: op for op in ops}
+                for row in rows:
+                    line = row.get("target")
+                    op = by_id.get(row.get("id"))
+                    shared = line == "@any" or (
+                        op is not None and any(
+                            o.target != line
+                            and payload_identity(o) == payload_identity(op)
+                            for o in ops))
+                    if not shared:
+                        continue
+                    diag = (row.get("diagnostics") or [{}])[0] or {}
+                    found.append(
+                        f"{port_origin}: {row.get('id')} ({row.get('kind')}, "
+                        f"target {line}) {diag.get('code') or ''}: "
+                        f"{diag.get('message') or ''}"
+                    )
+    except Exception:  # noqa: BLE001 -- a classifier; the refusal stands
+        return []
+    return found
 
 
 def _rescue_work_on_raise(
@@ -1203,15 +1268,20 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     where to read files. So the model had no reason to ask whether its fix
     belonged to every build line or just this one.
 
-    TWO LEVELS, because volume costs attention. The always-on line names the
-    target and the default: a change goes in ``target @any`` unless it can
-    be shown to be this line's alone, because a wrong shared change fails
-    loudly on the other lines while a wrongly scoped one is silently missing
-    there. 5085 of 5087 overlays are single-scope, so a port that needs its
-    FIRST per-target split is in that population and the exception has to
-    be named in the always-on line too. The longer form
-    -- which scopes exist, where an appended op lands, the payload lane --
-    only appears for a port whose overlay already has per-target blocks.
+    TWO LEVELS, because volume costs attention. The always-on part names the
+    target and where the work goes, by poly-7pwa.27's table: a port with no
+    overlay ops gets ``target @any`` (nothing was built with one on any
+    line); a port with ops keeps every change in this line's block and
+    overrides a wrong ``@any`` op there. An ``@any`` op that fails to
+    compose here never reaches the agent: the preflight escalates it
+    (_shared_ops_failing). It replaced
+    "@any unless you can show it is this line's alone", which the agent
+    could never show: devel/glib20's @main fix then reached @2026Q3, whose
+    older glib the patch did not apply to. About 620 characters for a port
+    with an overlay, 300 without. The longer form -- which scopes exist,
+    where an appended op lands, sharing another line's op, the payload
+    lane -- only appears for a port whose overlay already has per-target
+    blocks.
 
     A COMMA LIST IS NOT TWO BLOCKS. ``target @2026Q3,@main`` expands to one
     op per target, so naive scope collection reports both and then tells the
@@ -1221,10 +1291,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     same false positive that bead's review rejected in code before it
     reappeared here as prose.
 
-    READS THE OVERLAY BEFORE ensure_bootstrap_overlay WRITES IT (147 lines
-    later in this function), so a freshly bootstrapped port sees no file and
-    gets the one-liner. That is correct only because a bootstrap header
-    carries zero ops; if it ever emits a ``target`` directive this goes stale.
+    ROW 1 IS "NO OPS", NOT "NO FILE". This usually runs before
+    ensure_bootstrap_overlay writes the header, but the preflight can also
+    commit a header triage left behind; either way a bootstrap header has
+    no ops, so both read as row 1 (install_patches asks the same question
+    of the job's HEAD).
 
     Best-effort, but not silent: a rename of anything it reaches would
     otherwise drop the section from every prompt with no signal.
@@ -1235,26 +1306,35 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
         target = worker_mod.peek_env_target(env) or ""
         if not target:
             return ""
-        brief = [
+        head = (
             "\n\n---\n\n## You are building one build line\n\n"
             f"This job is for **`{target}`**. The env composes and builds that "
             f"target and no other, so nothing here can tell you whether a "
             f"change also works on the rest.\n\n"
-            f"Put a change in `target @any`, which every build line reads, "
-            f"unless you can show it is this line's alone; then it goes in a "
-            f"`target {target}` block. A shared patch that is wrong elsewhere "
-            f"fails loudly there; a change scoped here is silently missing "
-            f"from every other line. The playbooks' \"Scoping\" section says "
-            f"what counts.\n"
-        ]
+        )
 
         overlay = (
             worker_mod.env_paths(env).deltaports
             / "ports" / port_origin / "overlay.dops"
         )
+        no_overlay = head + (
+            "This port has no overlay ops yet, so no build line was building "
+            "with any: put its ops in `target @any`.\n"
+        )
         if not overlay.is_file():
-            return "".join(brief)
+            return no_overlay
         planned = build_plan(overlay.read_text(), overlay)
+        # A bootstrap header is a file with no ops: still row 1.
+        if planned.ok and planned.plan is not None and not planned.plan.ops:
+            return no_overlay
+        brief = [
+            head
+            + f"Other build lines already build this port's overlay, so keep "
+            f"your change on `{target}`: every op you add or change goes in a "
+            f"`target {target}` block, and `install_patches` says where a "
+            f"patch goes. Do not edit or delete an `@any` op: if one is wrong "
+            f"for `{target}`, override it in that block.\n"
+        ]
         if not planned.ok or planned.plan is None:
             return "".join(brief)
 
@@ -1306,13 +1386,12 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
                 f"- Ops under {', '.join('`' + s + '`' for s in others)} do "
                 f"**not** apply here. Do not delete them to make this build "
                 f"pass: they are the other line's fix and no env here can "
-                f"verify a replacement. If an `@any` op applies here but is "
-                f"wrong for `{target}`, undo or replace it with an op in the "
-                f"`target {target}` block, which runs after `@any`; every "
-                f"other line, including later ones, keeps the `@any` op. If it "
-                f"fails here (a missing anchor, an ambiguous match, a `diffs/` "
-                f"reject), no later op can fix that: the `@any` op itself has "
-                f"to change.\n"
+                f"verify a replacement. If one of them is exactly the op you "
+                f"need, share it rather than copy it: put `target <its "
+                f"line>,{target}` on the line above it and `target <its "
+                f"line>` on the line below. Not a patch under "
+                f"`dragonfly/@<its line>/`: that is its line's own, so write "
+                f"yours with `install_patches`.\n"
             )
         if scoped_lanes:
             lanes = " and ".join(f"`{lane}/@<target>/`" for lane in sorted(scoped_lanes))
@@ -1412,6 +1491,49 @@ def _report_scope_drift(
             )
         except Exception:  # noqa: BLE001
             pass
+
+
+def _report_any_overrides(
+    services: Any,
+    ctx: Any,
+    queue_root: Any,
+    env: str,
+    *,
+    baseline: dict,
+) -> list[str]:
+    """The @any ops this attempt overrode on its own line, one line each.
+
+    poly-7pwa.27, row 5b: the agent overrides a wrong @any op in its line's
+    block and leaves @any alone. The reviewer is told, so a shared value
+    that is wrong on every line can be split by hand. Logged here and
+    returned for the proposed fix. Best-effort, like the scope-drift report.
+    """
+    found: list[str] = []
+    try:
+        from dportsv3.agent import worker as _worker  # noqa: PLC0415
+        from dportsv3.agent.scope_check import any_overrides  # noqa: PLC0415
+
+        target = _worker.peek_env_target(env) or ""
+        for origin, before in (baseline or {}).items():
+            after = _read_overlay_text(_worker, env, origin)
+            for line in any_overrides(before, after, target):
+                found.append(f"{origin}: {line}")
+        if found:
+            services.activity_log(
+                queue_root, "overlay_any_override",
+                "; ".join(found)[:600],
+                job_id=getattr(ctx, "job_id", None),
+                extra={"target": target, "overrides": found},
+            )
+    except Exception as exc:  # noqa: BLE001
+        try:
+            services.log(
+                queue_root, "WARN",
+                f"@any override report failed, so the check did not run: {exc}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return found
 
 
 # -----------------------------------------------------------------------------
@@ -1838,6 +1960,31 @@ class PatchAttemptStep:
 
         composed = _worker.materialize_dports(env, origin)
         if not composed.get("ok"):
+            # poly-7pwa.27 row 6: a shared op fails here. Not a fix the
+            # agent may make, and not the agent giving up: escalate with
+            # the op named, before any model spend.
+            shared = _shared_ops_failing(
+                _worker, env, [origin, *also_origins])
+            if shared:
+                detail = (
+                    "Shared op(s) fail to compose on this build line before "
+                    "the agent started: " + "; ".join(shared)
+                )[:1500]
+                services.activity_log(
+                    queue_root, "patch_preflight_scope_decision",
+                    detail[:600], job_id=ctx.job_id,
+                    extra={"origin": origin, "failing_shared_ops": shared},
+                )
+                _try_write_handoff(
+                    services, ctx, origin,
+                    reason="patch_scope_decision", reason_detail=detail,
+                )
+                return StepOutcome(
+                    status="success",
+                    next_event=JobEvent.ESCALATE_MANUAL,
+                    detail={"status_str": "needs_operator",
+                            "failing_shared_ops": shared},
+                )
             # materialize_dports composes the whole origin set and
             # reports the one that failed, which is not necessarily the
             # job's origin — name it, or the message sends the reader to
@@ -2035,6 +2182,12 @@ class PatchAttemptStep:
         # attempt succeeded or gave up -- but NOT when the harness raised,
         # which returns above; _rescue_work_on_raise owns that path.
         _report_scope_drift(
+            services, ctx, queue_root, env,
+            baseline=ctx.state.get("overlay_baseline") or {},
+        )
+        # Read before the workspace reset below, which wipes the edits;
+        # the proposed fix is written after it (poly-7pwa.27, row 5b).
+        ctx.state["any_overrides"] = _report_any_overrides(
             services, ctx, queue_root, env,
             baseline=ctx.state.get("overlay_baseline") or {},
         )

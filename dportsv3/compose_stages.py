@@ -960,9 +960,10 @@ def semantic_stage(
         # a stage-level signal the agent sees `summary applied=0` with
         # no warnings and misdiagnoses it as a compose bug instead of
         # checking the overlay's `target` directive — burns budget
-        # chasing a non-existent failure. The fix is usually
-        # mechanical: change `target` to `@any` or scope it to the
-        # build target.
+        # chasing a non-existent failure. A skip is either another build
+        # line's op or an on-missing warn/noop op that found nothing, so
+        # the message names both. It no longer suggests `target @any`:
+        # an op that line needs belongs in its own block (poly-7pwa.27).
         if (
             apply_result.applied_ops == 0
             and apply_result.skipped_ops > 0
@@ -971,9 +972,10 @@ def semantic_stage(
             stage.add_warning(
                 "I_COMPOSE_DOPS_ALL_OPS_SKIPPED",
                 f"{ctx.origin}: all {apply_result.skipped_ops} op(s) in "
-                f"overlay.dops skipped — `target` directive does not "
-                f"match build target {target!r}. Use `target @any` for "
-                f"target-agnostic edits or scope to this specific target."
+                f"overlay.dops skipped on build target {target!r}: each is "
+                f"scoped to another build line, or is on-missing warn/noop "
+                f"and found nothing. Ops this line needs go under "
+                f"`target {target}`."
             )
         if not apply_result.ok:
             # Surface a per-op summary alongside the stage marker so

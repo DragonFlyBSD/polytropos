@@ -82,6 +82,10 @@ class ProposedFixCtx:
     verification_status: str = ""
     verification_at: str = ""
 
+    # poly-7pwa.27, row 5b: @any ops this fix overrides on its own build
+    # line, one rendered line each. Every other line keeps the @any op.
+    any_overrides: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Markdown rendering
@@ -108,6 +112,19 @@ def render_proposed_fix(ctx: ProposedFixCtx) -> str:
         lines.append("## Summary")
         lines.append("")
         lines.append(ctx.summary.strip())
+        lines.append("")
+
+    if ctx.any_overrides:
+        lines.append("## Overrides of `@any`")
+        lines.append("")
+        lines.append(
+            f"This fix overrides shared ops on `{ctx.target or '(none)'}` "
+            "only; every other build line keeps them. If a shared value is "
+            "wrong on every line, split it into per-line blocks by hand."
+        )
+        lines.append("")
+        for line in ctx.any_overrides:
+            lines.append(f"- {line}")
         lines.append("")
 
     # Bundle metadata block.
@@ -286,6 +303,7 @@ def build_proposed_fix_ctx(
     confidence: str = "",
     attempts_max: int = 0,
     tracker_url: str = "",
+    any_overrides: list[str] | None = None,
 ) -> ProposedFixCtx:
     """Assemble a ``ProposedFixCtx`` from bundle artifacts + patch_result.
 
@@ -428,6 +446,7 @@ def build_proposed_fix_ctx(
         classification=classification,
         confidence=confidence,
         tracker_url=tracker_url,
+        any_overrides=list(any_overrides or []),
     )
 
 
