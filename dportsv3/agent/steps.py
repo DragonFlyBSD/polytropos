@@ -677,6 +677,12 @@ class TriageStep:
                         )
                     except Exception:
                         pass
+                _queue_for_operator(
+                    services, queue_root, job, origin,
+                    bundle_id or (bundle_dir.name if bundle_dir else None),
+                    classification=result.classification,
+                    confidence=result.confidence,
+                )
                 return StepOutcome(
                     status="success",
                     next_event=JobEvent.TRIAGE_OK,
@@ -964,6 +970,57 @@ def _try_write_handoff(
             reason_detail=reason_detail,
             patch_result=patch_result,
             run_id=ctx.job.get("run_id") or None,
+        )
+    except Exception:
+        pass
+
+
+def _queue_for_operator(
+    services: Any,
+    queue_root: Path,
+    job: dict,
+    origin: str,
+    bundle_id: str | None,
+    *,
+    classification: str = "",
+    confidence: str = "",
+    bundle_dir: Any = None,
+) -> None:
+    """Put an escalated job on the Manual Queue (poly-7pwa.28).
+
+    The queue lists user_context_requests rows, and only triage's MANUAL
+    path wrote one, so every other escalation was missing from the page
+    that lists escalations. Best-effort, like the handoff. No row without
+    a run_id: nothing could act on it, and the bundle retry refuses one.
+    A patch job has no classification of its own, so the queue shows the
+    bundle's triage result, as the bundle retry does.
+    """
+    fn = getattr(services, "upsert_user_context_request", None)
+    run_id = job.get("run_id") or ""
+    if fn is None or not run_id or not bundle_id:
+        return
+    try:
+        if not classification:
+            from dportsv3.agent.phase_result import (  # noqa: PLC0415
+                TriageResult, load_phase_result,
+            )
+            triage = load_phase_result(bundle_dir, bundle_id, "triage",
+                                       TriageResult)
+            if triage is not None:
+                classification = triage.classification
+                confidence = triage.confidence
+    except Exception:  # noqa: BLE001 -- a dash in the list, not a lost row
+        pass
+    try:
+        fn(
+            queue_root,
+            run_id=run_id,
+            origin=origin,
+            bundle_id=bundle_id,
+            classification=classification or "",
+            confidence=confidence or "",
+            iteration=int(job.get("iteration") or 1),
+            max_iterations=int(job.get("max_iterations") or 3),
         )
     except Exception:
         pass
@@ -1555,6 +1612,8 @@ class PatchServices:
     load_port_history: Callable[..., Any]
     write_manual_handoff: Callable[..., Any] | None = None
     write_proposed_fix: Callable[..., Any] | None = None
+    #: The Manual Queue row for an escalation (_queue_for_operator).
+    upsert_user_context_request: Callable[..., Any] | None = None
 
 
 @dataclass
@@ -1977,6 +2036,9 @@ class PatchAttemptStep:
                     services, ctx, origin,
                     reason="patch_scope_decision", reason_detail=detail,
                 )
+                _queue_for_operator(services, queue_root, ctx.job, origin,
+                                    ctx.bundle_id or ctx.job.get("bundle_id"),
+                                    bundle_dir=ctx.bundle_dir)
                 return StepOutcome(
                     status="success",
                     next_event=JobEvent.ESCALATE_MANUAL,
@@ -2289,6 +2351,9 @@ class PatchAttemptStep:
                     ),
                     patch_result=result,
                 )
+                _queue_for_operator(services, queue_root, ctx.job, origin,
+                                    ctx.bundle_id or ctx.job.get("bundle_id"),
+                                    bundle_dir=ctx.bundle_dir)
                 return StepOutcome(
                     status="success",
                     next_event=JobEvent.ESCALATE_MANUAL,

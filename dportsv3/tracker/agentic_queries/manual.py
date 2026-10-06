@@ -84,8 +84,9 @@ def list_manual_requests(
     if open_only:
         # "open" = the row is in ``pending`` status, which by
         # construction means operator action is awaited. The status
-        # column is set to ``pending`` on every triage MANUAL/retry-
-        # cap escalation, and flipped to ``retriage_enqueued`` when
+        # column is set to ``pending`` on every escalation (triage
+        # MANUAL/retry-cap, and since poly-7pwa.28 compat conversion
+        # and the patch step's), and flipped to ``retriage_enqueued`` when
         # the runner sweep picks up a new operator context.
         #
         # The prior filter required ``context_rev > last_handled``

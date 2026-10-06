@@ -14,6 +14,8 @@ Covers:
   for lead + siblings.
 - Triage cached-health-broken override: forces ENV_BROKEN even
   when triage itself succeeded.
+- Every escalation that is not triage's MANUAL tier leaves a Manual
+  Queue row (poly-7pwa.28).
 
 The existing test_runner_e2e_lifecycle.py covers the simpler
 triage paths (auto_patch enqueue, manual escalate). This file
@@ -293,7 +295,8 @@ def test_a_shared_op_failing_at_preflight_escalates_before_the_agent(
     monkeypatch.setattr(runner, "_write_manual_handoff",
                         lambda *a, **kw: handoffs.append(kw))
 
-    job_path = _drop_patch_job(queue_env, job_id="job-scope.job", bundle_dir=bdir)
+    job_path = _drop_patch_job(queue_env, job_id="job-scope.job",
+                               bundle_dir=bdir, extra={"run_id": "run-1"})
     inflight = _claim(queue_env, job_path)
     runner.process_job(queue_env["queue_root"], inflight, [],
                        dry_run=False, playbooks_dir=None)
@@ -309,6 +312,52 @@ def test_a_shared_op_failing_at_preflight_escalates_before_the_agent(
         "SELECT retire_reason FROM jobs WHERE job_id = ?", ("job-scope.job",)
     ).fetchone()
     assert row["retire_reason"] != "patch_gave_up"
+    assert _manual_queue(queue_env) == [
+        ("run-1", "foo/bar", "bundle-job-scope.job", "pending")]
+
+
+def _manual_queue(queue_env) -> list[tuple]:
+    """What /agentic/manual lists: user_context_requests rows."""
+    return [tuple(r) for r in queue_env["conn"].execute(
+        "SELECT run_id, origin, bundle_id, status FROM user_context_requests")]
+
+
+def test_a_fix_left_as_compat_artifacts_reaches_the_manual_queue(
+        queue_env, tmp_path, monkeypatch):
+    """poly-7pwa.28: patch_non_dops_substrate escalated with a handoff
+    and no queue row, so the Manual Queue never listed it."""
+    from dportsv3.agent import patch as patch_module
+    from dportsv3.agent import worker
+
+    import json
+    from dataclasses import asdict
+
+    from dportsv3.agent.phase_result import TriageResult
+
+    bdir = _make_bundle_dir(tmp_path)
+    (bdir / "analysis").mkdir(exist_ok=True)
+    (bdir / "analysis" / "triage_result.json").write_text(json.dumps(asdict(
+        TriageResult(classification="patch-error", confidence="high",
+                     root_cause="", evidence_excerpt="", error_signature=None,
+                     tier="AUTO", classifier_version="", tokens_prompt=0,
+                     tokens_completion=0, tokens_total=0, model=""))))
+    monkeypatch.setattr(patch_module, "run",
+                        lambda *a, **kw: _StubPatchResult(status="success"))
+    monkeypatch.setattr(worker, "classify_dops", lambda env, origin: "compat")
+
+    job_path = _drop_patch_job(queue_env, job_id="job-compat.job",
+                               bundle_dir=bdir, extra={"run_id": "run-1"})
+    runner.process_job(queue_env["queue_root"], _claim(queue_env, job_path),
+                       [], dry_run=False, playbooks_dir=None)
+
+    assert (lifecycle.current(queue_env["conn"], "job-compat.job")
+            == lifecycle.JobState.ESCALATED)
+    assert _manual_queue(queue_env) == [
+        ("run-1", "foo/bar", "bundle-job-compat.job", "pending")]
+    # A patch job has no classification of its own: the bundle's triage.
+    assert tuple(queue_env["conn"].execute(
+        "SELECT classification, confidence FROM user_context_requests"
+    ).fetchone()) == ("patch-error", "high")
 
 
 def test_a_preflight_failure_of_this_lines_own_op_is_still_refused(
@@ -490,3 +539,47 @@ def test_triage_env_broken_override_via_step(queue_env, tmp_path, monkeypatch):
         ("triage-env-broken.job",),
     ).fetchone()
     assert row["retire_reason"] == "env_broken"
+
+
+def test_a_port_that_needs_conversion_reaches_the_manual_queue(
+        queue_env, tmp_path, monkeypatch):
+    """poly-7pwa.28: triage's compat_needs_conversion escalated with a
+    handoff and no queue row -- 20 of the live tracker's 24 missing ones."""
+    import time as _time
+    from dportsv3.agent import health as health_mod
+    from dportsv3.agent import triage as triage_module
+
+    runner._health_cache["test-env"] = (
+        _time.monotonic(), health_mod.EnvHealth(env="test-env", status="ready"))
+
+    @dataclass
+    class _Triage:
+        text: str = "## Classification\npatch-error\n\n## Confidence\nhigh\n"
+        classification: str = "patch-error"
+        confidence: str = "high"
+        snippet_rounds: int = 0
+        usage: Usage = field(default_factory=Usage)
+
+    monkeypatch.setattr(triage_module, "run", lambda *a, **kw: _Triage())
+    monkeypatch.setattr(runner, "_ensure_overlay_or_abort",
+                        lambda **kw: ("abort", "compat residue"))
+
+    bdir = _make_bundle_dir(tmp_path)
+    fields = {
+        "type": "triage", "created_ts_utc": "20260521-100000Z",
+        "profile": "test", "origin": "foo/bar", "bundle_id": "b-convert",
+        "bundle_dir": str(bdir), "target": "@test", "run_id": "run-1",
+    }
+    job_path = queue_env["queue_root"] / "pending" / "triage-convert.job"
+    job_path.write_text("\n".join(f"{k}={v}" for k, v in fields.items()) + "\n")
+    runner._register_new_job("triage-convert.job", metadata=fields)
+    runner.process_job(queue_env["queue_root"], _claim(queue_env, job_path),
+                       [], dry_run=False, playbooks_dir=None)
+
+    assert (lifecycle.current(queue_env["conn"], "triage-convert.job")
+            == lifecycle.JobState.ESCALATED)
+    assert _manual_queue(queue_env) == [
+        ("run-1", "foo/bar", "b-convert", "pending")]
+    (classification,) = queue_env["conn"].execute(
+        "SELECT classification FROM user_context_requests").fetchone()
+    assert classification == "patch-error"

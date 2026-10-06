@@ -5027,6 +5027,7 @@ def process_patch_job(
         load_port_history=_load_port_history,
         write_manual_handoff=_write_manual_handoff,
         write_proposed_fix=_write_proposed_fix,
+        upsert_user_context_request=upsert_user_context_request,
     )
 
     result = Orchestrator().run(ctx, [PatchAttemptStep()])
