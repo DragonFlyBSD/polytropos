@@ -499,6 +499,25 @@ def _register_migrate_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Pretty JSON output",
     )
 
+    branch = migrate_sub.add_parser(
+        "branch-line",
+        help="Bring up a new build line: give it a copy of another line's "
+             "own target blocks and payload (dry run unless --write)",
+    )
+    branch.add_argument("--from", dest="from_line", required=True,
+                        help="Line to copy, e.g. @main")
+    branch.add_argument("--new", dest="new_line", required=True,
+                        help="Line to create, e.g. @2026Q4")
+    branch.add_argument(
+        "--delta-root",
+        type=Path,
+        default=None,
+        help="DeltaPorts checkout (default: $DPORTS_DELTA_ROOT, else the "
+             "current directory)",
+    )
+    branch.add_argument("--write", action="store_true",
+                        help="Write the overlays and payload copies")
+
 
 def _register_tracker_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register tracker subcommands."""

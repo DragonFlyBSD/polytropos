@@ -170,6 +170,27 @@ Recommended practice:
   compose/apply run,
 - keep source overlays branch-independent and let target scoping drive behavior.
 
+### Bringing up a new quarterly
+
+A quarterly branches from main, so on its first build it needs every op
+`@main` has outside `@any`. Overlays name lines explicitly, so nothing
+reaches a new one until it is named. `migrate branch-line` does that once,
+at bring-up:
+
+```bash
+bin/dportsv3 migrate branch-line --from @main --new @2026Q4 --delta-root ../DeltaPorts
+bin/dportsv3 migrate branch-line --from @main --new @2026Q4 --delta-root ../DeltaPorts --write
+```
+
+For each port with a block naming `--from`, it appends one `target @2026Q4`
+block holding a copy of those blocks' ops, comments included, and copies
+the payload they read under `dragonfly/@main/` to `dragonfly/@2026Q4/`.
+After that the two lines diverge independently: a fix on one changes only
+that line. Existing text is untouched, and a port is written only if the new
+line plans exactly `--from`'s ops and every other line plans what it did
+before. Without `--write` it only prints the plan. A port it cannot copy
+cleanly is listed as `skip` with the reason, and is left for you.
+
 ## Targets and Scope
 
 Compose and apply CLI target argument accepts:
@@ -563,6 +584,8 @@ Available actions:
 - `dashboard`: aggregate policy/progress and CI gates.
 - `wave-plan`: deterministic candidate selection.
 - `wave-report`: evaluate conversion wave quality.
+- `branch-line`: bring up a new build line as a copy of another
+  (see "Bringing up a new quarterly").
 
 Examples:
 

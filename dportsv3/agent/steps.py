@@ -982,6 +982,10 @@ def _shared_ops_failing(worker_mod: Any, env: str,
     hand on 2026-10-05, each an @any op from a @2026Q3 fix that @main's
     upstream had moved past.
 
+    A list op is ONE statement expanded per line, so it is matched by
+    span. The same text in two lines' own blocks is two ops, each line's
+    alone: what ``migrate branch-line`` (poly-7pwa.25) leaves behind.
+
     ``origins`` is the set the preflight resolved before composing: the
     job's origin and, for a slave, its master. Re-probing the relation
     here would read a compose tree the failed apply left behind.
@@ -990,7 +994,6 @@ def _shared_ops_failing(worker_mod: Any, env: str,
     shared failed, or the report could not be read -- the preflight then
     refuses as before.
     """
-    from dportsv3.agent.scope_check import payload_identity  # noqa: PLC0415
     from dportsv3.engine.api import build_plan  # noqa: PLC0415
 
     found: list[str] = []
@@ -1017,8 +1020,7 @@ def _shared_ops_failing(worker_mod: Any, env: str,
                     op = by_id.get(row.get("id"))
                     shared = line == "@any" or (
                         op is not None and any(
-                            o.target != line
-                            and payload_identity(o) == payload_identity(op)
+                            o.target != line and o.span == op.span
                             for o in ops))
                     if not shared:
                         continue
@@ -1286,10 +1288,10 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     A COMMA LIST IS NOT TWO BLOCKS. ``target @2026Q3,@main`` expands to one
     op per target, so naive scope collection reports both and then tells the
     model that ops which DO apply here do not. lang/rust:88 is exactly that
-    line. An op is another build line's only when no op with the same payload
-    is also effective here -- the same predicate scope_check uses, and the
-    same false positive that bead's review rejected in code before it
-    reappeared here as prose.
+    line. An op is another build line's only when its statement (its span)
+    is not also effective here. Not "no op with the same payload": after
+    ``migrate branch-line`` (poly-7pwa.25) @main and the new quarterly hold
+    identical but separate copies, and each is its own line's.
 
     ROW 1 IS "NO OPS", NOT "NO FILE". This usually runs before
     ensure_bootstrap_overlay writes the header, but the preflight can also
@@ -1338,22 +1340,18 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
         if not planned.ok or planned.plan is None:
             return "".join(brief)
 
-        from dportsv3.agent.scope_check import payload_identity  # noqa: PLC0415
-
-        # plan.ops, not to_dict(): identity is scope_check.payload_identity.
         scopes: set[str] = set()
-        effective_payloads: set[tuple] = set()
-        elsewhere: dict[str, set[tuple]] = {}
+        effective_spans: set = set()
+        elsewhere: dict[str, set] = {}
         scoped_lanes: set[str] = set()
         for op in planned.plan.ops:
             scope = op.target or "@any"
-            key = payload_identity(op)
             if scope != "@any":
                 scopes.add(scope)
             if scope in ("@any", target):
-                effective_payloads.add(key)
+                effective_spans.add(op.span)
             else:
-                elsewhere.setdefault(scope, set()).add(key)
+                elsewhere.setdefault(scope, set()).add(op.span)
             src = str(op.payload.get("src") or "")
             for lane in ("dragonfly", "diffs"):
                 prefix = f"{lane}/@"
@@ -1375,11 +1373,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             f"saying so until the next attempt. Check with "
             f"`get_effective_overlay`.\n"
         )
-        # A scope is another line's only if it holds an op no identical
-        # payload makes effective here -- otherwise it is a comma list.
+        # A scope is another line's only if it holds a statement that is
+        # not also effective here -- otherwise it is a comma list.
         others = sorted(
-            scope for scope, keys in elsewhere.items()
-            if keys - effective_payloads
+            scope for scope, spans in elsewhere.items()
+            if spans - effective_spans
         )
         if others:
             brief.append(

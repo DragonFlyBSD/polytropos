@@ -250,6 +250,27 @@ def _handle_wave_report(args: Namespace) -> int:
     return 0
 
 
+def _handle_branch_line(args: Namespace) -> int:
+    from dportsv3.common.validation import is_compose_target
+    from dportsv3.migration.line_branch import apply_branch, plan_branch
+
+    old, new = args.from_line, args.new_line
+    if not (is_compose_target(old) and is_compose_target(new)) or old == new:
+        print("--from and --new must be two different lines "
+              "(@main or @YYYYQ[1-4])", file=sys.stderr)
+        return 2
+    root = paths.resolve_delta_root(args.delta_root)
+    rows = plan_branch(root, old, new)
+    for row in rows:
+        print(f"{'skip' if row.skipped else 'branch'} {row.origin}: {row.detail}")
+    done = [r for r in rows if not r.skipped]
+    print(f"{len(done)} ports to branch, {len(rows) - len(done)} skipped"
+          + ("" if args.write else " (dry run; --write applies it)"))
+    if args.write:
+        apply_branch(root, rows)
+    return 0
+
+
 def cmd_migrate(args: Namespace) -> int:
     """Dispatch migration subcommands."""
     action = args.migrate_action
@@ -271,6 +292,8 @@ def cmd_migrate(args: Namespace) -> int:
         return _handle_wave_plan(args)
     if action == "wave-report":
         return _handle_wave_report(args)
+    if action == "branch-line":
+        return _handle_branch_line(args)
 
     print(f"Unknown migrate action: {action}", file=sys.stderr)
     return 1

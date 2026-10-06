@@ -95,6 +95,14 @@ def test_an_op_only_this_line_reads_is_not_shared(tmp_path):
     assert steps._shared_ops_failing(w, "env", ["devel/x"]) == []
 
 
+def test_the_same_op_in_another_lines_own_block_is_not_shared(tmp_path):
+    """After `migrate branch-line` (poly-7pwa.25) @2026Q4 holds a copy of
+    @main's op: same text, but changing @main's leaves @2026Q4's alone."""
+    text = OWN + 'target @2026Q4\ntext replace-once file Makefile from "a" to "b"\n'
+    w = _worker(tmp_path, text, _row(_ids(text)["@main"], "@main"))
+    assert steps._shared_ops_failing(w, "env", ["devel/x"]) == []
+
+
 def test_an_unreadable_report_leaves_the_old_refusal(tmp_path):
     w = _worker(tmp_path, ANY, _row("op-x", "@any"), report_ok=False)
     assert steps._shared_ops_failing(w, "env", ["devel/x"]) == []

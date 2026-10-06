@@ -225,6 +225,15 @@ def test_a_comma_list_block_is_not_two_build_lines(env):
     assert "do **not** apply here" not in brief, brief
 
 
+def test_the_same_op_in_another_lines_own_block_is_that_lines(env):
+    """After `migrate branch-line` (poly-7pwa.25) @2026Q4 holds a copy of
+    @main's op. Same text, separate statement: still the other line's."""
+    op = 'mk add MAKE_ENV "LDVER=ld.bfd"\n'
+    brief = _brief(env, HEAD + "target @main\n" + op + "target @2026Q4\n" + op,
+                   target="@main")
+    assert "Ops under `@2026Q4` do **not** apply here" in brief, brief
+
+
 def test_a_port_with_flat_payload_gets_no_lane_paragraph(env):
     """pkg's real shape: per-target blocks, but this patch is flat @any.
 
