@@ -360,9 +360,106 @@ def test_a_fix_left_as_compat_artifacts_reaches_the_manual_queue(
     ).fetchone()) == ("patch-error", "high")
 
 
-def test_a_preflight_failure_of_this_lines_own_op_is_still_refused(
+OWN_OVERLAY = (
+    'port foo/bar\ntype port\nreason "fixture"\n'
+    'target @any\nmk add CFLAGS -DANY\n'
+    'target @main\ntext replace-once file Makefile from "a" to "b"\n'
+)
+
+
+def _preflight_fails_on(monkeypatch, tmp_path, *, targets, stage_errors=(),
+                        composes_after=True):
+    """The preflight compose fails on the OWN_OVERLAY ops of ``targets``.
+
+    materialize_dports fails until the agent has run, then returns
+    ``composes_after``. Returns the payloads the agent was called with.
+    """
+    from dportsv3.agent import patch as patch_module
+    from dportsv3.agent import worker
+    from dportsv3.engine.api import build_plan
+
+    port = tmp_path / "env" / "writable" / "work" / "DeltaPorts" / "ports" / "foo" / "bar"
+    port.mkdir(parents=True)
+    (port / "overlay.dops").write_text(OWN_OVERLAY)
+    ops = {op.target: op for op in build_plan(OWN_OVERLAY, None).plan.ops}
+    rows = [{"id": ops[t].id, "kind": ops[t].kind, "target": t,
+             "status": "failed",
+             "diagnostics": [{"code": "E_APPLY_MISSING_SUBJECT",
+                              "message": "pattern not found"}]}
+            for t in targets]
+    payloads: list[str] = []
+
+    def agent(payload, **kw):
+        payloads.append(payload)
+        return _StubPatchResult(status="success")
+
+    monkeypatch.setattr(patch_module, "run", agent)
+    monkeypatch.setattr(worker, "classify_dops", lambda env, origin: "converted")
+    monkeypatch.setattr(worker, "materialize_dports", lambda env, origin: {
+        "ok": bool(payloads) and composes_after, "origin": origin,
+        "stderr_tail": "E_COMPOSE_APPLY_FAILED"})
+    monkeypatch.setattr(worker, "invariant_origins", lambda env, o: [o])
+    monkeypatch.setattr(
+        worker, "materialize_dports_with_report", lambda env, o: {
+            "ok": False, "report": {
+                "stages": [{"name": "apply_semantic_ops", "errors": [
+                    "E_COMPOSE_APPLY_FAILED: foo/bar: op(s) failed",
+                    *stage_errors]}],
+                "ports": [{"origin": o, "dops_failed_op_results": rows}]}})
+    return ops, payloads
+
+
+def _run_patch(queue_env, tmp_path, job_id):
+    job_path = _drop_patch_job(queue_env, job_id=job_id,
+                               bundle_dir=_make_bundle_dir(tmp_path),
+                               extra={"target": "@main", "run_id": "run-1"})
+    runner.process_job(queue_env["queue_root"], _claim(queue_env, job_path),
+                       [], dry_run=False, playbooks_dir=None)
+    return [r["event_name"]
+            for r in lifecycle.history(queue_env["conn"], job_id)]
+
+
+def test_an_own_op_failing_at_preflight_goes_to_the_agent(
         queue_env, tmp_path, monkeypatch):
-    """Not row 6: nothing shared failed, so the old refusal stands."""
+    """poly-7pwa.30: only an op of this line's own block fails -- say an
+    anchor an upstream bump removed. reapply wrote the port with every
+    other op, and fixing that op is the job: the agent runs, told which."""
+    ops, payloads = _preflight_fails_on(monkeypatch, tmp_path,
+                                        targets=["@main"])
+    events = _run_patch(queue_env, tmp_path, "job-own-op.job")
+    assert events[-2:] == ["patch_ok", "verify_ok"], events
+    (payload,) = payloads
+    assert "## This line's own ops fail to compose" in payload
+    assert ops["@main"].id in payload and "E_APPLY_MISSING_SUBJECT" in payload
+
+
+def test_success_that_still_does_not_compose_is_not_done(
+        queue_env, tmp_path, monkeypatch):
+    """This job never had a clean compose to start from, so its claim of
+    success is checked: the port must compose before the workspace reset."""
+    _preflight_fails_on(monkeypatch, tmp_path, targets=["@main"],
+                        composes_after=False)
+    events = _run_patch(queue_env, tmp_path, "job-still-broken.job")
+    assert events[-1] == "patch_gave_up", events
+
+
+@pytest.mark.parametrize("targets, stage_errors, last", [
+    (["@main", "@any"], (), "escalate_manual"),
+    (["@main"], ("E_COMPOSE_SPECIAL_PATCH_FAILED: Mk/x.diff",), "patch_gave_up"),
+], ids=["own-and-shared-escalates", "own-and-another-error-refuses"])
+def test_own_ops_with_anything_else_do_not_start_the_agent(
+        queue_env, tmp_path, monkeypatch, targets, stage_errors, last):
+    _, payloads = _preflight_fails_on(monkeypatch, tmp_path, targets=targets,
+                                      stage_errors=stage_errors)
+    events = _run_patch(queue_env, tmp_path, "job-mixed.job")
+    assert events[-1] == last, events
+    assert payloads == []
+
+
+def test_a_preflight_failure_that_is_not_an_op_is_still_refused(
+        queue_env, tmp_path, monkeypatch):
+    """No failing op to hand over: the tree is unknown, so the old refusal
+    stands."""
     from dportsv3.agent import worker
 
     bdir = _make_bundle_dir(tmp_path)

@@ -1026,45 +1026,88 @@ def _queue_for_operator(
         pass
 
 
-def _shared_ops_failing(worker_mod: Any, env: str,
-                        origins: list[str]) -> list[str]:
-    """The ops another build line also reads that fail to compose here.
+#: Row codes that say the engine and the overlay disagree, not that an op
+#: stopped fitting its port: nothing an overlay edit fixes.
+_TOOL_SKEW_CODES = frozenset({"E_APPLY_UNKNOWN_KIND", "E_APPLY_INVALID_TARGET"})
 
-    poly-7pwa.27, row 6. Called when the preflight compose fails. An op
-    under ``target @any``, or one a ``target`` list gives this line and
-    another, cannot be fixed by an op of this line's (``@any`` runs
-    first, and the compose has already failed), and changing it changes a
-    line nothing here builds. That is the operator's call, so the job
-    stops before the agent runs. The live shape: six overlays split by
-    hand on 2026-10-05, each an @any op from a @2026Q3 fix that @main's
-    upstream had moved past.
+
+@dataclass(frozen=True)
+class PreflightFailures:
+    """Why the preflight compose failed: one line per failing op or cause."""
+
+    #: Ops another build line also reads: the operator's call (row 6).
+    shared: tuple[str, ...] = ()
+    #: Ops only this line reads: the agent's to fix (row 3, poly-7pwa.30).
+    own: tuple[str, ...] = ()
+    #: Anything that is not a failing op, so the tree is not known.
+    other: tuple[str, ...] = ()
+
+
+def _preflight_failures(worker_mod: Any, env: str,
+                        origins: list[str]) -> PreflightFailures:
+    """Sort a failed preflight compose into shared ops, own ops and the rest.
+
+    poly-7pwa.27, row 6: an op under ``target @any``, or one a ``target``
+    list gives this line and another, cannot be fixed by an op of this
+    line's (``@any`` runs first, and the compose has already failed), and
+    changing it changes a line nothing here builds. That is the operator's
+    call. The live shape: six overlays split by hand on 2026-10-05, each an
+    @any op from a @2026Q3 fix that @main's upstream had moved past.
+
+    poly-7pwa.30: an op only this line reads is the agent's to fix, and
+    since .27 scopes new work per line it is the common case: an own-block
+    op whose anchor an upstream bump removed. reapply composes without
+    --strict, so a failed op leaves the port written fresh with every other
+    op applied, and the agent can start from it. Anything that is not a
+    failing op row -- another compose error, a report that does not read,
+    a row that matches no op -- goes to ``other``, and the preflight still
+    refuses: then the tree really is unknown.
 
     A list op is ONE statement expanded per line, so it is matched by
     span. The same text in two lines' own blocks is two ops, each line's
     alone: what ``migrate branch-line`` (poly-7pwa.25) leaves behind.
 
     ``origins`` is the set the preflight resolved before composing: the
-    job's origin and, for a slave, its master. Re-probing the relation
-    here would read a compose tree the failed apply left behind.
-
-    One line per op: origin, op, first diagnostic. Empty when nothing
-    shared failed, or the report could not be read -- the preflight then
-    refuses as before.
+    job's origin and, for a slave, its master. Each is reapplied on its
+    own, so each is freshly composed even where materialize_dports stopped
+    at the first failure. Re-probing the relation here would read a
+    compose tree the failed apply left behind.
     """
     from dportsv3.engine.api import build_plan  # noqa: PLC0415
 
-    found: list[str] = []
+    shared: list[str] = []
+    own: list[str] = []
+    other: list[str] = []
     try:
         for current in origins:
-            report = (worker_mod.materialize_dports_with_report(env, current)
-                      or {}).get("report")
-            if not isinstance(report, dict):
+            result = worker_mod.materialize_dports_with_report(env, current) or {}
+            if result.get("ok"):
                 continue
+            report = result.get("report")
+            if not isinstance(report, dict):
+                other.append(f"{current}: the compose report could not be read")
+                continue
+            for stage in report.get("stages") or []:
+                for err in stage.get("errors") or []:
+                    if not str(err).startswith("E_COMPOSE_APPLY_FAILED"):
+                        other.append(f"{current}: {str(err)[:300]}")
+            rows_seen = False
             for port in report.get("ports") or []:
                 port_origin = port.get("origin") or current
                 rows = port.get("dops_failed_op_results") or []
                 if not rows:
                     continue
+                rows_seen = True
+                # A rollback (E_APPLY_WRITE_FAILED) or an oracle failure
+                # leaves the bare upstream copy and shows only in the count:
+                # then "every other op applied" is false.
+                row_errors = sum(
+                    1 for row in rows for d in row.get("diagnostics") or []
+                    if (d or {}).get("severity", "error") == "error")
+                if (int(port.get("errors") or 0) > row_errors
+                        or int(port.get("oracle_failures") or 0)):
+                    other.append(f"{port_origin}: the apply failed beyond "
+                                 f"its ops (rolled back, or the oracle failed)")
                 text = _read_overlay_text(worker_mod, env, port_origin)
                 planned = (build_plan(text, None)
                            if isinstance(text, str) else None)
@@ -1075,21 +1118,49 @@ def _shared_ops_failing(worker_mod: Any, env: str,
                 for row in rows:
                     line = row.get("target")
                     op = by_id.get(row.get("id"))
-                    shared = line == "@any" or (
-                        op is not None and any(
-                            o.target != line and o.span == op.span
-                            for o in ops))
-                    if not shared:
-                        continue
                     diag = (row.get("diagnostics") or [{}])[0] or {}
-                    found.append(
+                    found = (
                         f"{port_origin}: {row.get('id')} ({row.get('kind')}, "
                         f"target {line}) {diag.get('code') or ''}: "
                         f"{diag.get('message') or ''}"
                     )
-    except Exception:  # noqa: BLE001 -- a classifier; the refusal stands
-        return []
-    return found
+                    if line == "@any" or (op is not None and any(
+                            o.target != line and o.span == op.span
+                            for o in ops)):
+                        shared.append(found)
+                    elif op is None:
+                        other.append(f"{found} (matches no op in the overlay)")
+                    elif diag.get("code") in _TOOL_SKEW_CODES:
+                        other.append(found)
+                    else:
+                        own.append(found)
+            if not rows_seen and not other:
+                other.append(f"{current}: compose failed with no failed op")
+    except Exception as exc:  # noqa: BLE001 -- a classifier; the refusal stands
+        return PreflightFailures(
+            other=(f"could not classify the failure: {exc}"[:300],))
+    return PreflightFailures(tuple(shared), tuple(own), tuple(other))
+
+
+def _own_ops_brief(target: str, failing: tuple[str, ...]) -> str:
+    """The section a job gets when ops only its line reads fail to compose.
+
+    poly-7pwa.30. About 400 characters, plus one line per op (at most 8,
+    each cut to 240).
+    """
+    line = f"`{target}`" if target else "this build line"
+    shown = [f"- {row[:240]}" for row in failing[:8]]
+    if len(failing) > 8:
+        shown.append(f"- and {len(failing) - 8} more")
+    return (
+        "\n\n---\n\n## This line's own ops fail to compose\n\n"
+        f"The port did not compose on {line} when the job started, and "
+        f"every op that failed is one only {line} reads, so fixing them is "
+        f"this job. The compose tree has every other op applied; these "
+        f"failed:\n\n" + "\n".join(shown) + "\n\n"
+        "Change them where they are. `dsynth_build` refuses until "
+        "`materialize_dports` succeeds.\n"
+    )
 
 
 def _rescue_work_on_raise(
@@ -1333,7 +1404,7 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     line); a port with ops keeps every change in this line's block and
     overrides a wrong ``@any`` op there. An ``@any`` op that fails to
     compose here never reaches the agent: the preflight escalates it
-    (_shared_ops_failing). It replaced
+    (_preflight_failures). It replaced
     "@any unless you can show it is this line's alone", which the agent
     could never show: devel/glib20's @main fix then reached @2026Q3, whose
     older glib the patch did not apply to. About 620 characters for a port
@@ -1974,7 +2045,10 @@ class PatchAttemptStep:
         #
         # Refuse on failure rather than proceeding: a compose that did
         # not work means we do not know what is on disk, and the whole
-        # point is to not build against an unknown tree.
+        # point is to not build against an unknown tree. The exception is
+        # a failure that is only ops this line alone reads (poly-7pwa.30):
+        # the port is then written fresh with every other op, the fix is
+        # the agent's, and dsynth_build refuses until a compose succeeds.
         # Before composing: the overlay triage bootstrapped for a port
         # that had none was written in the shared checkout, and the
         # worktree this job just cut does not carry untracked files, so
@@ -2016,12 +2090,26 @@ class PatchAttemptStep:
                 )
 
         composed = _worker.materialize_dports(env, origin)
-        if not composed.get("ok"):
+        failures = (PreflightFailures() if composed.get("ok") else
+                    _preflight_failures(_worker, env, [origin, *also_origins]))
+        if failures.own and not failures.shared and not failures.other:
+            services.activity_log(
+                queue_root, "patch_preflight_own_ops_failing",
+                ("Op(s) only this build line reads fail to compose; the "
+                 "agent starts on them: " + "; ".join(failures.own))[:600],
+                job_id=ctx.job_id,
+                extra={"origin": origin,
+                       "failing_own_ops": list(failures.own)},
+            )
+            ctx.state["preflight_own_failures"] = failures.own
+            payload += _own_ops_brief(
+                _worker.peek_env_target(env) or job.get("target") or "",
+                failures.own)
+        elif not composed.get("ok"):
             # poly-7pwa.27 row 6: a shared op fails here. Not a fix the
             # agent may make, and not the agent giving up: escalate with
             # the op named, before any model spend.
-            shared = _shared_ops_failing(
-                _worker, env, [origin, *also_origins])
+            shared = list(failures.shared)
             if shared:
                 detail = (
                     "Shared op(s) fail to compose on this build line before "
@@ -2063,16 +2151,18 @@ class PatchAttemptStep:
                 queue_root, "patch_preflight_compose_failed",
                 msg, job_id=ctx.job_id,
                 extra={"origin": origin, "failed_origin": failed_origin,
-                       "rc": composed.get("rc")},
+                       "rc": composed.get("rc"),
+                       "causes": list(failures.other or failures.own)[:10]},
             )
             services.write_error_note(job_path, msg)
             return _err(msg, services, job_path,
                         JobEvent.PATCH_GAVE_UP)
-        services.activity_log(
-            queue_root, "patch_preflight_composed",
-            f"composed {origin} from baseline before patch",
-            job_id=ctx.job_id, extra={"origin": origin},
-        )
+        else:
+            services.activity_log(
+                queue_root, "patch_preflight_composed",
+                f"composed {origin} from baseline before patch",
+                job_id=ctx.job_id, extra={"origin": origin},
+            )
 
         # One working-tree snapshot per attempt, re-published as the agent
         # edits, so the job page can show what it changed while it is still
@@ -2290,6 +2380,18 @@ class PatchAttemptStep:
                 job_id=ctx.job_id,
             )
 
+        # A job that started on its own failing ops ends "done" only if the
+        # port now composes. The model's proof text is trusted otherwise,
+        # and this job never had the clean preflight compose every other
+        # job starts from (poly-7pwa.30). Before the reset, which drops
+        # the edits.
+        if result.status == "success" and ctx.state.get("preflight_own_failures"):
+            try:
+                ctx.state["composes_after_patch"] = bool(
+                    _worker.materialize_dports(env, origin).get("ok"))
+            except Exception:  # noqa: BLE001 -- unknown is not a pass
+                ctx.state["composes_after_patch"] = False
+
         # Post-job workspace reset. changes.diff is the canonical
         # record; the env's port subtree no longer needs to carry
         # the agent's edits. Reset to git HEAD so the next patch job
@@ -2333,6 +2435,24 @@ class PatchAttemptStep:
             )
 
         status_l = (result.status or "").lower()
+        if (result.status == "success"
+                and ctx.state.get("composes_after_patch") is False):
+            _try_write_handoff(
+                services, ctx, origin,
+                reason="patch_gave_up",
+                reason_detail=(
+                    "reported success, but the port still does not compose "
+                    "on its line; it started with these ops failing: "
+                    + "; ".join(ctx.state.get("preflight_own_failures") or ())
+                )[:1500],
+                patch_result=result,
+            )
+            return StepOutcome(
+                status="success",
+                next_event=JobEvent.PATCH_GAVE_UP,
+                detail={"status_str": "still_fails_to_compose",
+                        "patch_status": result.status},
+            )
         if result.status == "success":
             # C1: rebuild_ok is necessary but not sufficient — the port
             # must also have reached a 'converted' dops state. A build
