@@ -297,6 +297,8 @@ snapshot for reading, and not a way to edit an existing
 `install_patches` in the same attempt is wasted work and a sign you
 reached for the wrong tool. For a small change you can also write the
 unified diff by hand from prior `get_file` reads and stage it directly.
+A file other build lines read too is refused, and the refusal says where
+your line's copy goes.
 
 ## Recovering from a broken patch — never text-edit the diff
 
@@ -339,6 +341,7 @@ overwrite in place** — in that order:
    `install_patches` resolves that from the overlay and reports it in
    `installed`. When other build lines read that file too, it writes
    your line's own copy instead and `scope_note` gives the one op to add.
+   `put_file` and `edit_file` refuse that file the same way.
 
 **`overlay.dops` needs no edit at all.** Its `file materialize` line
 already names that source, so overwriting the file there is the whole

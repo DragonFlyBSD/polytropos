@@ -903,6 +903,112 @@ def _reject_line_numbered_content(path: str, content: str) -> dict | None:
     }
 
 
+def _reject_shared_payload_write(env: str, chroot_path: str,
+                                 tool: str) -> dict | None:
+    """Refuse a write over a payload file another build line reads.
+
+    poly-7pwa.29. The env builds one line, so a ``dragonfly/`` or
+    ``diffs/`` file that an @any op or another line's op reads is never
+    overwritten: nothing here can show the change is right for the others
+    (poly-7pwa.27, row 5a). install_patches writes the line's own copy
+    instead; this holds put_file and edit_file to the same rule, so a
+    hand-written patch cannot land on the shared file either.
+
+    The readers come from the working overlay and from the job's HEAD
+    overlay: editing the overlay first does not open the file, and an
+    overlay left half-edited does not lock it. A file the job wrote is its
+    own; when git cannot say, the file counts as committed.
+    """
+    import posixpath
+
+    prefix = "/work/DeltaPorts/ports/"
+    norm = posixpath.normpath(chroot_path)
+    parts = norm[len(prefix):].split("/") if norm.startswith(prefix) else []
+    if len(parts) < 4 or parts[2] not in ("dragonfly", "diffs"):
+        return None
+    target = peek_env_target(env) or ""
+    if not target:
+        return None
+    origin, rel = "/".join(parts[:2]), "/".join(parts[2:])
+    port_rel = f"ports/{origin}/{rel}"
+
+    from dportsv3.engine.api import build_plan  # noqa: PLC0415
+
+    def plan_of(text: str | None):
+        try:
+            planned = build_plan(text, None) if text is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+        if planned is None or not planned.ok or planned.plan is None:
+            return None
+        return planned.plan
+
+    overlay = env_paths(env).deltaports / "ports" / origin / "overlay.dops"
+    try:
+        working = overlay.read_text()
+    except (OSError, UnicodeDecodeError):
+        working = None
+    plan = plan_of(working)
+    found = _readers_elsewhere(plan, target, rel) if plan is not None else []
+    if not found:
+        plan = plan_of(_head_text(env, f"ports/{origin}/overlay.dops"))
+        found = _readers_elsewhere(plan, target, rel) if plan is not None else []
+    if not found:
+        return None
+    committed = _committed_paths(env, [port_rel])
+    if committed is not None and port_rel not in committed:
+        return None
+
+    who = ", ".join(f"`{t}`" for t in sorted({op.target for op in found}))
+    head = (f"{tool} refused: {chroot_path} is read by {who}, and only "
+            f"`{target}` is built here, so changing it changes lines nothing "
+            f"here tested (poly-7pwa.27). ")
+    materialize = [op for op in found if op.kind == "file.materialize"]
+    if not materialize:
+        advice = ("It is applied with `patch apply`, and a second copy "
+                  "cannot replace it on one line. Leave it: change what it "
+                  f"does on `{target}` with a later op in the `target "
+                  f"{target}` block, or say in your report that it is wrong "
+                  "for every line.")
+        return {"ok": False, "error": head + advice, "path": chroot_path,
+                "blocked_by": "shared_payload"}
+    dst = posixpath.normpath(str(materialize[0].payload.get("dst")
+                                 or f"dragonfly/{parts[-1]}"))
+    # Named after the destination, as install_patches names it.
+    own = f"{parts[2]}/{target}/{dst.rsplit('/', 1)[-1]}"
+    # What this line installs at that destination: the last op to fill it
+    # in apply order. If that is its own copy, the edit belongs there.
+    from dportsv3.engine.models import order_ops_for_target  # noqa: PLC0415
+
+    winner = None
+    for op in order_ops_for_target(plan.ops, target):
+        if (op.target in ("@any", target)
+                and op.kind in ("file.materialize", "file.copy")
+                and posixpath.normpath(str(op.payload.get("dst") or "")) == dst):
+            winner = op
+    mine = (winner if winner is not None and winner.target == target
+            and winner.kind == "file.materialize"
+            and posixpath.normpath(str(winner.payload.get("src") or "")) != rel
+            else None)
+    if mine is not None:
+        src = posixpath.normpath(str(mine.payload.get("src")))
+        advice = (f"`{target}` has its own copy: `file materialize {src} -> "
+                  f"{dst}` in its block. Edit {prefix}{origin}/{src} instead; "
+                  f"overlay.dops needs no edit.")
+    elif own == rel:
+        advice = (f"It is in `{target}`'s own folder, but a `target` list "
+                  f"makes another line read it too, so no copy of it is "
+                  f"`{target}`'s alone. Leave it and say so in your report.")
+    else:
+        advice = (f"Write this line's own copy at {prefix}{origin}/{own} and "
+                  f"add `file materialize {own} -> {dst}` to the `target "
+                  f"{target}` block: a later op with the same destination "
+                  f"replaces the shared file on `{target}` only. For a patch "
+                  f"cut with genpatch, `install_patches` does both.")
+    return {"ok": False, "error": head + advice, "path": chroot_path,
+            "blocked_by": "shared_payload"}
+
+
 def put_file(
     env: str,
     path: str,
@@ -938,6 +1044,9 @@ def put_file(
         refused = _reject_malformed_patch_write(path, content)
         if refused is not None:
             return refused
+    refused = _reject_shared_payload_write(env, path, "put_file")
+    if refused is not None:
+        return refused
     paths = env_paths(env)
     host = _resolve_chroot_path(paths, path)
 
@@ -1101,6 +1210,9 @@ def edit_file(
 
     updated = text.replace(old_string, new_string)
     refused = _reject_malformed_patch_write(path, updated)
+    if refused is not None:
+        return refused
+    refused = _reject_shared_payload_write(env, path, "edit_file")
     if refused is not None:
         return refused
 
@@ -3566,21 +3678,32 @@ def _payload_destination(plan, target: str, filename: str,
     return src, "existing", wanted
 
 
-def _read_on_another_line(plan, target: str, src: str) -> bool:
-    """True when an op that does not run only on ``target`` reads ``src``.
+#: The ops that read a payload file from the overlay dir, and the key.
+_PAYLOAD_READERS = {"file.materialize": "src", "patch.apply": "path"}
+
+
+def _readers_elsewhere(plan, target: str, src: str) -> list:
+    """The ops that read ``src`` and do not run only on ``target``.
 
     That is an @any op, or another line's: a comma list expands to one op
     per line, so ``target @2026Q3,@main`` counts as @2026Q3's too. Writing
     such a file changes a build line nothing here built (poly-7pwa.27).
+    A file materialize reads its ``src``, a patch apply its ``path``.
     """
     import posixpath
 
-    for op in plan.ops:
-        if op.kind != "file.materialize" or op.target == target:
-            continue
-        if posixpath.normpath(str(op.payload.get("src") or "")) == src:
-            return True
-    return False
+    src = posixpath.normpath(src)
+    return [
+        op for op in plan.ops
+        if op.target != target and op.kind in _PAYLOAD_READERS
+        and posixpath.normpath(
+            str(op.payload.get(_PAYLOAD_READERS[op.kind]) or "")) == src
+    ]
+
+
+def _read_on_another_line(plan, target: str, src: str) -> bool:
+    """True when an op that does not run only on ``target`` reads ``src``."""
+    return bool(_readers_elsewhere(plan, target, src))
 
 
 def _committed_paths(env: str, rels: list[str]) -> set[str] | None:
