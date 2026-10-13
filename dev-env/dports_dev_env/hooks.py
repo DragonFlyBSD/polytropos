@@ -62,9 +62,15 @@ def env_hook_settings(state: EnvironmentState) -> dict[str, str]:
     for a ``@2026Q3`` env), so the default derives a target no farm build
     will ever produce, and every failure raised in here lands on an issue
     that can never match the same failure from the farm.
+
+    ``DPORTSV3_TRACKER_DEV_ENV`` names the env itself, so a job its dsynth
+    raises runs in this env and not in another env of the same build line
+    (poly-p2ve). dsynth strips the environment, so the conf is the only
+    way the hook can know.
     """
     return {
         "DPORTSV3_TRACKER_TARGET": f"@{state.target.lstrip('@')}",
+        "DPORTSV3_TRACKER_DEV_ENV": state.name,
         "DPORTSV3_BIN": str(CHROOT_DPORTSV3),
         "ARTIFACT_STORE_CLIENT": str(CHROOT_STORE_CLIENT),
     }

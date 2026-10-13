@@ -121,6 +121,9 @@
            The table it used to jump to now lives on Runner, which is the
            page about the machinery (poly-x3pg.7). #}
         {% if env_broken %}<a href="{{ request.url_for('agentic_runner') }}#env-health"><span class="wl-dot bad"></span>Env: <b>{{ env_broken|length }} broken</b></a>
+        {# Each job runs in an env of its own build line (poly-p2ve), so the
+           answer to "which env" is one per line. #}
+        {% elif env_lines %}<span class="wl-dot ok"></span>Env {% for line, envs in env_lines %}<b>{{ envs|join(', ') }}</b> for {{ line }}{% if not loop.last %}, {% endif %}{% endfor %}: ready
         {% else %}<span class="wl-dot ok"></span>Env <b>{{ active_env or 'auto' }}</b>: ready{% endif %}
       </span>
       <span class="wl-ops-spacer"></span>

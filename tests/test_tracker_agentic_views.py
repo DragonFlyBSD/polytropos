@@ -1566,3 +1566,20 @@ def test_the_queue_still_says_when_an_env_is_broken(client: TestClient) -> None:
 
     assert "Env" in body
     assert "/agentic/runner#env-health" in body or "Env <b>" in body
+
+
+def test_the_queue_names_the_env_of_each_build_line(
+    client: TestClient, seeded_state_db: Path
+) -> None:
+    """Each job runs in an env of its own line (poly-p2ve), so a healthy
+    strip says which env serves which line, not one global "auto"."""
+    conn = sqlite3.connect(str(seeded_state_db))
+    conn.execute(
+        "UPDATE env_health_status SET status = 'ready', detail_json = ?",
+        (json.dumps({"env": "test-env", "status": "ready",
+                     "target": "@2026Q3", "checks": []}),),
+    )
+    conn.commit()
+    conn.close()
+    body = client.get("/agentic").text
+    assert "<b>test-env</b> for @2026Q3: ready" in body

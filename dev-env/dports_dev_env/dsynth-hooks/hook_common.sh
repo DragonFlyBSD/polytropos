@@ -269,6 +269,12 @@ enqueue_job() {
 		"snippet_round=0" \
 		"has_snippets=false"
 
+	# The dev-env this dsynth runs in, when the hooks conf names one: the
+	# job then runs in this env rather than another env of its build line.
+	if [ -n "${DPORTSV3_TRACKER_DEV_ENV:-}" ]; then
+		printf 'dev_env=%s\n' "$DPORTSV3_TRACKER_DEV_ENV" >>"$tmpfile"
+	fi
+
 	# Add iteration tracking if this is a retry
 	if [ "$iteration" -gt 1 ]; then
 		printf 'iteration=%d\n' "$iteration" >>"$tmpfile"
@@ -285,7 +291,13 @@ enqueue_job() {
 	# job. Best-effort: store outages don't block enqueue (the .job
 	# file is the source of truth; the runner emits a CLAIM event on
 	# pickup and the metadata flows via the detail block on this
-	# initial transition).
+	# initial transition). --dev-env only when there is one: a conf
+	# written before it existed must not trip a client that predates it.
+	if [ -n "${DPORTSV3_TRACKER_DEV_ENV:-}" ]; then
+		set -- --dev-env "$DPORTSV3_TRACKER_DEV_ENV"
+	else
+		set --
+	fi
 	artifact_store job-transition \
 		--job-id "$fname" \
 		--event hook_enqueued \
@@ -297,6 +309,7 @@ enqueue_job() {
 		--path "${qroot}/pending/${fname}" \
 		--target "${DPORTSV3_TRACKER_TARGET:-}" \
 		--bundle-id "$bundle_id" \
+		"$@" \
 		>/dev/null 2>&1 || true
 }
 

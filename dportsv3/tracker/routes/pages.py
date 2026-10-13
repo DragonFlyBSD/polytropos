@@ -39,6 +39,7 @@ from dportsv3.tracker.agentic_queries import (
     distinct_targets,
     builder_env_selections,
     env_health_statuses,
+    envs_by_line,
     get_active_env,
     get_runner_control,
     get_artifact_ref,
@@ -701,6 +702,7 @@ def register(app, ctx):
                 _cockpit_context(request, conn, selected, artifact)
                 if selected else None
             )
+            health = env_health_statuses(conn)
             return templates.TemplateResponse(
                 request,
                 "agentic_index.html",
@@ -713,7 +715,8 @@ def register(app, ctx):
                     # that is queue-relevant, it is why nothing is moving.
                     # The table and the picker moved to Runner, which is
                     # the page about the machinery (poly-x3pg.7).
-                    "env_health": env_health_statuses(conn),
+                    "env_health": health,
+                    "env_lines": envs_by_line(health),
                     "active_env": get_active_env(conn),
                     "bands": bands,
                     "focus_count": focus_count,

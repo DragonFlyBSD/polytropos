@@ -69,6 +69,7 @@ def _isolate_env_resolver(monkeypatch):
     # in test A would bleed into test B for up to 1 s and silently
     # mask "the UI change reached the runner" behavior.
     monkeypatch.setattr(runner, "_GATE_RESOLVE_CACHE", None)
+    monkeypatch.setattr(runner, "_ENV_LINES_CACHE", None)
 
 
 @pytest.fixture

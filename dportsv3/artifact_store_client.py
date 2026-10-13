@@ -103,6 +103,7 @@ def cmd_job_transition(args):
         "path": args.path,
         "target": args.target,
         "last_error": args.last_error,
+        "dev_env": args.dev_env,
     }
     detail = {k: v for k, v in detail.items() if v}
     payload = {
@@ -164,6 +165,9 @@ def main():
                        help="bundle this job is attached to; lets the "
                             "store fall back to bundles.target when "
                             "--target is empty")
+    p_job.add_argument("--dev-env", default="",
+                       help="the dev-env whose dsynth raised this job; the "
+                            "runner runs it there (poly-p2ve)")
     p_job.set_defaults(func=cmd_job_transition)
 
     args = parser.parse_args()

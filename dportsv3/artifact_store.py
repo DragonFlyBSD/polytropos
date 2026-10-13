@@ -387,6 +387,7 @@ class ArtifactStore:
                            created_ts_utc = COALESCE(?, created_ts_utc),
                            path = COALESCE(?, path),
                            target = COALESCE(NULLIF(?, ''), target),
+                           dev_env = COALESCE(NULLIF(?, ''), dev_env),
                            last_seen_at = ?
                        WHERE job_id = ?""",
                     (
@@ -398,6 +399,7 @@ class ArtifactStore:
                         detail.get("created_ts_utc"),
                         detail.get("path"),
                         target,
+                        detail.get("dev_env") or "",
                         now,
                         job_id,
                     ),

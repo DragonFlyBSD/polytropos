@@ -8,9 +8,12 @@ A job with a target routes to an env of its build line (poly-p2ve):
 
 1. ``job.dev_env`` -- the job carries its own env: a patch job the
    env its triage ran in, a verify job the env the operator
-   picked, a confirm build the env its line routed to. Hook-created
-   jobs carry none (hook_common.sh writes no dev_env). An env that
-   no longer exists is routed past.
+   picked, a confirm build the env its line routed to, a hook-created
+   job the env whose dsynth raised it (``DPORTSV3_TRACKER_DEV_ENV`` in
+   that env's hooks conf). An env that no longer exists is routed past.
+   Without that stamp -- a hooks conf written before it existed, which
+   ``hooks-install`` never rewrites -- the env of the job's line whose
+   dsynth profile is the job's ``profile`` (:func:`profile_env`).
 2. The tracker's selection (per builder, then the default), if it
    composes the job's line.
 3. ``--env NAME``, if it composes the job's line.
@@ -47,7 +50,9 @@ _log = logging.getLogger(__name__)
 class EnvResolution:
     """Outcome of one resolution call."""
     env: str | None        # resolved name, or None if refused
-    source: str            # "job" | "tracker" | "cli_flag" | "auto" | "none"
+    #: "job" | "profile" | "tracker" | "cli_flag" | "line" | "auto" |
+    #: "ambiguous" | "none"
+    source: str
     refusal_reason: str | None = None
     available_envs: tuple[str, ...] = ()
     #: Set when the env list could not be read at all, as opposed to
@@ -186,6 +191,27 @@ def envs_by_build_line(
     return {line: tuple(found) for line, found in out.items()}
 
 
+def profile_env(job: dict | None, candidates: Iterable[str]) -> str | None:
+    """The env among ``candidates`` whose dsynth raised ``job``, by profile.
+
+    A dev-env names its dsynth profile ``sanitize_name(env name)``
+    (dports_dev_env.dsynth), and a hook-created job carries that profile.
+    So when exactly one of ``candidates`` -- the envs of the job's line --
+    has the job's profile, that is the env it came from. The fallback for
+    a job with no ``dev_env`` stamp (poly-p2ve); None when no candidate or
+    several match, or when dports_dev_env cannot be imported.
+    """
+    profile = (job or {}).get("profile") if isinstance(job, dict) else None
+    if not isinstance(profile, str) or not profile:
+        return None
+    try:
+        from dports_dev_env.names import sanitize_name  # noqa: PLC0415
+    except ImportError:
+        return None
+    found = [env for env in candidates if sanitize_name(env) == profile]
+    return found[0] if len(found) == 1 else None
+
+
 def resolve_env_for_job(
     job: dict | None,
     db_conn: sqlite3.Connection | None,
@@ -232,9 +258,9 @@ def resolve_env_for_job(
         return names
 
     # Step 1: the job carries its own env (patch, verify and confirm
-    # jobs; a hook-created job never does). A job with a line whose env is
-    # known to be gone -- the listing has envs, and not that one -- routes
-    # again rather than fail on a ghost.
+    # jobs; a hook-created job when its env's hooks conf stamps it). A job
+    # with a line whose env is known to be gone -- the listing has envs,
+    # and not that one -- routes again rather than fail on a ghost.
     if job_env:
         if not line or not _names() or job_env in _names():
             return EnvResolution(env=job_env, source="job")
@@ -252,6 +278,12 @@ def resolve_env_for_job(
                 except LookupError:
                     continue
         candidates = tuple(n for n in _names() if env_lines.get(n) == line)
+        # Still step 1, for a hook-created job with no stamp: the env of
+        # its line whose dsynth raised it.
+        by_profile = None if job_env else profile_env(job, candidates)
+        if by_profile:
+            return EnvResolution(env=by_profile, source="profile",
+                                 available_envs=candidates)
         if active in candidates:
             return EnvResolution(env=active, source="tracker",
                                  available_envs=candidates)

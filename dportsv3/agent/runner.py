@@ -213,6 +213,12 @@ def _record_job_env(job: dict | None, env: str | None) -> None:
 _GATE_RESOLVE_CACHE: tuple[float, str | None] | None = None
 _GATE_RESOLVE_TTL_SECONDS: float = 1.0
 
+#: env_resolver.envs_by_build_line() for the current tick (poly-p2ve). The
+#: gate, the build-request pass and the claim each ask which envs compose
+#: which line, and each answer reads every env's state from disk; one read
+#: per tick, on the gate's TTL, serves all three.
+_ENV_LINES_CACHE: tuple[float, dict[str, tuple[str, ...]]] | None = None
+
 
 def resolve_env_for_gate() -> str | None:
     """Cached resolve_env(None) for the runner's per-poll gate.
@@ -231,6 +237,21 @@ def resolve_env_for_gate() -> str | None:
     val = resolve_env(None)
     _GATE_RESOLVE_CACHE = (now, val)
     return val
+
+
+def _env_lines() -> dict[str, tuple[str, ...]]:
+    """``{line: envs}`` on this host, read at most once per tick."""
+    global _ENV_LINES_CACHE
+    import time  # noqa: PLC0415
+    from dportsv3.agent import env_resolver  # noqa: PLC0415
+    now = time.monotonic()
+    if _ENV_LINES_CACHE is not None:
+        cached_at, lines = _ENV_LINES_CACHE
+        if now - cached_at < _GATE_RESOLVE_TTL_SECONDS:
+            return lines
+    lines = env_resolver.envs_by_build_line()
+    _ENV_LINES_CACHE = (now, lines)
+    return lines
 
 
 def _no_env_reason() -> str:
@@ -2787,7 +2808,7 @@ _FRESH_TRIAGE_DEFAULTS = {"snippet_round": "0", "has_snippets": "false"}
 
 _QUEUED_TRIAGE_SQL = """
     SELECT j.job_id, j.type, j.origin, j.flavor, j.created_ts_utc,
-           j.target, j.bundle_id, b.run_id, r.profile
+           j.target, j.bundle_id, j.dev_env, b.run_id, r.profile
     FROM jobs j
     JOIN bundles b ON b.bundle_id = j.bundle_id
     LEFT JOIN runs r ON r.run_id = b.run_id
@@ -2827,6 +2848,10 @@ def _job_meta_from_row(row: dict) -> dict:
         "run_id": row.get("run_id") or "",
         "type": row.get("type") or "triage",
     }
+    # The env whose dsynth raised it, when its hooks conf stamps one
+    # (poly-p2ve). Absent otherwise, as from the hook's own file.
+    if row.get("dev_env"):
+        meta["dev_env"] = row["dev_env"]
     meta.update(_FRESH_TRIAGE_DEFAULTS)
     return meta
 
@@ -2885,7 +2910,7 @@ def _line_routes(pref_env: str | None) -> tuple[dict[str, str], dict[str, str]]:
     from dportsv3.agent import env_resolver  # noqa: PLC0415
     routes: dict[str, str] = {}
     held: dict[str, str] = {}
-    for line, envs in env_resolver.envs_by_build_line().items():
+    for line, envs in _env_lines().items():
         if pref_env in envs:
             env = pref_env
         elif _CLI_ENV_DEFAULT in envs:
@@ -2935,15 +2960,20 @@ def _lines_held_back(pref_env: str | None) -> dict[str, str]:
 def _waits_for_its_line(meta: dict, held) -> bool:
     """True when the job ``meta`` describes waits for its line to route.
 
-    A job pinned to an env (``dev_env``) does not wait for its line: its env
-    cannot change, so it would wait forever; the job-start check refuses a
-    wrong one instead. It does wait while that env is broken, which would
-    otherwise retire it ENV_BROKEN. Counts each waiting job in
-    _HELD_FOR_LINE.
+    A job pinned to an env does not wait for its line: its env cannot
+    change, so it would wait forever; the job-start check refuses a wrong
+    one instead. Pinned is ``dev_env``, or for a hook-created job without
+    that stamp the env of its line whose dsynth profile it carries -- the
+    same env resolve_env_for_job routes it to (env_resolver.profile_env).
+    It does wait while that env is broken, which would otherwise retire it
+    ENV_BROKEN. Counts each waiting job in _HELD_FOR_LINE.
     """
-    from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
+    from dportsv3.agent.env_resolver import (  # noqa: PLC0415
+        build_line, profile_env,
+    )
     line = build_line(meta.get("target"))
-    pinned = meta.get("dev_env")
+    pinned = (meta.get("dev_env")
+              or profile_env(meta, _env_lines().get(line, ())))
     if pinned:
         if not _cached_health_broken(pinned):
             return False
@@ -2977,10 +3007,8 @@ def _reap_stale_queued_at_startup(queue_root: Path, max_age: int) -> list[str]:
     (poly-7pwa.14).
     """
     from dportsv3.agent import lifecycle  # noqa: PLC0415
-    from dportsv3.agent.env_resolver import (  # noqa: PLC0415
-        build_line, envs_by_build_line,
-    )
-    lines = frozenset(envs_by_build_line())
+    from dportsv3.agent.env_resolver import build_line  # noqa: PLC0415
+    lines = frozenset(_env_lines())
     keep = {r["job_id"] for r in _queued_triage_rows()
             if r.get("profile") and build_line(r.get("target")) in lines}
     with _state_db_lock:
@@ -3021,8 +3049,8 @@ def claim_stranded_db_jobs(
             f"left alone: {','.join(r['job_id'] for r in incomplete[:5])}")
         rows = [r for r in rows if r.get("profile")]
 
-    # A row whose line cannot route to an env waits (poly-p2ve). DB rows
-    # carry no dev_env.
+    # A row whose line cannot route to an env waits (poly-p2ve), unless it
+    # is pinned: a stamped dev_env, or the env its profile names.
     if held is None:
         held = _lines_held_back(resolve_env_for_gate())
     rows = [r for r in rows
@@ -3947,7 +3975,7 @@ def _check_env_build_line(
     if not job_line or job_line == env_line:
         return env_line, None
 
-    composing = env_resolver.envs_by_build_line().get(job_line)
+    composing = _env_lines().get(job_line)
     if composing:
         # An unpinned job routes to one of these (poly-p2ve), so only a
         # job pinned to another line's env gets here.

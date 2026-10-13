@@ -50,6 +50,12 @@ DPORTSV3_BIN=/usr/local/bin/dportsv3
 # this in from the env's own target.
 # DPORTSV3_TRACKER_TARGET=@2026Q2
 
+# The dev-env these hooks run in. Set only inside a dev-env, where
+# `dev-env hooks-install` fills it in: a job this dsynth raises then runs
+# in this env, not in another env of the same build line. Leave it unset
+# on a build farm.
+# DPORTSV3_TRACKER_DEV_ENV=2026Q3-editors_vim
+
 # Build type for this dsynth profile (test | release). Defaults to "test".
 # DPORTSV3_TRACKER_BUILD_TYPE=test
 

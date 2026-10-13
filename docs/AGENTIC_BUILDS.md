@@ -106,7 +106,11 @@ routes to an env of its line (poly-p2ve): its own `dev_env` if it has one;
 else the env selected in the tracker UI, or `--env`, when that env composes
 the line; else the only env that does. So a host with one env per line
 serves every line with nothing selected: the selection only breaks a tie
-between several envs of one line. The gate probes every env a line routes
+between several envs of one line. A job a dev-env's dsynth raises carries
+that env: `hooks-install` writes `DPORTSV3_TRACKER_DEV_ENV` into the env's
+hooks conf, and the hook puts it in the job. A conf written before that
+setting existed is never rewritten, so a job without it runs in the env of
+its line whose dsynth profile it carries, when exactly one matches. The gate probes every env a line routes
 to; a broken env holds its line's jobs and the runner pauses only when no
 routed env is healthy.
 

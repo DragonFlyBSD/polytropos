@@ -51,6 +51,9 @@ Defaults you usually don't need to override:
 - `DPORTSV3_TRACKER_TARGET` derives from `${PROFILE}` (one profile per
   target) — but set it explicitly if the profile is not named after the
   target, which is the case inside a dev-env
+- `DPORTSV3_TRACKER_DEV_ENV` is set only inside a dev-env (by
+  `hooks-install`): a job raised there runs in that env, not in another env
+  of the same build line
 - `DPORTSV3_TRACKER_BUILD_TYPE` defaults to `test` — set to `release` for builds you intend to publish
 - `ARTIFACT_STORE_URL` defaults to `http://127.0.0.1:8080`
 

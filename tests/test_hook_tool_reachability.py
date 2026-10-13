@@ -134,6 +134,14 @@ def test_an_already_prefixed_target_is_not_doubled(tmp_path):
     assert settings["DPORTSV3_TRACKER_TARGET"] == "@2026Q3"
 
 
+def test_the_conf_names_the_env_the_hooks_run_in(tmp_path):
+    """poly-p2ve: a job this env's dsynth raises runs in this env, not in
+    another env of the same build line. dsynth strips the environment, so
+    the conf is the only way the hook can know which env it is in."""
+    settings = hooks.env_hook_settings(_state(tmp_path))
+    assert settings["DPORTSV3_TRACKER_DEV_ENV"] == "2026Q3-editors_vim"
+
+
 # --- how the conf gets written ----------------------------------------------
 
 EXAMPLE = """\

@@ -153,6 +153,24 @@ def env_health_statuses(
     return items
 
 
+def envs_by_line(health_rows: list[dict[str, Any]]) -> list[tuple[str, list[str]]]:
+    """``[(build line, [env names])]`` from env_health_statuses rows.
+
+    Each job runs in an env of its own build line (poly-p2ve), so "which
+    env" is a per-line answer. The line is the target each probe recorded
+    (``detail.target``); a row without one is left out. Names are unique
+    across builders, sorted, and the lines sorted.
+    """
+    lines: dict[str, set[str]] = {}
+    for row in health_rows:
+        detail = row.get("detail")
+        target = detail.get("target") if isinstance(detail, dict) else None
+        if isinstance(target, str) and target and row.get("env"):
+            line = "@" + target.lstrip("@")
+            lines.setdefault(line, set()).add(str(row["env"]))
+    return [(line, sorted(envs)) for line, envs in sorted(lines.items())]
+
+
 # --- Operator pause -------------------------------------------------------
 #
 # Separate from runner_status on purpose. That column is the runner talking

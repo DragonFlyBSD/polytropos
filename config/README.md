@@ -117,10 +117,11 @@ be known when the file is written.
 | `$DP_HARNESS_LLM_BACKEND` | documented escape hatch, temporary (poly-r1g) |
 | `$DP_HARNESS_{TRIAGE,PATCH}_REASONING` | temporary, tied to a litellm version (poly-r1g) |
 
-Separately, five are inter-process arguments that happen to be spelled as
+Separately, six are inter-process arguments that happen to be spelled as
 environment — `$DPORTSV3_CMD`, `$DPORTS_DEV_ENV_CMD`,
 `$DPORTS_DEV_TOOL_ROOT`, `$DPORTSV3_NO_BOOTSTRAP`,
-`$DPORTSV3_TRACKER_TARGET` — a parent telling a child about one exec.
+`$DPORTSV3_TRACKER_TARGET`, `$DPORTSV3_TRACKER_DEV_ENV` — a parent telling
+a child about one exec.
 They would be better as command-line flags, but they are not
 configuration.
 
