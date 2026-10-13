@@ -2067,6 +2067,10 @@ op has no structure to target. That residue (~12 files) keeps a real
   convention cannot: a custom `dst`, target-scoping
   (`@main` / `@YYYYQ[N]`), or ordering.
 
+  *Landed 2026-10 as poly-u9n4.2, in the engine rather than compose, with
+  `dragonfly/@<line>/` for line scope; working plan in
+  `docs/step47-diffs-absorption-plan.md`.*
+
 **Definition of done — per-port parity gate.** A port flips only when
 compose output **with compat applying `diffs/`** is byte-equal to
 compose output **with the dops absorption**, on every supported target.
