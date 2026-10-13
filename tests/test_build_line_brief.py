@@ -104,6 +104,26 @@ def test_a_bootstrap_header_is_still_row_1(env):
     assert "`target @main` block" not in brief
 
 
+def test_a_header_whose_folder_has_patches_is_not_row_1(env):
+    """Q4 (poly-u9n4): the folder installs those patches on every line, so
+    the port was built with an overlay even though it has no ops."""
+    (env.port / "dragonfly").mkdir()
+    (env.port / "dragonfly" / "patch-x").write_text("patch\n")
+    brief = _brief(env, HEAD + "target @any\n")
+    assert "no overlay ops yet" not in brief
+    assert "`target @main` block" in brief
+
+
+def test_a_line_folder_with_no_op_gets_the_lane_paragraph(env):
+    """A dragonfly/@<line>/ folder is scoped payload whether or not an op
+    names it, and it needs no op."""
+    (env.port / "dragonfly" / "@main").mkdir(parents=True)
+    (env.port / "dragonfly" / "@main" / "patch-x").write_text("patch\n")
+    brief = _brief(env, MULTI_NO_PAYLOAD)
+    assert "patch sources are scoped" in brief
+    assert "with no op" in brief
+
+
 def test_the_always_on_brief_stays_small(env):
     """It rides on every turn of every patch attempt.
 

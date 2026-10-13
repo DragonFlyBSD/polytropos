@@ -69,16 +69,18 @@ def test_a_patch_every_line_reads_is_not_overwritten(env, write):
     result = write(env, "dragonfly/patch-a")
     assert result["blocked_by"] == "shared_payload"
     assert "`@any`" in result["error"]
-    assert (f"{PORT}/dragonfly/@main/patch-a" in result["error"]
-            and "`file materialize dragonfly/@main/patch-a -> "
-                "dragonfly/patch-a`" in result["error"])
+    # This line's own copy, which the folder installs after the shared
+    # file: no op to add (poly-u9n4).
+    assert f"{PORT}/dragonfly/@main/patch-a" in result["error"]
+    assert "overlay.dops needs no edit" in result["error"]
+    assert "file materialize" not in result["error"]
     assert (env.port / "dragonfly/patch-a").read_text() == PATCH
 
 
 @pytest.mark.parametrize("rel", [
     "dragonfly/@main/patch-b",   # this line's own folder
     "dragonfly/patch-c",         # read only by this line's block
-    "dragonfly/patch-new",       # the job writes it
+    "dragonfly/@main/patch-new",  # the job writes it, in its own folder
     "Makefile.local",            # not a payload lane
 ], ids=["own-folder", "only-this-line", "new-file", "outside-the-lanes"])
 def test_what_only_this_line_reads_can_be_written(env, rel):
@@ -87,11 +89,56 @@ def test_what_only_this_line_reads_can_be_written(env, rel):
 
 def test_a_shared_file_the_job_wrote_is_its_own(env):
     """Not in the job's HEAD: written by this job, so no line built it."""
-    worker.put_file(env.name, f"{PORT}/dragonfly/patch-z", PATCH)
     env.port.joinpath("overlay.dops").write_text(
         SHARED + "target @any\n"
         "file materialize dragonfly/patch-z -> dragonfly/patch-z\n")
+    assert worker.put_file(env.name, f"{PORT}/dragonfly/patch-z",
+                           PATCH).get("ok", True) is not False
     assert _edit(env, "dragonfly/patch-z").get("ok", True) is not False
+
+
+def test_a_new_flat_file_on_a_port_with_an_overlay_is_refused(env):
+    """poly-u9n4: the folder is the install, so a new flat file would reach
+    every line, and this port's new work is this line's alone (.27 row 2)."""
+    result = _put(env, "dragonfly/patch-new")
+    assert result["blocked_by"] == "flat_payload"
+    assert f"{PORT}/dragonfly/@main/patch-new" in result["error"]
+    assert not (env.port / "dragonfly/patch-new").exists()
+
+
+def test_a_new_flat_file_an_op_reads_is_the_ops_to_scope(env):
+    env.port.joinpath("overlay.dops").write_text(
+        SHARED + "target @main\n"
+        "file materialize dragonfly/patch-new -> dragonfly/patch-new\n")
+    assert _put(env, "dragonfly/patch-new").get("ok", True) is not False
+
+
+def _started_with(env, monkeypatch, overlay, files):
+    """The job's HEAD: ``overlay`` and the port-relative ``files``."""
+    prefix = "ports/devel/thing/"
+    head = {prefix + "overlay.dops", *(prefix + f for f in files)}
+
+    def committed_paths(e, rels):
+        return {r for r in rels
+                if r in head or any(h.startswith(r + "/") for h in head)}
+
+    monkeypatch.setattr(worker, "_committed_paths", committed_paths)
+    env.state.head = overlay
+    env.port.joinpath("overlay.dops").write_text(overlay)
+
+
+def test_a_fresh_port_takes_a_new_flat_file(env, monkeypatch):
+    """Row 1: no ops and no dragonfly/ files when the job started."""
+    _started_with(env, monkeypatch, HEAD + "target @any\n", [])
+    assert _put(env, "dragonfly/patch-new").get("ok", True) is not False
+
+
+def test_a_header_with_payload_is_not_fresh(env, monkeypatch):
+    """Q4: a header-only overlay whose folder already installs patches on
+    every line has been built with, so new work stays on this line."""
+    _started_with(env, monkeypatch, HEAD + "target @any\n",
+                  ["dragonfly/patch-a"])
+    assert _put(env, "dragonfly/patch-new")["blocked_by"] == "flat_payload"
 
 
 def test_a_diff_under_patch_apply_cannot_be_copied_around(env):

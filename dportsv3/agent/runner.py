@@ -4397,6 +4397,10 @@ def _summarize_tool_call(tool: str, args: dict, result: dict) -> str:
         reps = result.get("replacements")
         rep = f" x{reps}" if reps and reps > 1 else ""
         return f"{path}{span}{rep}{ok_tag}{suffix}"
+    if tool == "delete_file":
+        err = (result.get("error") or "").strip().splitlines()
+        suffix = f" — {err[0][:120]}" if (not ok and err) else ""
+        return f"{args.get('path', '')}{ok_tag}{suffix}"
     if tool in ("make_extract", "make_patch"):
         return f"origin={args.get('origin', '')}{ok_tag}"
     if tool in ("dupe", "genpatch"):

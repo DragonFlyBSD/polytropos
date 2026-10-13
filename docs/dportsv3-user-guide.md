@@ -184,11 +184,13 @@ bin/dportsv3 migrate branch-line --from @main --new @2026Q4 --delta-root ../Delt
 
 For each port with a block naming `--from`, it appends one `target @2026Q4`
 block holding a copy of those blocks' ops, comments included, and copies
-the payload they read under `dragonfly/@main/` to `dragonfly/@2026Q4/`.
+the payload they read under `dragonfly/@main/` to `dragonfly/@2026Q4/`. The
+rest of `dragonfly/@main/` is copied too: the folder installs those files on
+`@main` with no op, so a port with only the folder is branched as well.
 After that the two lines diverge independently: a fix on one changes only
 that line. Existing text is untouched, and a port is written only if the new
-line plans exactly `--from`'s ops and every other line plans what it did
-before. Without `--write` it only prints the plan. A port it cannot copy
+line plans exactly `--from`'s ops and installs exactly its `dragonfly/`
+files, and every other line plans and installs what it did before. Without `--write` it only prints the plan. A port it cannot copy
 cleanly is listed as `skip` with the reason, and is left for you.
 
 ## Targets and Scope

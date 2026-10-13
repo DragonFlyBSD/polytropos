@@ -193,8 +193,9 @@ def attempt_turn_totals(
 
 #: Tools whose call means "this attempt changed that file". The same set
 #: attempt_loop uses to decide what a retry is told it already did.
-WRITE_TOOLS = ("put_file", "edit_file", "apply_intent", "install_patches",
-               "genpatch", "make_patch", "write_file", "apply_patch")
+WRITE_TOOLS = ("put_file", "edit_file", "delete_file", "apply_intent",
+               "install_patches", "genpatch", "make_patch", "write_file",
+               "apply_patch")
 
 
 def write_tool_calls(

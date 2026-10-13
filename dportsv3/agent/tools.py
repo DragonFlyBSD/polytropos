@@ -121,6 +121,16 @@ _TOOLS: list[dict] = [
            "encoding": {"type": "string", "enum": ["text", "base64"]},
            "expected_sha256": _STR},
           ["path", "content"]),
+    _tool("delete_file",
+          "Delete a file under /work/DeltaPorts/ports/<origin>/dragonfly/ or "
+          "diffs/. A file in dragonfly/ is installed by its folder whether or "
+          "not an op names it (dragonfly/ on every build line, "
+          "dragonfly/@<line>/ on that line), so this is how a patch is "
+          "dropped. Refused for a file another build line read when the job "
+          "started (drop it on your line with `file remove` in your line's "
+          "block instead), and for a file an op still reads (remove the op "
+          "first).",
+          {"path": _STR}, ["path"]),
     _tool("emit_diff",
           "Working-tree diff for ports/<origin>/<relpath> in DeltaPorts (read-only).",
           {"origin": _STR, "relpath": _STR}, ["origin", "relpath"]),
@@ -226,7 +236,11 @@ _TOOLS: list[dict] = [
           "`effective_ops` (list of {id, kind, scope, apply_index, "
           "...payload} — what the engine WILL apply, `apply_index` being "
           "its position in that execution order), `filtered_out` (same "
-          "shape plus `reason` — ops scoped to other build lines). On a "
+          "shape plus `reason` — ops scoped to other build lines), "
+          "`folder_installs` (list of {src, dst, scope} — the dragonfly/ "
+          "files this line installs with no op: flat ones before every "
+          "`@any` op, dragonfly/<target>/ ones after them, as "
+          "dragonfly/<name>). On a "
           "port with no overlay.dops, returns ok=True with empty "
           "lists. Use INSTEAD of `get_file overlay.dops` when "
           "reasoning about what compose will apply; the raw file "

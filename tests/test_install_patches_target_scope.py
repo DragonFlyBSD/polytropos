@@ -152,13 +152,14 @@ def test_the_result_says_why_it_was_redirected(env):
 
     note = _install(env).get("scope_note") or ""
     assert "dragonfly/@main/patch-src_lib.rs" in note
-    # It must say the existing op already stages it, and what a second op
+    # It must say what already installs it needs no edit, and what an op
     # would do: the decision-1 sentences live here, not in a playbook.
     assert "needs no edit" in note
-    assert "Do not add a second `file materialize`" in note
+    assert "Do not add a `file materialize`" in note
     assert "never lands" in note
     assert "validate_dops rejects it" in note
-    assert "overridden here" in note
+    # poly-u9n4: an op that reads a file narrows the folder's scope.
+    assert "takes it out of the dragonfly/ folder" in note
     assert "collide" not in note and "refused" not in note
 
 
@@ -172,10 +173,11 @@ def test_a_flat_port_is_untouched(env):
     assert "scope_note" not in result
 
 
-def test_a_new_patch_goes_to_this_lines_folder_and_the_note_gives_the_op(env):
+def test_a_new_patch_goes_to_this_lines_folder_with_no_op(env):
     """poly-7pwa.27 row 2: the port had an overlay, so the patch is this
     line's alone. It used to go flat under @any, which is how devel/glib20's
-    @main patch reached @2026Q3, whose older glib it did not apply to."""
+    @main patch reached @2026Q3, whose older glib it did not apply to. The
+    folder installs it there (poly-u9n4), so there is no op to give."""
     _overlay(env, SCOPED)
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-brand_new.rs")
@@ -185,12 +187,10 @@ def test_a_new_patch_goes_to_this_lines_folder_and_the_note_gives_the_op(env):
     ]
     assert not (_port(env) / "dragonfly/patch-brand_new.rs").exists()
     note = result.get("scope_note") or ""
-    assert ("target @main\nfile materialize dragonfly/@main/patch-brand_new.rs"
-            " -> dragonfly/patch-brand_new.rs") in note
+    assert "Written to @main's own folder" in note
+    assert "needs no edit" in note
+    assert "file materialize dragonfly/@main/patch-brand_new.rs" not in note
     assert "`target @any`" not in note
-    # The target line travels with the op, so an append cannot land in
-    # whichever block happens to be last.
-    assert "the `target` line included" in note
 
 
 def test_a_new_patch_on_a_single_scope_overlay_also_stays_on_its_line(env):
@@ -202,14 +202,14 @@ def test_a_new_patch_on_a_single_scope_overlay_also_stays_on_its_line(env):
         "ports/devel/thing/dragonfly/@main/patch-brand_new.rs"
     ]
     note = result.get("scope_note") or ""
-    assert ("target @main\nfile materialize dragonfly/@main/patch-brand_new.rs"
-            " -> dragonfly/patch-brand_new.rs") in note
+    assert "Written to @main's own folder" in note
+    assert "\ntarget @main\n" not in note
     assert "per-target blocks" not in note
 
 
-def test_a_port_with_no_overlay_at_job_start_gets_a_flat_any_patch(env):
+def test_a_port_with_no_overlay_at_job_start_gets_a_flat_patch(env):
     """Row 1: the overlay is this job's own header, so no line was building
-    with one, and the patch goes flat with an @any op as before."""
+    with one, and the patch goes flat; the folder installs it on every line."""
     _overlay(env, FLAT)
     env.state.committed = set()
     worker.set_env_target("scope-env", "@main")
@@ -219,10 +219,9 @@ def test_a_port_with_no_overlay_at_job_start_gets_a_flat_any_patch(env):
         "ports/devel/thing/dragonfly/patch-brand_new.rs"
     ]
     note = result.get("scope_note") or ""
-    assert ("file materialize dragonfly/patch-brand_new.rs -> "
-            "dragonfly/patch-brand_new.rs") in note
-    assert "`target @any` block" in note
-    assert "no overlay when the job started" in note
+    assert "Written to the flat dragonfly/" in note
+    assert "no overlay content when the job started" in note
+    assert "file materialize" not in note
 
 
 def test_a_committed_bootstrap_header_is_still_row_1(env):
@@ -236,7 +235,19 @@ def test_a_committed_bootstrap_header_is_still_row_1(env):
     assert result["installed"] == [
         "ports/devel/thing/dragonfly/patch-brand_new.rs"
     ]
-    assert "`target @any` block" in (result.get("scope_note") or "")
+    assert "Written to the flat dragonfly/" in (result.get("scope_note") or "")
+
+
+def test_a_header_whose_folder_has_patches_is_not_row_1(env):
+    """Q4 (poly-u9n4): a header-only overlay still installs its dragonfly/
+    files on every line, so a port that has them was built with them."""
+    _overlay(env, HEAD + "target @any\n")
+    _shared(env, "patch-old", "old\n")
+    worker.set_env_target("scope-env", "@main")
+    _genpatch(env, "patch-brand_new.rs")
+    assert _install(env)["installed"] == [
+        "ports/devel/thing/dragonfly/@main/patch-brand_new.rs"
+    ]
 
 
 def test_an_unreadable_head_overlay_counts_as_ops(env):
@@ -249,13 +260,15 @@ def test_an_unreadable_head_overlay_counts_as_ops(env):
     ]
 
 
-def test_a_new_patch_on_a_bootstrapped_scoped_overlay_warns_about_blocks(env):
+def test_a_new_patch_on_a_bootstrapped_scoped_overlay_needs_no_block(env):
+    """No op to place, so nothing to say about which block is last."""
     _overlay(env, SCOPED)
     env.state.committed = set()
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, "patch-brand_new.rs")
     note = _install(env).get("scope_note") or ""
-    assert "appended at the end of the file it lands in the last block" in note
+    assert "Written to the flat dragonfly/" in note
+    assert "last block" not in note
 
 
 def test_a_recut_of_a_flat_patch_stays_flat_even_on_a_scoped_port(env):
@@ -308,10 +321,11 @@ def test_the_note_does_not_both_forbid_and_order_an_op(env):
     _genpatch(env, "patch-src_lib.rs")   # existing op -> "needs no edit"
     _genpatch(env, "patch-brand_new.rs")  # new -> "No op installs"
     note = _install(env).get("scope_note") or ""
-    # Each statement must name which files it is about.
+    # Each statement must name which files it is about, and neither may
+    # order an op the other forbids.
     assert "dragonfly/@main/patch-src_lib.rs" in note
-    assert "file materialize dragonfly/@main/patch-brand_new.rs" in note
-    assert note.count("needs no edit") == 1
+    assert "dragonfly/@main/patch-brand_new.rs" in note
+    assert "\ntarget @main\n" not in note
 
 
 def test_a_renaming_op_gets_the_file_it_actually_reads(env):
@@ -402,8 +416,7 @@ def test_another_targets_scoped_op_does_not_redirect_this_one(env):
     assert result["installed"] == [
         "ports/devel/thing/dragonfly/@main/patch-src_lib.rs"
     ]
-    assert ("file materialize dragonfly/@main/patch-src_lib.rs -> "
-            "dragonfly/patch-src_lib.rs") in (result.get("scope_note") or "")
+    assert "Written to @main's own folder" in (result.get("scope_note") or "")
 
 
 def test_the_decision_comes_from_the_overlay_not_the_directory(env):
@@ -696,8 +709,9 @@ def test_a_recut_of_a_shared_patch_writes_this_lines_own_copy(env):
     assert shared.read_text() == "shared\n"
     note = result.get("scope_note") or ""
     assert "Not written over dragonfly/patch-configure" in note
-    assert ("target @main\nfile materialize dragonfly/@main/patch-configure"
-            " -> dragonfly/patch-configure") in note
+    # The folder installs @main's copy after the @any op's file (poly-u9n4).
+    assert "Written to @main's own folder" in note
+    assert "\ntarget @main\n" not in note
 
 
 def test_the_own_copy_keeps_the_destination_name(env):
@@ -716,8 +730,8 @@ def test_the_own_copy_keeps_the_destination_name(env):
     assert result["installed"] == [
         "ports/devel/thing/dragonfly/@2026Q3/patch-src_ae_epoll.c"
     ]
-    assert ("file materialize dragonfly/@2026Q3/patch-src_ae_epoll.c -> "
-            "dragonfly/patch-src_ae_epoll.c") in (result.get("scope_note") or "")
+    assert "dragonfly/@2026Q3/patch-src_ae_epoll.c" in (
+        result.get("scope_note") or "")
 
 
 def test_once_the_own_copy_has_its_op_a_recut_replaces_it(env):
@@ -789,26 +803,64 @@ def test_a_target_list_reading_this_lines_folder_is_held(env):
     assert "an operator has to give each line its own file" in note
 
 
+def _composed(env, line):
+    """The dragonfly/ files ``line`` composes, by name -> content."""
+    from dportsv3.engine.api import apply_dsl
+
+    dops = _port(env) / "overlay.dops"
+    out = env.tmp / "out" / f"{line}-{len(list(env.tmp.glob('out/*')))}"
+    out.mkdir(parents=True)
+    (out / "Makefile").write_text("PORTNAME= thing\n")
+    result = apply_dsl(dops.read_text(), source_path=dops, port_root=out,
+                       target=line, oracle_profile="off")
+    assert result.ok, [d.code for d in result.diagnostics]
+    return {p.name: p.read_text() for p in (out / "dragonfly").glob("*")}
+
+
 @pytest.mark.parametrize("overlay", [FLAT, SCOPED], ids=["flat", "scoped"])
-def test_the_op_the_note_gives_composes_each_line_as_intended(env, overlay):
-    """Append exactly what scope_note says: @main reads its own copy, every
-    other line keeps the shared file, and the overlay still validates."""
-    import re
-
-    from dportsv3.engine.api import build_plan
-
-    _overlay(env, overlay)
-    _shared(env, "patch-libpkg_flat.c" if overlay == SCOPED else "patch-configure")
+def test_the_own_copy_composes_each_line_as_intended(env, overlay):
+    """With no op added: @main composes its own copy, every other line keeps
+    the shared file (poly-u9n4), and the overlay is untouched."""
     name = "patch-libpkg_flat.c" if overlay == SCOPED else "patch-configure"
+    _overlay(env, overlay)
+    for other in ("patch-configure", "patch-libpkg_flat.c", "extra-crate-1.0",
+                  "@2026Q3/patch-src_lib.rs", "@main/patch-src_lib.rs"):
+        if other != name:
+            _shared(env, other, "other\n")
+    _shared(env, name)
     worker.set_env_target("scope-env", "@main")
     _genpatch(env, name)
-    note = _install(env).get("scope_note") or ""
+    _install(env)
+    assert (_port(env) / "overlay.dops").read_text() == overlay
+    assert _composed(env, "@main")[name] != "shared\n"
+    assert _composed(env, "@2026Q3")[name] == "shared\n"
+
+
+def test_an_op_in_the_lines_block_that_fills_the_name_still_needs_one(env):
+    """A target list that fills the destination runs after the folder, so
+    the own copy alone would lose on @main: the note gives the op, and the
+    overlay with it composes @main's copy."""
+    import re
+
+    text = HEAD + (
+        "target @any\n"
+        "file materialize dragonfly/patch-configure -> dragonfly/patch-configure\n"
+        "target @2026Q3,@main\n"
+        "file materialize dragonfly/other -> dragonfly/patch-configure\n"
+    )
+    _overlay(env, text)
+    _shared(env)
+    _shared(env, "other", "both lines\n")
+    worker.set_env_target("scope-env", "@main")
+    _genpatch(env, "patch-configure")
+    result = _install(env)
+    assert result["installed"] == [
+        "ports/devel/thing/dragonfly/@main/patch-configure"
+    ]
+    note = result.get("scope_note") or ""
+    assert "fills dragonfly/patch-configure after the folder" in note
     snippet = re.search(r"^target @main\n(?:file materialize .*\n?)+", note, re.M)
     assert snippet, note
-    text = overlay + snippet.group(0).rstrip("\n") + "\n"
-    planned = build_plan(text, None)
-    assert planned.ok, [d.code for d in planned.diagnostics]
-    assert _reads(planned.plan, "@main")[f"dragonfly/{name}"] == (
-        f"dragonfly/@main/{name}")
-    assert _reads(planned.plan, "@2026Q3")[f"dragonfly/{name}"] == (
-        f"dragonfly/{name}")
+    _overlay(env, text + snippet.group(0).rstrip("\n") + "\n")
+    assert _composed(env, "@main")["patch-configure"] != "both lines\n"
+    assert _composed(env, "@2026Q3")["patch-configure"] == "both lines\n"

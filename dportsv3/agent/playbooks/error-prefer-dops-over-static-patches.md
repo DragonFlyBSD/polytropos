@@ -67,8 +67,10 @@ so it has to be *established*, not assumed:
    `ls ports/<origin>/files/` and read it.
 2. Does it produce the end state ours wanted, **on DragonFly**? Not "does it
    touch the same lines" — does the result work here.
-3. If yes, delete `dragonfly/patch-*` and its `file materialize` line, and say
-   in the summary that FreeBSD now covers it.
+3. If yes, remove its `file materialize` line, if it has one, then delete
+   `dragonfly/patch-*` with `delete_file`, and say in the summary that FreeBSD
+   now covers it. The line alone is not enough: the folder installs a file no
+   op reads.
 
 **Same file and same lines is not evidence**, and this is where the branch
 goes wrong. Two checks, both cheap:
@@ -117,17 +119,17 @@ before classifying the target is the #1 mistake here (it produces a fragile
 `install_patches` writes the refreshed patch over the file that line
 reads on this build line — `dragonfly/@<target>/<name>` on a port that
 keeps this patch per build line — so do not assume the path is
-`dragonfly/<name>`; take it from `installed`. Do not add a second
+`dragonfly/<name>`; take it from `installed`. Do not add a
 `file materialize` for it, unless `scope_note` gives you one: when
 other build lines read that file too, `install_patches` leaves it alone
-and writes this line's own copy under `dragonfly/@<target>/`, and names
-the one op to add in this line's block. The other lines may still build
+and writes this line's own copy under `dragonfly/@<target>/`, which the
+folder installs on this line with no op. The other lines may still build
 with the old patch; only this one was built with yours.
 
-**`overlay.dops` is not edited at all in this flow**, apart from that
-one op. If you find yourself removing that line, stop — you are about
-to delete the fix rather than repair it. A drifted patch is not a
-broken patch: it is still the change DragonFly needs, aimed at lines
+**`overlay.dops` is not edited at all in this flow**, apart from an op
+`scope_note` gives you. If you find yourself removing that line, stop —
+you are about to delete the fix rather than repair it. A drifted patch is
+not a broken patch: it is still the change DragonFly needs, aimed at lines
 that moved.
 
 That failure has happened. The port then builds **green** with the
@@ -151,14 +153,14 @@ text replace-once file ${WRKSRC}/Makefile.in \
     to   "freebsd*|dragonfly*)"
 ```
 
-Pair with **removing the patch from the overlay** — delete its
-`file materialize dragonfly/patch-<file> -> …` line. Do both in the **same**
-`put_file` rewrite of `overlay.dops`: the op replaces the patch, so an overlay
-that has lost the `file materialize` line and not yet gained the op composes
-green with the DragonFly fix absent. You have no file-delete
-tool and don't need one (and don't `git rm` — no git in the loop): the runner
-reconciles the now-orphaned `dragonfly/patch-<file>`, deleting it as part of
-the captured fix.
+Pair with **removing the patch** — delete its
+`file materialize dragonfly/patch-<file> -> …` line, if it has one, in the
+**same** `put_file` rewrite of `overlay.dops` that adds the op: the op replaces
+the patch, so an overlay that has lost the `file materialize` line and not yet
+gained the op composes green with the DragonFly fix absent. Then delete
+`dragonfly/patch-<file>` itself with `delete_file`: the folder installs a file
+no op reads, so without that the old patch still applies (and don't `git rm` —
+no git in the loop).
 
 ### Option B (GENERATED-file target) — patch the autotools *source*
 

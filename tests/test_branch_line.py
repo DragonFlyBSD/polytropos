@@ -117,6 +117,29 @@ def test_a_patch_apply_source_is_copied_too():
     assert new.endswith("target @2099Q1\n\npatch apply diffs/@2099Q1/fix.diff\n")
 
 
+def test_a_folder_no_op_reads_is_copied_too(tmp_path):
+    """poly-u9n4: dragonfly/@main/ installs on @main with no op, so the new
+    line needs its own copy of it -- here with no @main block at all."""
+    overlay = ('port devel/x\ntype port\nreason "fixture"\n'
+               'target @any\nmk add CFLAGS -DANY\n')
+    delta, port = _delta(tmp_path, overlay, {
+        "dragonfly/patch-a": "a\n", "dragonfly/@main/patch-own": "own\n"})
+    rows = plan_branch(delta, "@main", "@2099Q1")
+    assert [(r.origin, r.detail, r.copies) for r in rows] == [
+        ("devel/x", "1 payload file",
+         (("dragonfly/@main/patch-own", "dragonfly/@2099Q1/patch-own"),))]
+    assert rows[0].text == overlay  # nothing to add to the overlay
+
+
+def test_a_folder_copy_that_would_differ_is_skipped(tmp_path):
+    delta, port = _delta(tmp_path, OVERLAY, {
+        **PAYLOAD, "dragonfly/@main/patch-own": "own\n",
+        "dragonfly/@2099Q1/patch-own": "something else\n"})
+    rows = plan_branch(delta, "@main", "@2099Q1")
+    assert [r.detail for r in rows] == [
+        "dragonfly/@2099Q1/patch-own exists with other content"]
+
+
 def test_a_port_with_no_block_for_from_is_left_alone():
     q3_only = ('port devel/x\ntype port\nreason "fixture"\n'
                'target @any\nmk add CFLAGS -DANY\n'

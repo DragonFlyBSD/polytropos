@@ -10,10 +10,11 @@ priority: 55
 You edit `ports/<origin>/overlay.dops` **free-hand** in dops DSL: read
 it with `grep`/`get_file`, write the new or changed lines with
 `edit_file` (or `put_file` when creating the overlay from nothing), then
-validate. There is no per-directive intent tool and no file-delete tool.
+validate. There is no per-directive intent tool.
 Your write primitives are `edit_file` (anchored replace — the default
 for changing anything that already exists), `put_file` (whole-file
-write — for creating a file, or replacing a short one outright) and
+write — for creating a file, or replacing a short one outright),
+`delete_file` (dropping a file under `dragonfly/` or `diffs/`) and
 `install_patches`, plus the build loop. The grammar itself
 (every `mk`/`file`/`text` op, heredoc blocks, conditional ops) is in
 `dops_reference()` — call it at most once, for syntax this file and the
@@ -241,8 +242,10 @@ Two consequences worth holding onto:
 `dragonfly/*` patches target **upstream source** inside the distfile
 (`Makefile.am`, `src/foo.c`, …) — files that don't exist at compose
 time, only after `do-extract` at build time. **Never `patch apply` a
-`dragonfly/*` patch**; stage it with `file materialize dragonfly/X ->
-dragonfly/X` so `bsd.port.mk`'s `do-patch` applies it at build time.
+`dragonfly/*` patch**: the file's folder installs it, with no op, and
+`bsd.port.mk`'s `do-patch` applies it at build time. The folder is the
+scope — `dragonfly/X` reaches every build line, `dragonfly/@<line>/X`
+only that line, as `dragonfly/X`.
 (`diffs/*.diff` framework patches are the opposite domain — see the
 quickref's "Two kinds of patches".)
 
@@ -281,14 +284,13 @@ produce the diff rather than hand-writing one:
    is post-`do-patch`, the hunk context matches what `do-patch` sees at
    build time and the patch applies cleanly.
 6. `install_patches(origin)` — copies the generated patch into the
-   port's payload. A re-cut replaces the file its existing
-   `file materialize` line reads, and that line stays as it is — unless
-   other build lines read that file too: then it writes your line's own
-   copy under `dragonfly/@<your line>/`. A new patch goes there as well,
-   or to flat `dragonfly/<name>` with an `@any` op on a port that had no
-   overlay when the job started. Either way `scope_note` gives the op to
-   add. **Read `installed` for the path and `scope_note`, when present,
-   for what to do next.**
+   port's payload. A re-cut replaces the file your line installs at that
+   name — unless other build lines read that file too: then it writes
+   your line's own copy under `dragonfly/@<your line>/`. A new patch goes
+   there as well, or to the flat `dragonfly/<name>` on a port that had no
+   overlay content when the job started. The folder installs it either
+   way, so no op is needed. **Read `installed` for the path and
+   `scope_note`, when present, for what to do next.**
 
 **`dupe` is only one step of this flow.** It exists solely to support
 patch generation — it is not an investigation tool, not a "before"
@@ -296,9 +298,10 @@ snapshot for reading, and not a way to edit an existing
 `dragonfly/patch-*`. A `dupe` with no follow-up `genpatch`/
 `install_patches` in the same attempt is wasted work and a sign you
 reached for the wrong tool. For a small change you can also write the
-unified diff by hand from prior `get_file` reads and stage it directly.
-A file other build lines read too is refused, and the refusal says where
-your line's copy goes.
+unified diff by hand from prior `get_file` reads and stage it directly:
+in `dragonfly/@<your line>/` on a port that already had an overlay
+(`put_file` refuses a new flat one there). A file other build lines read
+too is refused, and the refusal says where your line's copy goes.
 
 ## Recovering from a broken patch — never text-edit the diff
 
@@ -317,7 +320,8 @@ almost identically and two of them have opposite fixes.**
   achieves what ours did, and since `files/*` applies first ours now
   rejects against source that is already fixed. → **Not this section
   either**, and it is the one case where deleting the `dragonfly/` file
-  and its `file materialize` line is correct. It has to be established
+  (`delete_file`) and its `file materialize` line, if it has one, is
+  correct. It has to be established
   rather than assumed — same file, even same line, is not evidence. See
   `error-prefer-dops-over-static-patches.md`, "has FreeBSD made our
   patch unnecessary?", which carries a worked counter-example. If that
@@ -335,17 +339,18 @@ overwrite in place** — in that order:
 
 1. Regenerate a correct patch via the dupe→genpatch flow above, or stage
    a corrected hand-written diff.
-2. Write it over the broken one, at the path its own `file materialize`
-   op reads — which is **not** necessarily `dragonfly/<name>`: on a port
+2. Write it over the broken one, at the path your line installs it
+   from — which is **not** necessarily `dragonfly/<name>`: on a port
    that scopes this patch the source is `dragonfly/@<target>/<name>`.
    `install_patches` resolves that from the overlay and reports it in
    `installed`. When other build lines read that file too, it writes
-   your line's own copy instead and `scope_note` gives the one op to add.
-   `put_file` and `edit_file` refuse that file the same way.
+   your line's own copy instead, which the folder installs on your line
+   with no op. `put_file` and `edit_file` refuse that file the same way.
 
-**`overlay.dops` needs no edit at all.** Its `file materialize` line
-already names that source, so overwriting the file there is the whole
-swap: one write, and no moment where the port is staged without a patch.
+**`overlay.dops` needs no edit at all.** Whatever installs the patch —
+its `file materialize` line or its folder — already names that path, so
+overwriting the file there is the whole swap: one write, and no moment
+where the port is staged without a patch.
 Only if the replacement must take a *different* filename do you touch
 `overlay.dops`, and then only after the new file exists.
 
@@ -371,28 +376,29 @@ them as regenerate-only.
 
 ## Removing directives and files
 
-There is no delete tool. To stop applying something, **edit
-`overlay.dops` and remove the relevant line or block**, then
-re-validate. That is for ops in your line's block, or in an overlay
-this job created; an `@any` op on a port that had an overlay before the
-job is overridden in your block instead (see Scoping):
+To stop applying an op, **edit `overlay.dops` and remove the relevant
+line or block**, then re-validate. To drop a file under `dragonfly/` or
+`diffs/`, **delete it with `delete_file`**. That is for ops in your
+line's block, files in your line's folder, or anything this job
+created; an `@any` op, or a flat `dragonfly/` file, on a port that had
+an overlay before the job is overridden in your block instead (see
+Scoping) — `file remove dragonfly/<name>` for a file:
 
-- A `patch apply` / `file materialize` / `file copy` line → delete the
-  line; compose stops applying it. (In dops mode the compat auto-copy is
-  suppressed, so an unreferenced `dragonfly/*` source file left on disk
-  is inert — it only reaches the build via an explicit `file materialize`
-  line.)
+- A `dragonfly/*` patch → `delete_file` it, after removing the
+  `file materialize` line that names it, if there is one (a file an op
+  still reads is refused). Removing the line alone does not drop the
+  patch: the folder installs a file no op reads.
+- A `patch apply` / `file copy` line → delete the line; compose stops
+  applying it.
 - A whole `mk target <name> <<TAG … TAG` heredoc block → delete the
   opening line through the closing tag, inclusive.
 - A single `mk set/add/remove/unset` line → delete that exact line.
 
 When you remove a directive, do it as one focused `put_file` rewrite and
 re-validate; don't try to counter a wrong op with a second op when
-deleting the line is cleaner. You have no file-delete primitive and don't
-need one: on a successful fix the runner reconciles orphaned `dragonfly/` /
-`diffs/` source artifacts — it deletes any file no longer referenced by the
-overlay (a removed `file materialize` / `patch apply` line) before capturing
-the diff, so the removal is part of the delivered fix.
+deleting the line is cleaner. A `diffs/` file no op reads any more is
+deleted by the runner when the fix succeeds, before the diff is captured;
+a `dragonfly/` file is not, because its folder still installs it.
 
 ## Bumping PORTREVISION
 

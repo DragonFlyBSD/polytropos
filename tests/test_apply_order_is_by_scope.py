@@ -150,6 +150,22 @@ def test_a_quarterly_target_sees_the_other_block_as_filtered(env_with_overlay):
     assert result["effective_ops"][-1]["value"] == "from-any"
 
 
+def test_the_folder_installs_are_reported_per_line(env_with_overlay, tmp_path):
+    """poly-u9n4: what compose installs from dragonfly/ with no op is part
+    of the answer, flat files first and the line's own folder after them."""
+    lane = tmp_path / "DeltaPorts" / "ports" / "x" / "y" / "dragonfly"
+    for rel in ("patch-flat", "@main/patch-own", "@2026Q3/patch-q3"):
+        (lane / rel).parent.mkdir(parents=True, exist_ok=True)
+        (lane / rel).write_text("patch\n")
+    result = worker.get_effective_overlay(env_with_overlay, "x/y")
+    assert result["folder_installs"] == [
+        {"src": "dragonfly/patch-flat", "dst": "dragonfly/patch-flat",
+         "scope": "@any"},
+        {"src": "dragonfly/@main/patch-own", "dst": "dragonfly/patch-own",
+         "scope": "@main"},
+    ]
+
+
 # --------------------------------------------------------------------------
 # The guidance the agent reads has to match the engine
 # --------------------------------------------------------------------------

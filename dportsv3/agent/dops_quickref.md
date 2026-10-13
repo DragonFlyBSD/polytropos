@@ -205,8 +205,8 @@ they're inside the tarball and only appear at build time when
 engine has no extracted source to apply against; the patch will
 fail with no target file.
 
-The correct op is `file materialize` — stage the patch from the
-DeltaPorts overlay into `port_root` so the build phase picks it up.
+The op that stages one is `file materialize` — it copies the patch from
+the DeltaPorts overlay into `port_root` so the build phase picks it up.
 (Note: `file copy` is a *within-`port_root`* duplication op, NOT
 overlay→port_root; the names are easy to confuse.)
 
@@ -215,10 +215,10 @@ file materialize dragonfly/patch-Makefile.am -> dragonfly/patch-Makefile.am
 file materialize dragonfly/patch-Makefile.in -> dragonfly/patch-Makefile.in
 ```
 
-This matches what compat-mode's `payload_files` flow already does
-automatically when there's no `overlay.dops`. Under dops mode that
-auto-copy is suppressed (see `I_COMPOSE_MODE_DOPS_SUPPRESSES_COMPAT`),
-so the dops must declare the staging explicitly.
+Under dops mode the op is optional: the `dragonfly/` folder is installed
+with no op — `dragonfly/X` on every build line, `dragonfly/@<target>/X` on
+that line only, as `dragonfly/X`. An op that reads a file takes it out of
+the folder on every line the op does not run on.
 
 Prefer a `REINPLACE_CMD` recipe over a static patch ONLY when the target is a
 GENERATED file (`Makefile.in`, `configure`) — there, patching the generated

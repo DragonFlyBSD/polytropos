@@ -52,6 +52,7 @@ _RESTORE_HINT = {
     "dsynth_build": "dsynth_log reads the build log again; do not rebuild for it.",
     "edit_file": "get_file shows the file as it is now.",
     "put_file": "get_file shows the file as it is now.",
+    "delete_file": "list_dir shows whether the file is still there.",
 }
 
 

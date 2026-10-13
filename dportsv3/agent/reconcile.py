@@ -1,14 +1,16 @@
-"""Reconcile a port's on-disk source artifacts against its overlay.dops.
+"""Reconcile a port's on-disk `diffs/` artifacts against its overlay.dops.
 
-When a patch edit removes a `file materialize` / `file copy` / `patch apply`
-line, the referenced source file under `dragonfly/` or `diffs/` is left on
-disk, unreferenced. In dops-mode compose an unreferenced source artifact is
-*inert* — it only reaches the build via an explicit `file materialize` /
-`patch apply` line (the compat auto-copy is suppressed,
-`I_COMPOSE_MODE_DOPS_SUPPRESSES_COMPAT`) — so it does no harm to the build, but
-it lingers as dead substrate. The patch agent has no delete primitive and
-cannot clean it up itself, so the runner reconciles here (before the
-delivery diff is captured, so the removal is part of the fix).
+When a patch edit removes a `patch apply` / `file materialize` line, the
+`diffs/` file it read is left on disk, unreferenced. A `diffs/` file only
+reaches the build through such an op, so it is inert, but it lingers as
+dead substrate; the runner removes it here, before the delivery diff is
+captured, so the removal is part of the fix.
+
+NOT `dragonfly/` (poly-u9n4.4). There the folder is the install: a file no
+op reads is installed on every line its folder names, so "unreferenced"
+means "installed", and every patch the agent wrote with no op would be
+deleted before the diff was captured. The agent drops a dragonfly/ file
+itself, with `delete_file`.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from pathlib import Path
 from dportsv3.engine.api import build_plan
 
 # Directories whose files only reach the build via an explicit overlay op.
-_RECONCILED_DIRS = ("dragonfly", "diffs")
+_RECONCILED_DIRS = ("diffs",)
 
 
 def _referenced_artifacts(port_dir: Path) -> set[str] | None:
@@ -47,8 +49,8 @@ def _referenced_artifacts(port_dir: Path) -> set[str] | None:
 
 
 def reconcile_orphaned_artifacts(port_dir: Path) -> list[str]:
-    """Delete `dragonfly/`/`diffs/` files the port's overlay no longer
-    references, plus any directory left empty. Returns the port-relative
+    """Delete `diffs/` files the port's overlay no longer references, plus
+    any directory left empty. Returns the port-relative
     paths removed (sorted). No-op (returns ``[]``) when the overlay is absent
     or unparseable — fail safe, never delete against an unknown reference set.
     """

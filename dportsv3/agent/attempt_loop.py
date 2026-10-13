@@ -106,8 +106,8 @@ def _min_attempt_budget(budget: int) -> int:
 #: the half worth carrying. See ``_searches``.
 _READ_TOOLS = ("get_file", "list_dir", "get_effective_overlay")
 #: Tools whose call means "the previous attempt changed this".
-_WRITE_TOOLS = ("put_file", "edit_file", "apply_intent", "install_patches",
-                "genpatch", "make_patch")
+_WRITE_TOOLS = ("put_file", "edit_file", "delete_file", "apply_intent",
+                "install_patches", "genpatch", "make_patch")
 #: Tools that prove or disprove a fix.
 _PROOF_TOOLS = ("dsynth_build", "dsynth_test")
 

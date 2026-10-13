@@ -19,15 +19,25 @@ def _port(tmp_path: Path, overlay_ops: str, files: dict[str, str]) -> Path:
     return port
 
 
-def test_removes_unreferenced_dragonfly_artifact(tmp_path: Path) -> None:
+def test_keeps_a_dragonfly_file_no_op_reads(tmp_path: Path) -> None:
+    """poly-u9n4.4: the folder installs it, so it is not an orphan -- and
+    deleting it would drop every patch the agent wrote with no op."""
     port = _port(
         tmp_path,
-        "mk add USES ncurses\n",  # no file materialize -> patch orphaned
-        {"dragonfly/patch-lib_readline_terminal.c": "patch body\n"},
+        "mk add USES ncurses\n",  # no file materialize: the folder installs it
+        {"dragonfly/patch-lib_readline_terminal.c": "patch body\n",
+         "dragonfly/@main/patch-x": "own copy\n"},
     )
-    removed = reconcile_orphaned_artifacts(port)
-    assert removed == ["dragonfly/patch-lib_readline_terminal.c"]
-    assert not (port / "dragonfly").exists()  # empty dir dropped too
+    assert reconcile_orphaned_artifacts(port) == []
+    assert (port / "dragonfly/patch-lib_readline_terminal.c").is_file()
+    assert (port / "dragonfly/@main/patch-x").is_file()
+
+
+def test_removes_an_unreferenced_diff_and_its_empty_dir(tmp_path: Path) -> None:
+    port = _port(tmp_path, "mk add USES ncurses\n",
+                 {"diffs/orphan.diff": "gone\n"})
+    assert reconcile_orphaned_artifacts(port) == ["diffs/orphan.diff"]
+    assert not (port / "diffs").exists()  # empty dir dropped too
 
 
 def test_keeps_referenced_materialize(tmp_path: Path) -> None:

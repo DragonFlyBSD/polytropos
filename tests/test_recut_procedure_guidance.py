@@ -64,7 +64,7 @@ def test_the_doc_forbids_a_second_materialize_op_without_a_false_refusal():
     @any) is install_patches' rerouted note, shown only when it applies.
     """
     section = _section("### Re-cut a drifted source patch")
-    assert "Do not add a second `file materialize` for it" in section
+    assert "Do not add a `file materialize` for it" in section
     assert "refused" not in section
     assert "E_SEM_" not in section
 

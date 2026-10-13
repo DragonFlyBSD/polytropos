@@ -1400,8 +1400,8 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
 
     TWO LEVELS, because volume costs attention. The always-on part names the
     target and where the work goes, by poly-7pwa.27's table: a port with no
-    overlay ops gets ``target @any`` (nothing was built with one on any
-    line); a port with ops keeps every change in this line's block and
+    overlay content gets ``target @any`` (nothing was built with one on any
+    line); a port with content keeps every change in this line's block and
     overrides a wrong ``@any`` op there. An ``@any`` op that fails to
     compose here never reaches the agent: the preflight escalates it
     (_preflight_failures). It replaced
@@ -1421,17 +1421,22 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     ``migrate branch-line`` (poly-7pwa.25) @main and the new quarterly hold
     identical but separate copies, and each is its own line's.
 
-    ROW 1 IS "NO OPS", NOT "NO FILE". This usually runs before
-    ensure_bootstrap_overlay writes the header, but the preflight can also
-    commit a header triage left behind; either way a bootstrap header has
-    no ops, so both read as row 1 (install_patches asks the same question
-    of the job's HEAD).
+    ROW 1 IS "NO OPS AND NO dragonfly/ FILES", NOT "NO FILE". This usually
+    runs before ensure_bootstrap_overlay writes the header, but the
+    preflight can also commit a header triage left behind; either way a
+    bootstrap header has no ops, so both read as row 1. A header-only
+    overlay with patches in dragonfly/ does not: the folder installs them
+    on every line (poly-u9n4, Q4). install_patches asks the same question
+    of the job's HEAD.
 
     Best-effort, but not silent: a rename of anything it reaches would
     otherwise drop the section from every prompt with no signal.
     """
     try:
         from dportsv3.engine.api import build_plan  # noqa: PLC0415
+        from dportsv3.engine.payload import (  # noqa: PLC0415
+            folder_scope, payload_files,
+        )
 
         target = worker_mod.peek_env_target(env) or ""
         if not target:
@@ -1451,11 +1456,15 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             "This port has no overlay ops yet, so no build line was building "
             "with any: put its ops in `target @any`.\n"
         )
-        if not overlay.is_file():
+        folders = payload_files(overlay.parent)
+        if not overlay.is_file() and not folders:
             return no_overlay
-        planned = build_plan(overlay.read_text(), overlay)
-        # A bootstrap header is a file with no ops: still row 1.
-        if planned.ok and planned.plan is not None and not planned.plan.ops:
+        planned = (build_plan(overlay.read_text(), overlay)
+                   if overlay.is_file() else None)
+        # A bootstrap header is a file with no ops: still row 1, unless
+        # its dragonfly/ folder installs patches on every line.
+        if (planned is not None and planned.ok and planned.plan is not None
+                and not planned.plan.ops and not folders):
             return no_overlay
         brief = [
             head
@@ -1465,7 +1474,7 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             f"patch goes. Do not edit or delete an `@any` op: if one is wrong "
             f"for `{target}`, override it in that block.\n"
         ]
-        if not planned.ok or planned.plan is None:
+        if planned is None or not planned.ok or planned.plan is None:
             return "".join(brief)
 
         scopes: set[str] = set()
@@ -1487,6 +1496,9 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
                 # established path-preserving shape (poly-7pwa.9).
                 if src.startswith(prefix) and not src.startswith(f"{lane}/@any/"):
                     scoped_lanes.add(lane)
+        # A line's own dragonfly/ folder is scoped payload with no op.
+        if any(folder_scope(rel) not in (None, "@any") for rel in folders):
+            scoped_lanes.add("dragonfly")
         if not scopes:
             return "".join(brief)
 
@@ -1523,11 +1535,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             lanes = " and ".join(f"`{lane}/@<target>/`" for lane in sorted(scoped_lanes))
             brief.append(
                 f"- Some of this port's patch sources are scoped, under "
-                f"{lanes}, materialized to a flat destination — whether a "
-                f"given file is scoped is per file, and the overlay is the "
-                f"authority. `install_patches` puts a re-cut in the right "
-                f"lane: take the path from `installed` and read `scope_note`, "
-                f"which says whether an op still has to be written.\n"
+                f"{lanes} — whether a given file is scoped is per file. A "
+                f"file in `dragonfly/@<target>/` is installed on that line "
+                f"only, as `dragonfly/<name>`, with no op. `install_patches` "
+                f"puts a re-cut in the right place: take the path from "
+                f"`installed` and read `scope_note`.\n"
             )
         return "".join(brief)
     except Exception as exc:  # noqa: BLE001
@@ -1886,9 +1898,9 @@ class PatchAttemptStep:
                 f"port's patches from the master's directory "
                 f"(`DFLY_PATCHDIR` resolves to "
                 f"`ports/{patch_origin}/dragonfly/`), so:\n\n"
-                f"- **Patches** — `dragonfly/patch-*` files and any "
-                f"`file materialize` / `patch apply` op — go in "
-                f"`/work/DeltaPorts/ports/{patch_origin}/overlay.dops`. "
+                f"- **Patches** — `dragonfly/patch-*` files, and any op "
+                f"that reads one — go under "
+                f"`/work/DeltaPorts/ports/{patch_origin}/`. "
                 f"Written under `{origin}` they are silently ignored and "
                 f"the build fails unchanged. `install_patches` already "
                 f"redirects there for you.\n"
@@ -2300,11 +2312,12 @@ class PatchAttemptStep:
         # Persist outputs.
         services.write_patch_audit(ctx.bundle_dir, bundle_id, result, model, origin)
         services.write_tool_trace(ctx.bundle_dir, bundle_id, dispatcher.trace_events)
-        # On success, before the diff is captured: delete source artifacts the
-        # final overlay no longer references (a removed `file materialize` /
-        # `patch apply` line strands its dragonfly//diffs/ file — inert in dops
-        # mode, but dead substrate, and the agent has no delete primitive). The
-        # removal lands in changes.diff and so flows to delivery. Best-effort.
+        # On success, before the diff is captured: delete diffs/ files the
+        # final overlay no longer references (a removed `patch apply` line
+        # strands its file -- inert, but dead substrate). Not dragonfly/: the
+        # folder installs a file no op reads, so the agent deletes those
+        # itself with delete_file (poly-u9n4.4). The removal lands in
+        # changes.diff and so flows to delivery. Best-effort.
         if (result.status or "").lower() == "success":
             try:
                 from dportsv3.agent import worker as _worker  # noqa: PLC0415

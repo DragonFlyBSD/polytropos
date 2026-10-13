@@ -108,17 +108,17 @@ levels, so every inner line is prefixed.
 **Agent guidance — patch flow:**
 
 Patch files under `dragonfly/` are output artifacts. Two ways to
-introduce one, both ending in a `file materialize dragonfly/patch-…
--> dragonfly/patch-…` line in `overlay.dops` so the build's
-`do-patch` applies it:
+introduce one; either way its folder installs it, with no line in
+`overlay.dops`, and the build's `do-patch` applies it — `dragonfly/` on
+every build line, `dragonfly/@<line>/` on that line only:
 
 - **Inline diff** — for a small change you can write by hand from
-  prior `get_file` reads, stage the patch and add the materialize
-  line.
+  prior `get_file` reads, stage the patch in the folder: your line's
+  `dragonfly/@<line>/` on a port that already had an overlay.
 - **From a WRKSRC edit** — for non-trivial changes, `make_extract` +
   (`make_patch` if a `files/patch-*` also touches the file) + `dupe` +
-  `edit_file` (change the source) + `genpatch` + `install_patches`, then
-  add the materialize line. Editing the file is easier than
+  `edit_file` (change the source) + `genpatch` + `install_patches`,
+  which picks the folder. Editing the file is easier than
   hand-writing the diff, and `edit_file` keeps the parts you did not
   read out of it — `put_file` on a source file re-emits the whole thing
   and truncates. See `flow-patch.md` for why `make_patch` matters when

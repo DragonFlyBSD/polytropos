@@ -903,22 +903,9 @@ def _reject_line_numbered_content(path: str, content: str) -> dict | None:
     }
 
 
-def _reject_shared_payload_write(env: str, chroot_path: str,
-                                 tool: str) -> dict | None:
-    """Refuse a write over a payload file another build line reads.
-
-    poly-7pwa.29. The env builds one line, so a ``dragonfly/`` or
-    ``diffs/`` file that an @any op or another line's op reads is never
-    overwritten: nothing here can show the change is right for the others
-    (poly-7pwa.27, row 5a). install_patches writes the line's own copy
-    instead; this holds put_file and edit_file to the same rule, so a
-    hand-written patch cannot land on the shared file either.
-
-    The readers come from the working overlay and from the job's HEAD
-    overlay: editing the overlay first does not open the file, and an
-    overlay left half-edited does not lock it. A file the job wrote is its
-    own; when git cannot say, the file counts as committed.
-    """
+def _payload_rel(chroot_path: str) -> tuple[str, str] | None:
+    """(origin, port-relative path) for a file under a port's dragonfly/
+    or diffs/ in the job's DeltaPorts tree, else None."""
     import posixpath
 
     prefix = "/work/DeltaPorts/ports/"
@@ -926,45 +913,96 @@ def _reject_shared_payload_write(env: str, chroot_path: str,
     parts = norm[len(prefix):].split("/") if norm.startswith(prefix) else []
     if len(parts) < 4 or parts[2] not in ("dragonfly", "diffs"):
         return None
+    return "/".join(parts[:2]), "/".join(parts[2:])
+
+
+def _plan_of(text: str | None):
+    """The plan of an overlay text, or None when there is none or it does
+    not plan."""
+    from dportsv3.engine.api import build_plan  # noqa: PLC0415
+
+    try:
+        planned = build_plan(text, None) if text is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+    if planned is None or not planned.ok or planned.plan is None:
+        return None
+    return planned.plan
+
+
+def _shared_payload(env: str, chroot_path: str, *, head_only: bool = False):
+    """(readers, plan, target, origin, rel) when the job started with this
+    payload file and another build line reads it, else None.
+
+    poly-7pwa.29. The readers come from the working overlay and from the
+    job's HEAD overlay: editing the overlay first does not open the file,
+    and an overlay left half-edited does not lock it. ``head_only`` asks
+    the HEAD overlay alone, for a delete: removing a file changes only the
+    lines that read it when the job started. A file the job wrote is its
+    own; when git cannot say, the file counts as committed.
+    """
+    found_rel = _payload_rel(chroot_path)
+    if found_rel is None:
+        return None
     target = peek_env_target(env) or ""
     if not target:
         return None
-    origin, rel = "/".join(parts[:2]), "/".join(parts[2:])
+    origin, rel = found_rel
     port_rel = f"ports/{origin}/{rel}"
 
-    from dportsv3.engine.api import build_plan  # noqa: PLC0415
-
-    def plan_of(text: str | None):
-        try:
-            planned = build_plan(text, None) if text is not None else None
-        except Exception:  # noqa: BLE001
-            return None
-        if planned is None or not planned.ok or planned.plan is None:
-            return None
-        return planned.plan
-
     overlay = env_paths(env).deltaports / "ports" / origin / "overlay.dops"
-    try:
-        working = overlay.read_text()
-    except (OSError, UnicodeDecodeError):
-        working = None
-    plan = plan_of(working)
-    found = _readers_elsewhere(plan, target, rel) if plan is not None else []
-    if not found:
-        plan = plan_of(_head_text(env, f"ports/{origin}/overlay.dops"))
+    found: list = []
+    plan = None
+    if not head_only:
+        try:
+            working = overlay.read_text()
+        except (OSError, UnicodeDecodeError):
+            working = None
+        plan = _plan_of(working)
         found = _readers_elsewhere(plan, target, rel) if plan is not None else []
+    if not found:
+        head = _plan_of(_head_text(env, f"ports/{origin}/overlay.dops"))
+        if head is not None:
+            plan = head
+            found = _readers_elsewhere(plan, target, rel)
     if not found:
         return None
     committed = _committed_paths(env, [port_rel])
     if committed is not None and port_rel not in committed:
         return None
+    return found, plan, target, origin, rel
 
-    who = ", ".join(f"`{t}`" for t in sorted({op.target for op in found}))
+
+def _reject_shared_payload_write(env: str, chroot_path: str,
+                                 tool: str) -> dict | None:
+    """Refuse a write over a payload file another build line reads.
+
+    poly-7pwa.29. The env builds one line, so a ``dragonfly/`` or
+    ``diffs/`` file that an @any op, another line's op or the flat
+    dragonfly/ folder (poly-u9n4) reads is never overwritten: nothing here
+    can show the change is right for the others (poly-7pwa.27, row 5a).
+    install_patches writes the line's own copy instead; this holds
+    put_file and edit_file to the same rule, so a hand-written patch
+    cannot land on the shared file either.
+    """
+    import posixpath
+
+    from dportsv3.engine.models import FolderInstall  # noqa: PLC0415
+
+    shared = _shared_payload(env, chroot_path)
+    if shared is None:
+        return None
+    found, plan, target, origin, rel = shared
+    prefix = "/work/DeltaPorts/ports/"
+    lane = rel.split("/", 1)[0]
+
+    who = ", ".join(f"`{t}`" for t in sorted({r.target for r in found}))
     head = (f"{tool} refused: {chroot_path} is read by {who}, and only "
             f"`{target}` is built here, so changing it changes lines nothing "
             f"here tested (poly-7pwa.27). ")
-    materialize = [op for op in found if op.kind == "file.materialize"]
-    if not materialize:
+    copies = [r for r in found
+              if isinstance(r, FolderInstall) or r.kind == "file.materialize"]
+    if not copies:
         advice = ("It is applied with `patch apply`, and a second copy "
                   "cannot replace it on one line. Leave it: change what it "
                   f"does on `{target}` with a later op in the `target "
@@ -972,33 +1010,37 @@ def _reject_shared_payload_write(env: str, chroot_path: str,
                   "for every line.")
         return {"ok": False, "error": head + advice, "path": chroot_path,
                 "blocked_by": "shared_payload"}
-    dst = posixpath.normpath(str(materialize[0].payload.get("dst")
-                                 or f"dragonfly/{parts[-1]}"))
+    first = copies[0]
+    dst = (first.dst if isinstance(first, FolderInstall)
+           else posixpath.normpath(str(first.payload.get("dst")
+                                       or f"dragonfly/{rel.rsplit('/', 1)[-1]}")))
     # Named after the destination, as install_patches names it.
-    own = f"{parts[2]}/{target}/{dst.rsplit('/', 1)[-1]}"
-    # What this line installs at that destination: the last op to fill it
-    # in apply order. If that is its own copy, the edit belongs there.
-    from dportsv3.engine.models import order_ops_for_target  # noqa: PLC0415
-
-    winner = None
-    for op in order_ops_for_target(plan.ops, target):
-        if (op.target in ("@any", target)
-                and op.kind in ("file.materialize", "file.copy")
-                and posixpath.normpath(str(op.payload.get("dst") or "")) == dst):
-            winner = op
+    own = f"{lane}/{target}/{dst.rsplit('/', 1)[-1]}"
+    # What this line installs at that destination: the last op or folder
+    # file to fill it, in apply order. If that is its own copy, the edit
+    # belongs there.
+    port_dir = env_paths(env).deltaports / "ports" / origin
+    winner = _line_payload(plan, target, port_dir).get(dst)
     mine = (winner if winner is not None and winner.target == target
-            and winner.kind == "file.materialize"
-            and posixpath.normpath(str(winner.payload.get("src") or "")) != rel
-            else None)
+            and _src_of(winner) not in (None, rel) else None)
     if mine is not None:
-        src = posixpath.normpath(str(mine.payload.get("src")))
-        advice = (f"`{target}` has its own copy: `file materialize {src} -> "
-                  f"{dst}` in its block. Edit {prefix}{origin}/{src} instead; "
-                  f"overlay.dops needs no edit.")
+        src = _src_of(mine)
+        how = ("its folder installs it" if isinstance(mine, FolderInstall)
+               else f"`file materialize {src} -> {dst}` in its block")
+        advice = (f"`{target}` has its own copy: {how}. Edit "
+                  f"{prefix}{origin}/{src} instead; overlay.dops needs no "
+                  f"edit.")
     elif own == rel:
         advice = (f"It is in `{target}`'s own folder, but a `target` list "
                   f"makes another line read it too, so no copy of it is "
                   f"`{target}`'s alone. Leave it and say so in your report.")
+    elif _folder_delivers(plan, target, port_dir, own, dst):
+        advice = (f"Write this line's own copy at {prefix}{origin}/{own}: "
+                  f"the dragonfly/ folder installs it on `{target}` only, "
+                  f"after the shared file, so it replaces that file on "
+                  f"`{target}` and overlay.dops needs no edit (poly-u9n4). "
+                  f"For a patch cut with genpatch, `install_patches` does "
+                  f"this.")
     else:
         advice = (f"Write this line's own copy at {prefix}{origin}/{own} and "
                   f"add `file materialize {own} -> {dst}` to the `target "
@@ -1007,6 +1049,63 @@ def _reject_shared_payload_write(env: str, chroot_path: str,
                   f"cut with genpatch, `install_patches` does both.")
     return {"ok": False, "error": head + advice, "path": chroot_path,
             "blocked_by": "shared_payload"}
+
+
+def _reject_new_flat_payload(env: str, chroot_path: str) -> dict | None:
+    """Refuse creating a flat dragonfly/ file on a port that had overlay
+    content when the job started.
+
+    poly-u9n4: the folder is the install, so where a file sits IS its
+    scope, and a flat ``dragonfly/<x>`` reaches every build line with no
+    op. On a port other lines already build, new work is this line's
+    alone (poly-7pwa.27, row 2): install_patches puts it in
+    ``dragonfly/@<line>/``, and a hand-written file goes there too. A file
+    an op reads is the op's to scope, and a compat port copies dragonfly/
+    as it is, so neither is refused.
+    """
+    from dportsv3.engine.payload import (  # noqa: PLC0415
+        explicit_reads, folder_scope,
+    )
+
+    found_rel = _payload_rel(chroot_path)
+    target = peek_env_target(env) or ""
+    if found_rel is None or not target:
+        return None
+    origin, rel = found_rel
+    if folder_scope(rel) != "@any":
+        return None
+    port_dir = env_paths(env).deltaports / "ports" / origin
+    overlay = port_dir / "overlay.dops"
+    if not overlay.is_file() or (port_dir / rel).exists():
+        return None
+    try:
+        plan = _plan_of(overlay.read_text())
+    except (OSError, UnicodeDecodeError):
+        plan = None
+    if plan is not None and rel in explicit_reads(plan.ops):
+        return None
+    prefix = f"ports/{origin}/"
+    committed = _committed_paths(env, [*_fresh_probe(port_dir, prefix),
+                                       prefix + rel])
+    if committed is not None and (
+            prefix + rel in committed
+            or _started_fresh(env, prefix, committed)):
+        return None
+    own = f"dragonfly/{target}/{rel.split('/', 1)[1]}"
+    return {
+        "ok": False,
+        "error": (
+            f"put_file refused: {chroot_path} would be a new file in the "
+            f"flat dragonfly/, which every build line installs, and this "
+            f"port already had overlay content when the job started; only "
+            f"`{target}` is built here (poly-7pwa.27). Write it to "
+            f"/work/DeltaPorts/ports/{origin}/{own} instead: that folder is "
+            f"installed on `{target}` only, as dragonfly/"
+            f"{rel.split('/', 1)[1]}, with no op."
+        ),
+        "path": chroot_path,
+        "blocked_by": "flat_payload",
+    }
 
 
 def put_file(
@@ -1045,6 +1144,9 @@ def put_file(
         if refused is not None:
             return refused
     refused = _reject_shared_payload_write(env, path, "put_file")
+    if refused is not None:
+        return refused
+    refused = _reject_new_flat_payload(env, path)
     if refused is not None:
         return refused
     paths = env_paths(env)
@@ -1244,6 +1346,102 @@ def edit_file(
         "first_edit_line": edited_line + 1,
         "context": "\n".join(new_lines[lo:hi]),
     }
+
+
+def delete_file(env: str, path: str) -> dict:
+    """Delete a payload file under a port's ``dragonfly/`` or ``diffs/``.
+
+    poly-u9n4.4. Once the dragonfly/ folder is the install, removing a
+    patch's op no longer drops the patch: a file no op reads is installed
+    on every line its folder names. So dropping a patch means deleting the
+    file, and the runner no longer deletes "unreferenced" ones for the
+    agent (reconcile.py).
+
+    Guarded like put_file and edit_file (poly-7pwa.29). A file the job
+    started with that another build line read then is refused: the line
+    drops it with ``file remove`` in its own block instead, which runs
+    after the folder installs it. And a file an op still reads is refused
+    until that op is gone, or the next compose fails on the op.
+    """
+    import posixpath
+
+    from dportsv3.engine.models import FolderInstall  # noqa: PLC0415
+    from dportsv3.engine.payload import explicit_reads  # noqa: PLC0415
+
+    found_rel = _payload_rel(path)
+    if found_rel is None:
+        return {
+            "ok": False,
+            "error": (
+                "delete_file: only a file under /work/DeltaPorts/ports/"
+                "<origin>/dragonfly/ or .../diffs/ can be deleted. To stop "
+                "applying anything else, edit overlay.dops."
+            ),
+            "path": path,
+        }
+    origin, rel = found_rel
+
+    shared = _shared_payload(env, path, head_only=True)
+    if shared is not None:
+        found, plan, target, _, _ = shared
+        who = ", ".join(f"`{t}`" for t in sorted({r.target for r in found}))
+        head = (f"delete_file refused: {path} is read by {who}, and only "
+                f"`{target}` is built here, so deleting it changes lines "
+                f"nothing here tested (poly-7pwa.27). ")
+        copies = [r for r in found
+                  if isinstance(r, FolderInstall) or r.kind == "file.materialize"]
+        port_dir = env_paths(env).deltaports / "ports" / origin
+        here = {_src_of(w) for w in _line_payload(plan, target, port_dir).values()}
+        if copies and rel not in here and rel not in explicit_reads(
+                op for op in plan.ops if op.target == target):
+            advice = (f"It does not reach `{target}` at all: it is the other "
+                      f"line's. Leave it.")
+        elif copies:
+            first = copies[0]
+            dst = (first.dst if isinstance(first, FolderInstall)
+                   else posixpath.normpath(str(first.payload.get("dst") or rel)))
+            advice = (f"To drop it on `{target}` only, add `file remove "
+                      f"{dst}` to the `target {target}` block: it runs after "
+                      f"the file is installed, and every other line keeps it.")
+        else:
+            advice = ("It is applied with `patch apply`. Leave it: undo what "
+                      f"it does on `{target}` with a later op in the `target "
+                      f"{target}` block, or say in your report that it is "
+                      "wrong for every line.")
+        return {"ok": False, "error": head + advice, "path": path,
+                "blocked_by": "shared_payload"}
+
+    port_dir = env_paths(env).deltaports / "ports" / origin
+    try:
+        plan = _plan_of((port_dir / "overlay.dops").read_text())
+    except (OSError, UnicodeDecodeError):
+        plan = None
+    if plan is not None and rel in explicit_reads(plan.ops):
+        return {
+            "ok": False,
+            "error": (
+                f"delete_file refused: an op in overlay.dops still reads "
+                f"{rel}, and the next compose would fail on it. Remove that "
+                f"op first -- in the same edit as whatever replaces it -- "
+                f"then delete the file."
+            ),
+            "path": path,
+            "blocked_by": "op_reads_it",
+        }
+
+    host = _resolve_chroot_path(env_paths(env), path)
+    if not host.is_file():
+        return {"ok": False, "error": f"delete_file: no such file: {path}",
+                "path": path}
+    host.unlink()
+    # Directories left empty go too, up to the lane itself. Resolved, as
+    # host is: /work/DeltaPorts is a link to the job's worktree.
+    stop = port_dir.resolve()
+    parent = host.parent
+    while parent != stop and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+    return {"ok": True, "path": path, "deleted": True}
 
 
 def _git_diff_with_untracked(env: str, rel: str) -> subprocess.CompletedProcess:
@@ -1937,8 +2135,15 @@ def get_effective_overlay(env: str, origin: str) -> dict:
             "target": "<env target>",
             "effective_ops": [<PlanOp dict + scope + apply_index>, ...],
             "filtered_out": [<PlanOp dict + scope + reason>, ...],
+            "folder_installs": [{"src", "dst", "scope"}, ...],
             "overlay_path": "ports/<origin>/overlay.dops",
         }
+
+    ``folder_installs`` is what the dragonfly/ folder installs on this
+    line with no op (poly-u9n4), in install order: the flat files go in
+    before every ``@any`` op, ``dragonfly/@<target>/`` after them and
+    before the target's own. Without it the answer to "what will compose
+    do" left out every patch no op names.
 
     Or on failure::
 
@@ -1992,6 +2197,7 @@ def get_effective_overlay(env: str, origin: str) -> dict:
             "target": target,
             "effective_ops": [],
             "filtered_out": [],
+            "folder_installs": [],
             "overlay_path": overlay_relpath,
         }
 
@@ -2047,11 +2253,19 @@ def get_effective_overlay(env: str, origin: str) -> dict:
                 ),
             })
 
+    from dportsv3.engine.payload import folder_installs  # noqa: PLC0415
+
+    installs = [
+        {"src": i.src, "dst": i.dst, "scope": i.target}
+        for i in folder_installs(
+            overlay_path.parent, plan_result.plan.ops, target)
+    ]
     return {
         "ok": True,
         "target": target,
         "effective_ops": effective,
         "filtered_out": filtered,
+        "folder_installs": installs,
         "overlay_path": overlay_relpath,
     }
 
@@ -3619,13 +3833,13 @@ def _payload_destination(plan, target: str, filename: str,
     destination the file fills, which a line's own copy keeps. ``kind`` is
     one of:
 
-    - "existing": the op that fills dragonfly/<filename> last on this line
-      is a file.materialize reading a file under dragonfly/; the path is
-      that file. When nothing fills that name: the one dragonfly/patch-*
-      destination on the line whose file changes the same single path (the
-      header key; none or several, no match). The destination is the key,
-      not the layout: pkg keeps four libpkg patches flat under @any and one
-      scoped per line.
+    - "existing": what fills dragonfly/<filename> last on this line is a
+      file.materialize reading a file under dragonfly/, or the dragonfly/
+      folder itself (poly-u9n4); the path is that file. When nothing fills
+      that name: the one dragonfly/patch-* destination on the line whose
+      file changes the same single path (the header key; none or several,
+      no match). The destination is the key, not the layout: pkg keeps
+      four libpkg patches flat under @any and one scoped per line.
     - "new": nothing on this line fills it. The flat name; install_patches
       decides the lane, because it depends on whether the port had an
       overlay when the job started (poly-7pwa.27).
@@ -3640,27 +3854,19 @@ def _payload_destination(plan, target: str, filename: str,
     plans and applies, and with the engine's rule install_patches would
     write the re-cut over overlay.dops.
     """
-    import posixpath
     from pathlib import PurePosixPath
-    from dportsv3.engine.models import order_ops_for_target
 
     def payload_file(op) -> str | None:
-        if op.kind != "file.materialize":
+        src = _src_of(op)
+        if src is None:
             return None
-        src = posixpath.normpath(str(op.payload.get("src") or ""))
         parts = PurePosixPath(src).parts
         if (len(parts) < 2 or parts[0] != "dragonfly"
                 or ".." in parts):
             return None
         return src
 
-    winners = {}
-    for op in order_ops_for_target(plan.ops, target):
-        if (op.kind in ("file.materialize", "file.copy")
-                and op.target in ("@any", target)):
-            dst = posixpath.normpath(
-                str(op.payload.get("dst") or ""))
-            winners[dst] = op
+    winners = _line_payload(plan, target, port_dir)
     wanted = f"dragonfly/{filename}"
     op = winners.get(wanted)
     if op is None and patched:
@@ -3683,22 +3889,95 @@ _PAYLOAD_READERS = {"file.materialize": "src", "patch.apply": "path"}
 
 
 def _readers_elsewhere(plan, target: str, src: str) -> list:
-    """The ops that read ``src`` and do not run only on ``target``.
+    """The readers of ``src`` that do not run only on ``target``.
 
     That is an @any op, or another line's: a comma list expands to one op
     per line, so ``target @2026Q3,@main`` counts as @2026Q3's too. Writing
     such a file changes a build line nothing here built (poly-7pwa.27).
     A file materialize reads its ``src``, a patch apply its ``path``.
+
+    And the dragonfly/ folder, which installs a file no op reads
+    (poly-u9n4): ``dragonfly/<x>`` is read by every line, an ``@any``
+    reader, and ``dragonfly/@<line>/<x>`` by that line. Those come back as
+    ``FolderInstall`` rows, which carry ``target`` as an op does.
     """
     import posixpath
 
+    from dportsv3.engine.models import FolderInstall  # noqa: PLC0415
+    from dportsv3.engine.payload import (  # noqa: PLC0415
+        explicit_reads, folder_destination, folder_scope,
+    )
+
     src = posixpath.normpath(src)
-    return [
+    readers: list = [
         op for op in plan.ops
         if op.target != target and op.kind in _PAYLOAD_READERS
         and posixpath.normpath(
             str(op.payload.get(_PAYLOAD_READERS[op.kind]) or "")) == src
     ]
+    scope = folder_scope(src)
+    if scope not in (None, target) and src not in explicit_reads(plan.ops):
+        readers.append(FolderInstall(src, folder_destination(src), scope))
+    return readers
+
+
+def _src_of(step) -> str | None:
+    """The payload file an op or folder install reads, or None (a file copy)."""
+    import posixpath
+
+    from dportsv3.engine.models import FolderInstall  # noqa: PLC0415
+
+    if isinstance(step, FolderInstall):
+        return step.src
+    if step.kind != "file.materialize":
+        return None
+    return posixpath.normpath(str(step.payload.get("src") or ""))
+
+
+def _line_payload(plan, target: str, port_dir: Path, *,
+                  files: set[str] | None = None) -> dict:
+    """What ``target`` installs at each destination: the last op or folder
+    file to fill it, in apply order (engine.payload).
+
+    ``files`` stands in for the port's ``dragonfly/`` listing, for a
+    caller asking about a file it has not written yet.
+    """
+    import posixpath
+
+    from dportsv3.engine.models import (  # noqa: PLC0415
+        FolderInstall, order_ops_for_target,
+    )
+    from dportsv3.engine.payload import (  # noqa: PLC0415
+        folder_installs, with_folder_installs,
+    )
+
+    winners: dict = {}
+    for step in with_folder_installs(
+            order_ops_for_target(plan.ops, target),
+            folder_installs(port_dir, plan.ops, target, files=files)):
+        if isinstance(step, FolderInstall):
+            winners[step.dst] = step
+        elif (step.kind in ("file.materialize", "file.copy")
+              and step.target in ("@any", target)):
+            winners[posixpath.normpath(
+                str(step.payload.get("dst") or ""))] = step
+    return winners
+
+
+def _folder_delivers(plan, target: str, port_dir: Path, rel: str,
+                     dst: str) -> bool:
+    """Whether ``rel``, once written, is what ``target`` installs at ``dst``
+    with no op of its own: the folder installs it there, and no later op
+    on the line fills ``dst`` from another file.
+    """
+    import posixpath
+
+    from dportsv3.engine.payload import payload_files  # noqa: PLC0415
+
+    rel = posixpath.normpath(rel)
+    files = {*payload_files(port_dir), rel}
+    winner = _line_payload(plan, target, port_dir, files=files).get(dst)
+    return winner is not None and _src_of(winner) == rel
 
 
 def _read_on_another_line(plan, target: str, src: str) -> bool:
@@ -3755,17 +4034,49 @@ def _plan_op_count(text: str | None) -> int | None:
     return len(planned.plan.ops)
 
 
+def _fresh_probe(port_dir: Path, prefix: str) -> list[str]:
+    """The paths ``_started_fresh`` needs ``_committed_paths`` to answer for.
+
+    The dragonfly/ directory itself -- git lists what is under it -- and
+    the files there now, for an answer that names files only.
+    """
+    from dportsv3.engine.payload import payload_files  # noqa: PLC0415
+
+    return [prefix + "overlay.dops", prefix + "dragonfly",
+            *(prefix + rel for rel in payload_files(port_dir))]
+
+
+def _started_fresh(env: str, prefix: str, committed: set[str]) -> bool:
+    """Row 1 of poly-7pwa.27: the port had no overlay content at job start.
+
+    That is no overlay ops AND no dragonfly/ files (poly-u9n4, Q4). Once
+    the folder is the install, a port whose overlay is only a header can
+    still install patches on every line, and new work there is not
+    "nothing was built with it". Not "no file" either: the preflight can
+    commit a bootstrap header before the attempt, and a header has no
+    ops. A HEAD that cannot be read counts as ops. ``committed`` is
+    ``_committed_paths`` of ``_fresh_probe``.
+    """
+    lane = prefix + "dragonfly"
+    if any(p == lane or p.startswith(lane + "/") for p in committed):
+        return False
+    return (prefix + "overlay.dops" not in committed
+            or _plan_op_count(_head_text(env, prefix + "overlay.dops")) == 0)
+
+
 def install_patches(env: str, origin: str, patches: list[str] | None = None) -> dict:
     """Copy patches from ``/work/genpatch-out/`` into DeltaPorts overlay.
 
-    A re-cut replaces the file this build line's existing op reads --
-    ``dragonfly/<name>`` or ``dragonfly/@<target>/<name>``, found per
-    file from the overlay by destination, else by the file the patch
-    changes (``_payload_destination``). A new patch, and a re-cut of a
-    file other build lines read too, go to this line's own
-    ``dragonfly/@<target>/`` and ``scope_note`` gives the op for its
-    block; only a port that had no overlay when the job started gets a
-    flat patch and an @any op (poly-7pwa.27). A port with no
+    A re-cut replaces the file this build line installs at that name --
+    ``dragonfly/<name>`` or ``dragonfly/@<target>/<name>``, read by an op
+    or installed by the folder, found per file by destination, else by
+    the file the patch changes (``_payload_destination``). A new patch,
+    and a re-cut of a file other build lines read too, go to this line's
+    own ``dragonfly/@<target>/``; only a port that had no overlay content
+    when the job started gets a flat patch (poly-7pwa.27). Either way the
+    dragonfly/ folder installs it, so no op is needed (poly-u9n4) --
+    unless an op in the line's block fills the same destination later,
+    and then ``scope_note`` gives the op to add. A port with no
     overlay.dops is composed in compat mode, which copies dragonfly/ as
     it is: flat, and no op. ``installed`` carries the real paths. The
     copy is host-side; one chroot git call asks which files the job
@@ -3874,10 +4185,10 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         decided.append((f, rel, kind, dst))
 
     # WHAT THE JOB STARTED WITH (poly-7pwa.27), in one git call: whether
-    # the port had an overlay -- a port without one gets @any, the rest
-    # get this line's block -- and which shared files predate the job.
-    # When git cannot say, assume the overlay and the files were there:
-    # that only ever keeps a change on this line.
+    # the port had overlay content -- a port without any gets the flat
+    # folder, the rest get this line's -- and which shared files predate
+    # the job. When git cannot say, assume the overlay and the files were
+    # there: that only ever keeps a change on this line.
     shared: set[str] = set()
     fresh_overlay = False
     if plan is not None:
@@ -3886,28 +4197,22 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
                   and _read_on_another_line(plan, target, rel)}
         prefix = f"ports/{dest_origin}/"
         committed = _committed_paths(
-            env, [prefix + "overlay.dops", *(prefix + r for r in sorted(shared))])
+            env, [*_fresh_probe(port_dir, prefix),
+                  *(prefix + r for r in sorted(shared))])
         if committed is not None:
             shared = {r for r in shared if prefix + r in committed}
-            # Row 1 is "no ops at job start", not "no file": the preflight
-            # can commit a bootstrap header before the attempt, and a
-            # header has no ops. A HEAD that cannot be read counts as ops.
-            fresh_overlay = (
-                prefix + "overlay.dops" not in committed
-                or _plan_op_count(_head_text(env, prefix + "overlay.dops")) == 0
-            )
+            fresh_overlay = _started_fresh(env, prefix, committed)
     lane = f"dragonfly/{target}/"
 
     installed: list[str] = []
     held: list[str] = []
     held_shared: list[str] = []
     rerouted: list[str] = []
-    needs_op: list[str] = []
     unsafe: list[str] = []
     undecided: list[str] = []
     kept_shared: list[str] = []
     new_on_line: list[str] = []
-    line_ops: list[tuple[str, str]] = []
+    written: list[tuple[str, str, str, str]] = []
     for f, rel, kind, dst in decided:
         if kind == "new" and not fresh_overlay:
             rel = lane + dst.rsplit("/", 1)[-1]
@@ -3934,14 +4239,27 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         installed.append(str(dest.relative_to(paths.deltaports)))
         if kind == "existing" and rel != f"dragonfly/{f.name}":
             rerouted.append(rel)
-        elif kind == "line":
-            line_ops.append((rel, dst))
-        elif kind == "new":
-            needs_op.append(f.name)
+        elif kind in ("line", "new"):
+            written.append((f.name, rel, dst, kind))
         elif kind == "unsafe":
             unsafe.append(f.name)
         elif kind == "undecided":
             undecided.append(f.name)
+
+    # THE FOLDER IS THE INSTALL (poly-u9n4): a line's own copy and a new
+    # patch reach the build with no op -- unless an op on the line fills
+    # the same destination after the folder does. Asked of the tree as
+    # written, so the answer is the engine's and not a guess.
+    delivered = {rel for _, rel, dst, _ in written
+                 if _folder_delivers(plan, target, port_dir, rel, dst)}
+    line_folder = [rel for _, rel, _, kind in written
+                   if kind == "line" and rel in delivered]
+    line_ops = [(rel, dst) for _, rel, dst, kind in written
+                if kind == "line" and rel not in delivered]
+    flat_new = [rel for _, rel, _, kind in written
+                if kind == "new" and rel in delivered]
+    needs_op = [name for name, rel, _, kind in written
+                if kind == "new" and rel not in delivered]
 
     result = {
         "origin": origin,
@@ -3961,8 +4279,8 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
         if not target:
             parts.append(
                 "No compose target is cached for this env, so the lane could "
-                "not be decided and everything went to the flat dragonfly/. "
-                "Check the `file materialize` op that names the patch."
+                "not be decided and everything went to the flat dragonfly/, "
+                "which every build line installs."
             )
         elif plan is None:
             part = (
@@ -3972,9 +4290,9 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
             )
             if undecided:
                 part += (
-                    f" Written to the flat dragonfly/: {', '.join(undecided)}; "
-                    f"once the overlay plans, check the `file materialize` op "
-                    f"that names each."
+                    f" Written to the flat dragonfly/, which every build line "
+                    f"installs: {', '.join(undecided)}; once the overlay "
+                    f"plans, check that each belongs on every line."
                 )
             if held:
                 part += (
@@ -3986,14 +4304,13 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
             parts.append(part)
         if rerouted:
             parts.append(
-                f"Written where {target}'s existing op reads them: "
+                f"Written where {target} already installs them from: "
                 f"{', '.join(rerouted)}. overlay.dops needs no edit for these. Do "
-                f"not add a second `file materialize` for them: under the same "
-                f"`target` as the existing op, the earlier of the two never lands "
-                f"and validate_dops rejects it; under `target @any` while the "
-                f"existing op is in this build line's own block, yours is "
-                f"overridden here and every build line without its own op "
-                f"switches to your patch untested."
+                f"not add a `file materialize` for them: a second op for one "
+                f"destination either never lands (validate_dops rejects it) or "
+                f"switches every build line without its own op to your patch "
+                f"untested, and an op that reads a file takes it out of the "
+                f"dragonfly/ folder on every line the op does not run on."
             )
         if unsafe:
             parts.append(
@@ -4012,39 +4329,62 @@ def install_patches(env: str, origin: str, patches: list[str] | None = None) -> 
                 f"so in your report: an operator has to give each line its "
                 f"own file."
             )
-        if line_ops:
+        if line_folder or line_ops:
             part = ""
             if kept_shared:
                 part += (
                     f"Not written over {', '.join(kept_shared)}: other build "
                     f"lines read {'it' if len(kept_shared) == 1 else 'them'} "
                     f"too, and only {target} is built here. {target} gets its "
-                    f"own copy; the shared file and its op stay as they are. "
+                    f"own copy; the shared file stays as it is. "
                 )
             if new_on_line:
                 part += (
-                    f"No op installs {', '.join(new_on_line)} yet, so the "
-                    f"build will not see "
-                    f"{'it' if len(new_on_line) == 1 else 'them'}. This port "
-                    f"had an overlay before this job, so the patch is "
-                    f"{target}'s alone: no other build line was built with "
-                    f"it. "
+                    f"This port had overlay content before this job, so "
+                    f"{', '.join(new_on_line)} is {target}'s alone: no other "
+                    f"build line was built with it. "
                 )
-            part += (
-                f"Add at the end of ports/{dest_origin}/overlay.dops, the "
-                f"`target` line included, so the ops land in {target}'s "
-                f"block whichever block is last now:\n"
-                f"target {target}\n"
-                + "\n".join(f"file materialize {src} -> {dst}"
-                            for src, dst in line_ops)
+            if line_folder:
+                one = len(line_folder) == 1
+                part += (
+                    f"Written to {target}'s own folder: "
+                    f"{', '.join(line_folder)}. The dragonfly/ folder installs "
+                    f"{'it' if one else 'them'} on {target} only, as "
+                    f"dragonfly/<name> and after the files every line shares, "
+                    f"so overlay.dops needs no edit. Do not add a `file "
+                    f"materialize` for {'it' if one else 'them'}. "
+                )
+            if line_ops:
+                one = len(line_ops) == 1
+                part += (
+                    f"An op in {target}'s block fills "
+                    f"{', '.join(dst for _, dst in line_ops)} after the folder "
+                    f"does, so {'this copy needs an op' if one else 'these copies need ops'} "
+                    f"of {'its' if one else 'their'} own. Add at the end of "
+                    f"ports/{dest_origin}/overlay.dops, the `target` line "
+                    f"included, so the ops land in {target}'s block whichever "
+                    f"block is last now:\n"
+                    f"target {target}\n"
+                    + "\n".join(f"file materialize {src} -> {dst}"
+                                for src, dst in line_ops)
+                )
+            parts.append(part.rstrip())
+        if flat_new:
+            parts.append(
+                f"Written to the flat dragonfly/: {', '.join(flat_new)}. This "
+                f"port had no overlay content when the job started, so a new "
+                f"patch goes to every build line: the dragonfly/ folder "
+                f"installs it there with no op, and overlay.dops needs no edit "
+                f"for it."
             )
-            parts.append(part)
         if needs_op:
             part = (
-                f"No op installs {', '.join(needs_op)} yet, so the build will not "
-                f"see {'it' if len(needs_op) == 1 else 'them'}. This port had "
-                f"no overlay when the job started, so its ops go in @any. Add "
-                f"to the `target @any` block of ports/{dest_origin}/overlay.dops:\n"
+                f"No op installs {', '.join(needs_op)} yet, and the dragonfly/ "
+                f"folder does not either, so the build will not see "
+                f"{'it' if len(needs_op) == 1 else 'them'}. This port had no "
+                f"overlay content when the job started, so its ops go in @any. "
+                f"Add to the `target @any` block of "
+                f"ports/{dest_origin}/overlay.dops:\n"
                 + "\n".join(f"file materialize dragonfly/{n} -> dragonfly/{n}"
                             for n in needs_op)
             )

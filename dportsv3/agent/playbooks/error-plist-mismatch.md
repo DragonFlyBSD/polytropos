@@ -80,7 +80,7 @@ re-cut diff is cleaner than a wall of `text` ops:
 patch apply diffs/pkg-plist.diff
 ```
 (`patch apply` is valid for `diffs/*` framework files — NOT for
-`dragonfly/*`, which must be `file materialize`d.)
+`dragonfly/*`, which the folder installs for the build's `do-patch`.)
 
 ## Don't reach for install-phase hacks
 

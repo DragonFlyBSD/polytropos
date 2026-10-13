@@ -187,12 +187,15 @@ def test_the_safe_swap_needs_no_overlay_edit_at_all() -> None:
     that sent a re-cut somewhere no op reads (poly-7pwa.13). The invariant
     the test exists for -- overwrite in place, do not touch the overlay --
     is unchanged, so it is pinned by the op instead of by a literal path.
+    Since poly-u9n4 the folder can be what installs the patch, so the
+    path is the one the line installs it from, op or folder.
     """
     sec = " ".join(_recovery_section().split())
     assert "`overlay.dops` needs no edit at all" in sec
     # Whitespace-collapsed: the phrase spans a line wrap, and a literal
     # match would fail on a reflow for no reason.
-    assert "`file materialize` op reads" in sec
+    assert "at the path your line installs it from" in sec
+    assert "its `file materialize` line or its folder" in sec
 
 
 def test_the_green_window_is_named_as_the_hazard() -> None:

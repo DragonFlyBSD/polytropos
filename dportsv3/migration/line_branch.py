@@ -9,9 +9,12 @@ ops goes, mk and text ops as well as patches.
 So each port with a block naming the old line gets ONE ``target <new>``
 block appended, holding the body of every such block in file order, and
 the payload those ops read under ``<lane>/@<T>/`` is copied to
-``<lane>/@<new>/``. The new line's blocks and folder are its own: a later
-fix on either line changes that line only, which is what install_patches
-and the job brief already assume.
+``<lane>/@<new>/``. So is every file in ``dragonfly/@<T>/`` that no op
+reads: the folder installs those on the old line with no op (poly-u9n4),
+and a port can have such a folder and no block at all. The new line's
+blocks and folder are its own: a later fix on either line changes that
+line only, which is what install_patches and the job brief already
+assume.
 
 Adding the new line to each list (``target @main,@2026Q4``) is the smaller
 diff and the wrong one. Every @main op and patch would be shared with the
@@ -19,7 +22,8 @@ new line, and install_patches could no longer re-cut a @main patch: its
 own copy would be the shared file itself.
 
 Nothing is written unless the new overlay plans, the new line plans
-exactly the old line's ops, and every other line plans what it did before.
+exactly the old line's ops and installs exactly its dragonfly/ files, and
+every other line plans and installs what it did before.
 """
 
 from __future__ import annotations
@@ -157,27 +161,79 @@ def branch_overlay(text: str, from_line: str, new_line: str
     return out, tuple((old, new) for new, old in copies.items()), len(copied)
 
 
+def _folder_copies(port: Path, text: str, from_line: str, new_line: str
+                   ) -> tuple[tuple[str, str], ...]:
+    """``from_line``'s own dragonfly/ files the folder installs, and where
+    ``new_line``'s copy of each goes. ``text`` is the overlay after the
+    branch, so a file a copied op now reads elsewhere is not counted."""
+    from dportsv3.engine.payload import folder_installs  # noqa: PLC0415
+
+    ops, _ = _plan(text)
+    if ops is None:
+        return ()
+    return tuple(
+        (i.src, f"dragonfly/{new_line}/{i.src.split('/', 2)[2]}")
+        for i in folder_installs(port, ops, from_line)
+        if i.target == from_line
+    )
+
+
+def _installs_differ(port: Path, before: str, after: str,
+                     copies: tuple[tuple[str, str], ...],
+                     from_line: str, new_line: str) -> str | None:
+    """Why the branch would change what a line installs from dragonfly/,
+    or None: every other line installs what it did, and ``new_line``
+    installs the same bytes at the same names as ``from_line``."""
+    from dportsv3.engine.payload import folder_installs, payload_files  # noqa: PLC0415
+
+    ops_before, _ = _plan(before)
+    ops_after, _ = _plan(after)
+    if ops_before is None or ops_after is None:
+        return None  # branch_overlay has said why already
+    source = dict((dst, src) for src, dst in copies)
+    files_before = set(payload_files(port))
+    files_after = files_before | set(source)
+
+    def installed(ops, files, line) -> dict[str, bytes]:
+        return {i.dst: (port / source.get(i.src, i.src)).read_bytes()
+                for i in folder_installs(port, ops, line, files=files)}
+
+    lines = {op.target for op in ops_before + ops_after} | {from_line}
+    for line in sorted(lines - {new_line}):
+        if (installed(ops_before, files_before, line)
+                != installed(ops_after, files_after, line)):
+            return f"the copy would change what {line} installs from dragonfly/"
+    if (installed(ops_after, files_after, new_line)
+            != installed(ops_before, files_before, from_line)):
+        return f"{new_line} would not install {from_line}'s dragonfly/ files"
+    return None
+
+
 def plan_branch(delta_root: Path, from_line: str, new_line: str
                 ) -> list[PortBranch]:
-    """The branch of every DSL port with a block naming ``from_line``."""
+    """The branch of every DSL port with a block naming ``from_line``, or
+    a ``dragonfly/<from_line>/`` folder."""
     rows: list[PortBranch] = []
     ports = Path(delta_root) / "ports"
     for overlay in sorted(ports.glob("*/*/overlay.dops")):
         raw = overlay.read_bytes()
-        if from_line.encode() not in raw:
+        port = overlay.parent
+        if (from_line.encode() not in raw
+                and not (port / "dragonfly" / from_line).is_dir()):
             continue
-        origin = str(overlay.parent.relative_to(ports))
+        origin = str(port.relative_to(ports))
         if b"\r" in raw:  # read_text/write_text would rewrite every line
             rows.append(PortBranch(origin, "it has CR line endings"))
             continue
         text = raw.decode()
         result = branch_overlay(text, from_line, new_line)
-        if result is None:
-            continue
         if isinstance(result, str):
             rows.append(PortBranch(origin, result))
             continue
-        new_text, copies, n = result
+        new_text, copies, n = result if result is not None else (text, (), 0)
+        copies += _folder_copies(port, new_text, from_line, new_line)
+        if not n and not copies:
+            continue
         problem = next((
             f"{src} is missing" if not (overlay.parent / src).is_file()
             else f"{dst} exists with other content"
@@ -187,16 +243,16 @@ def plan_branch(delta_root: Path, from_line: str, new_line: str
                 and (overlay.parent / dst).read_bytes()
                 != (overlay.parent / src).read_bytes())
         ), None)
+        problem = problem or _installs_differ(
+            port, text, new_text, copies, from_line, new_line)
         if problem:
             rows.append(PortBranch(origin, problem))
             continue
-        rows.append(PortBranch(
-            origin,
-            f"{n} ops into target {new_line}"
-            + (f", {len(copies)} payload file{'s' if len(copies) > 1 else ''}"
-               if copies else ""),
-            new_text, copies,
-        ))
+        detail = [f"{n} ops into target {new_line}"] if n else []
+        if copies:
+            detail.append(
+                f"{len(copies)} payload file{'s' if len(copies) > 1 else ''}")
+        rows.append(PortBranch(origin, ", ".join(detail), new_text, copies))
     return rows
 
 
@@ -210,4 +266,6 @@ def apply_branch(delta_root: Path, rows: list[PortBranch]) -> None:
         for src, dst in row.copies:
             (port / dst).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(port / src, port / dst)
-        (port / "overlay.dops").write_text(row.text)
+        # A port with only a folder to copy keeps its overlay untouched.
+        if (port / "overlay.dops").read_text() != row.text:
+            (port / "overlay.dops").write_text(row.text)
