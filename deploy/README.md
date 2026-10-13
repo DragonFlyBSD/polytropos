@@ -194,6 +194,20 @@ not from the checkout, and deleting the checkout does not stop them.
 restart the services. The venv is reused and both distributions are
 reinstalled; rc.d scripts are replaced; your config is left alone.
 
+That upgrades the host, not the dev-envs on it. Each env carries its own
+polytropos checkout, which the agent's compose runs from, and its own
+DeltaPorts checkout, which job worktrees are cut from. Before restarting,
+for every env (`dports-dev-env list`):
+
+```sh
+dports-dev-env hooks-install <env>                              # the dsynth hooks
+dports-dev-env update --only polytropos --only DeltaPorts <env> # both checkouts
+```
+
+`update` fast-forwards from the host checkouts the env was created from,
+so pull those first. Without `--only` it also fetches freebsd-ports and
+moves the env's upstream tree, which an upgrade should not do on the side.
+
 The venv is built with `--system-site-packages` so the pkg-installed
 `py311-fastapi`, `py311-pydantic` and friends are visible. Without that
 pip builds them from source and wants a Rust toolchain the base system

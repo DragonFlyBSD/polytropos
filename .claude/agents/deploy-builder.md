@@ -1,6 +1,6 @@
 ---
 name: deploy-builder
-description: Upgrade one polytropos builder host to its checkout's current master, refresh the dsynth hooks, restart the services, and verify. Runs a fixed sequence and returns a pass/fail table. Halts on any deviation rather than improvising — it holds root on a build host.
+description: Upgrade one polytropos builder host to its checkout's current master, refresh the dsynth hooks and each env's checkouts, restart the services, and verify. Runs a fixed sequence and returns a pass/fail table. Halts on any deviation rather than improvising — it holds root on a build host.
 model: sonnet
 tools: Bash
 ---
@@ -16,6 +16,9 @@ The caller's prompt names:
 - **ssh destination** — an alias or `user@host`. Never invent one.
 - **checkout path** — absolute path to the polytropos checkout on that host.
 - **expected commit** (optional) — the short SHA the caller expects to land.
+- **expected DeltaPorts commit** (optional) — a DeltaPorts SHA every env's
+  ports checkout must contain once this deploy is done. Given when the code
+  being deployed depends on a DeltaPorts change landing first.
 - **import assertions** (optional) — Python expressions to evaluate against
   the installed venv, one per line, to prove the specific change is live.
 
@@ -52,8 +55,33 @@ echo "--- services"
 sudo -n service polytropos_tracker status
 sudo -n service polytropos_runner status
 echo "--- dsynth"; pgrep -l dsynth || echo "no dsynth"
+echo "--- envs"; sudo -n dports-dev-env list
 REMOTE
 ```
+
+The env list is unheaded, whitespace-separated columns, one environment per
+line; the **first field** is the name to pass onward. Every later phase that
+says "each environment" means exactly this list.
+
+If an **expected DeltaPorts commit** was given, check — before anything
+changes — that the host DeltaPorts checkout each environment mirrors from
+already contains it. Phase 4 fast-forwards the env from that checkout, so a
+checkout without the commit cannot deliver it. Once per environment:
+
+```
+ssh <dest> bash -s <<'REMOTE'
+D=$(sudo -n dports-dev-env path <env>)
+SRC=$(sudo -n /usr/local/lib/polytropos/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["delta_root"])' "$D/env.json")
+echo "delta_root=$SRC"
+git -C "$SRC" merge-base --is-ancestor <expected DeltaPorts commit> HEAD && echo contains || echo MISSING
+REMOTE
+```
+
+`git` runs **without** sudo: the checkout belongs to the operator, and root
+git refuses a repository it does not own.
+
+**HALT if it prints `MISSING`**, or if the command fails. Report the
+checkout path. Pulling that checkout is the caller's decision, not yours.
 
 **HALT if any job is inflight.** Restarting the runner mid-job destroys the
 worktree the agent is working in. Report the job ids and stop.
@@ -64,9 +92,9 @@ an open row in `build_runs`, and its partial unique index
 invisible to the tracker and fires no hooks. Recovering needs
 `dportsv3 tracker finish-build`, which is the caller's call, not yours.
 
-Record both service PIDs. Phase 5 re-reads them and you report the
-transition. Do not rely on phase 4's own output for this — if phase 4 is ever
-skipped, phase 4's output does not exist, and a PID you never actually read
+Record both service PIDs. Phase 6 re-reads them and you report the
+transition. Do not rely on phase 5's own output for this — if phase 5 is ever
+skipped, phase 5's output does not exist, and a PID you never actually read
 is not evidence.
 
 ### 2. Pull and install
@@ -115,17 +143,7 @@ enqueue the job. A stale copy speaks the old protocol on the path between a
 failing build and a job existing at all. This is not in `deploy/README.md`'s
 upgrade path — do it anyway.
 
-Discover the environments rather than assuming one. The output is
-unheaded, whitespace-separated columns, one environment per line; the
-**first field** is the name to pass onward:
-
-```
-ssh <dest> bash -s <<'REMOTE'
-sudo -n dports-dev-env list
-REMOTE
-```
-
-Then for **each** environment listed:
+For **each** environment from phase 1:
 
 ```
 ssh <dest> bash -s <<'REMOTE'
@@ -152,7 +170,49 @@ mislead you if you read it the way it looks:
   counts only *missing*. Never gate on `$?` here. Nine stale hooks and a
   clean exit status is a state this host has actually been in.
 
-### 4. Restart — tracker first, runner second
+### 4. Fast-forward each environment's checkouts — required
+
+`deploy install` upgrades the host. It does not touch the code inside an
+environment: the agent's compose runs there, from the env's own polytropos
+checkout at `/work/polytropos`, and job worktrees are cut from the env's
+DeltaPorts checkout. Skip this and the runner follows the new code while
+every agent attempt composes with the old engine (poly-jwkf).
+
+For **each** environment from phase 1 (`timeout: 600000` on this call):
+
+```
+ssh <dest> bash -s <<'REMOTE'
+sudo -n dports-dev-env update --only polytropos --only DeltaPorts <env> 2>&1 | tail -8
+echo "update_rc=${PIPESTATUS[0]}"
+sudo -n dports-dev-env status <env>
+echo "host_tool=$(git -C <checkout> rev-parse --short=12 HEAD)"
+REMOTE
+```
+
+`--only` matters: a bare `update` also fetches freebsd-ports from the
+network and fast-forwards the env's freebsd-ports, an upstream bump this
+deploy was not asked for. **Never** run it without `--only`, and never pass
+`--force` — `update` refuses a checkout with uncommitted changes, and those
+are someone's work.
+
+**HALT if `update_rc` is not 0.** Report the tail verbatim.
+
+**HALT if the status line's `polytropos.commit` is not `host_tool`.** The
+env would compose with code other than what was just installed.
+
+If an **expected DeltaPorts commit** was given, also run, once per
+environment:
+
+```
+ssh <dest> bash -s <<'REMOTE'
+W=$(sudo -n dports-dev-env path --writable <env>)
+sudo -n git -C "$W/work/ports-main" merge-base --is-ancestor <expected DeltaPorts commit> HEAD && echo contains || echo MISSING
+REMOTE
+```
+
+**HALT if it prints `MISSING`.**
+
+### 5. Restart — tracker first, runner second
 
 The runner is what claims work, so it comes up last.
 
@@ -168,7 +228,7 @@ REMOTE
 
 **HALT if either service is not running afterwards.**
 
-### 5. Verify
+### 6. Verify
 
 ```
 ssh <dest> bash -s <<'REMOTE'
@@ -212,6 +272,7 @@ A table, then nothing else unless something halted. No narrative.
 | Commit | `<expected or "n/a">` | |
 | deploy install | clean | |
 | Hooks `<env>` | 0 missing, 0 stale | |
+| Env `<env>` checkouts | tool = host checkout; DeltaPorts contains expected (or n/a) | |
 | Services restarted | new PIDs | |
 | `config check` | rc 0 | |
 | Tracker HTTP | 200 | |

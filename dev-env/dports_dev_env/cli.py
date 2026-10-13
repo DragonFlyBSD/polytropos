@@ -109,6 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
     update_ = subparsers.add_parser("update", help="Refresh repo mirrors and fast-forward the env's git checkouts")
     update_.add_argument("--force", action="store_true",
                          help="Pull even when the env's checkouts have uncommitted changes")
+    update_.add_argument("--only", action="append", metavar="REPO",
+                         choices=["DeltaPorts", "polytropos", "freebsd-ports"],
+                         help="Refresh and fast-forward only this repo "
+                              "(repeatable); default: all of them")
     update_.add_argument("name", help="Environment name")
 
     path_ = subparsers.add_parser("path", help="Print one environment's host-side path")
@@ -274,7 +278,8 @@ def cmd_update(args: argparse.Namespace) -> int:
     validate_cache_root(config.cache_root)
     store = EnvironmentStore(config)
     from .update import update_env
-    update_env(config, store, args.name, force=args.force)
+    update_env(config, store, args.name, force=args.force,
+               only=getattr(args, "only", None))
     return 0
 
 

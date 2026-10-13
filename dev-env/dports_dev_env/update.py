@@ -11,11 +11,18 @@ The bind-mount of ``repos_dir`` into the chroot (added in runtime.py)
 lets ``git pull`` work from inside the env shell too — but the
 operator-facing ``dportsv3 dev-env update`` command does the work from
 the host, so it doesn't depend on the chroot being mounted.
+
+``only`` narrows both phases to some of the repos (poly-jwkf). A deploy
+needs the env's tool checkout and its ports checkout to follow the host,
+and nothing else: refreshing everything also fetches freebsd-ports and
+DPorts from the network and fast-forwards the env's freebsd-ports, which
+is an upstream bump nobody asked the deploy for.
 """
 
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 from .builder import default_delta_root, default_tool_root
@@ -73,32 +80,61 @@ def update_env(
     name: str,
     *,
     force: bool = False,
+    only: Iterable[str] | None = None,
 ) -> None:
-    """Refresh mirrors + fast-forward the env's git checkouts."""
+    """Refresh mirrors + fast-forward the env's git checkouts.
+
+    ``only`` names the repos (ENV_REPOS labels) to refresh and fast-forward;
+    None is every one of them, plus the DPorts mirror.
+    """
+    labels = [label for label, _ in ENV_REPOS]
+    selected = set(labels if only is None else only)
+    unknown = sorted(selected - set(labels))
+    if unknown or not selected:
+        raise UsageError(
+            f"unknown repo {', '.join(unknown) or '(none)'}; choose from "
+            f"{', '.join(labels)}")
     state: EnvironmentState = store.load(name)
-    delta_root = (
-        Path(state.source.delta_root) if state.source.delta_root else default_delta_root()
-    )
-    if not delta_root.is_dir():
-        raise UsageError(f"delta_root not found: {delta_root}")
+    delta_root = tool_root = None
+    if "DeltaPorts" in selected:
+        delta_root = (
+            Path(state.source.delta_root) if state.source.delta_root else default_delta_root()
+        )
+        if not delta_root.is_dir():
+            raise UsageError(f"delta_root not found: {delta_root}")
     # An env records both host checkouts it was built from, and both are
     # mirrored from a local working tree, so both have to be re-read here or
     # the fast-forward below pulls from a stale mirror.
-    tool_root = (
-        Path(state.source.tool_root) if state.source.tool_root else default_tool_root()
-    )
-    if not tool_root.is_dir():
-        raise UsageError(f"tool_root not found: {tool_root}")
+    if "polytropos" in selected:
+        tool_root = (
+            Path(state.source.tool_root) if state.source.tool_root else default_tool_root()
+        )
+        if not tool_root.is_dir():
+            raise UsageError(f"tool_root not found: {tool_root}")
 
     # 1. Refresh mirrors from the host's working trees.
-    info(f"[1/2] Refreshing repo mirrors from {delta_root} and {tool_root}")
-    with step_timer("refresh mirrors"):
-        RepoCache(config).refresh_all(delta_root, tool_root)
+    repos = RepoCache(config)
+    if only is None:
+        info(f"[1/2] Refreshing repo mirrors from {delta_root} and {tool_root}")
+        with step_timer("refresh mirrors"):
+            repos.refresh_all(delta_root, tool_root)
+    else:
+        info(f"[1/2] Refreshing repo mirrors: {', '.join(sorted(selected))}")
+        with step_timer("refresh mirrors"):
+            if "DeltaPorts" in selected:
+                repos.refresh_local_mirror("deltaports", delta_root)
+            if "polytropos" in selected:
+                repos.refresh_local_mirror("polytropos", tool_root)
+            if "freebsd-ports" in selected:
+                repos.refresh_remote_mirror(
+                    "freebsd-ports", config.freebsd_ports_url)
 
     # 2. Fast-forward each repo checkout in the env.
     writable = store.writable_dir(name)
     info("[2/2] Fast-forwarding env repos")
     for label, rel in ENV_REPOS:
+        if label not in selected:
+            continue
         repo_path = writable / rel
         if not (repo_path / ".git").exists():
             info(f"  {label}: skipped (no .git at {repo_path})")
