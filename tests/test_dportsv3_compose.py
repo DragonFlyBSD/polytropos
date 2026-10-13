@@ -804,7 +804,7 @@ def test_compose_non_dry_run_handles_types_and_dops_suppresses_compat_fallback(
         'target @main\nport devel/a\ntype port\nmk set VAR "new"\n'
     )
     (delta / "ports" / "devel" / "a" / "diffs" / "@main").mkdir(parents=True)
-    (delta / "ports" / "devel" / "a" / "diffs" / "@main" / "add.patch").write_text(
+    (delta / "ports" / "devel" / "a" / "diffs" / "@main" / "add.diff").write_text(
         "--- Makefile\n+++ Makefile\n@@ -1 +1,2 @@\n VAR= new\n+PATCHED= yes\n"
     )
     (delta / "ports" / "devel" / "a" / "dragonfly" / "@main").mkdir(parents=True)
@@ -861,8 +861,14 @@ def test_compose_non_dry_run_handles_types_and_dops_suppresses_compat_fallback(
     assert payload["ok"] is True
     assert payload["summary"]["fallback_patch_count"] == 0
 
+    # The diffs/*.diff fallback is suppressed: the Makefile is unpatched.
     assert (output / "devel" / "a" / "Makefile").read_text() == "VAR= new\n"
     assert not (output / "devel" / "a" / "pkg-descr").exists()
+    # dragonfly/ is not: in dops mode the folder is the install, and
+    # dragonfly/@main/ lands flat on @main (poly-u9n4).
+    assert (
+        output / "devel" / "a" / "dragonfly" / "pkg-descr"
+    ).read_text() == "payload\n"
     assert (output / "devel" / "dp" / "Makefile").read_text() == "DPORT= yes\n"
     assert (output / "devel" / "lk" / "Makefile").read_text() == "LOCK= yes\n"
     assert not (output / "devel" / "m").exists()
@@ -871,6 +877,7 @@ def test_compose_non_dry_run_handles_types_and_dops_suppresses_compat_fallback(
     assert a_port["mode"] == "dops"
     assert a_port["mode_reason"] == "overlay.dops-present"
     assert "compat-artifacts-suppressed-by-dops" in a_port["notes"]
+    assert a_port["implicit_files_copied"] == 1
 
 
 def test_compose_compat_mode_runs_when_dops_missing(tmp_path, capsys) -> None:

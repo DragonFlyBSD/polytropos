@@ -548,10 +548,11 @@ def _record_preflight_mode_notes(
     # skipped port does not report the dataclass defaults as fact. Writing
     # them again here would be two writes of one fact in a function whose
     # name says "notes".
+    # dragonfly/ is not a compatibility artifact in dops mode: the engine
+    # installs it by folder (poly-u9n4).
     if ctx.mode == "dops" and (
         ctx.compat_makefile is not None
         or bool(ctx.fallback_patches)
-        or bool(ctx.implicit_payload_files)
     ):
         stage.add_warning(
             "I_COMPOSE_MODE_DOPS_SUPPRESSES_COMPAT",
@@ -945,6 +946,9 @@ def semantic_stage(
         report.oracle_failures += apply_result.oracle_failures
         report.oracle_skipped += apply_result.oracle_skipped
         report.dops_ops_executed += apply_result.total_ops
+        # Files the dragonfly/ folder installed with no op (poly-u9n4):
+        # the same count the compat path keeps for its payload copy.
+        report.implicit_files_copied += len(apply_result.installed)
         # Persist per-op detail for any failed ops so compose-report
         # and operators can see WHICH op failed and WHY without
         # re-running `dsl apply` by hand. Successful ops omitted to

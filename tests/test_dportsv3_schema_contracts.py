@@ -26,6 +26,7 @@ def test_apply_result_schema_contract() -> None:
         "report",
         "diagnostics",
         "op_results",
+        "installed",
         "diffs",
     }
     assert payload["report"]["report_version"] == "v1"

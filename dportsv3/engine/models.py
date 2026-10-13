@@ -95,6 +95,23 @@ class PlanOp:
         return data
 
 
+@dataclass(frozen=True)
+class FolderInstall:
+    """A payload file the ``dragonfly/`` folder installs with no op (poly-u9n4).
+
+    ``src`` is relative to the overlay dir and ``dst`` to the port root.
+    ``target`` is the scope it is bound to, named as ``PlanOp.target`` is:
+    ``@any`` for the flat folder, the build line for ``dragonfly/@<line>/``.
+    """
+
+    src: str
+    dst: str
+    target: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"src": self.src, "dst": self.dst, "target": self.target}
+
+
 @dataclass
 class Plan:
     """Normalized in-memory plan model."""
@@ -197,6 +214,8 @@ class ApplyResult:
     oracle_checks: int = 0
     oracle_failures: int = 0
     oracle_skipped: int = 0
+    #: Payload files the dragonfly/ folder staged, in staging order.
+    installed: list[FolderInstall] = field(default_factory=list)
 
     @property
     def report_version(self) -> str:
@@ -255,6 +274,7 @@ class ApplyResult:
             "oracle_checks": self.oracle_checks,
             "oracle_failures": self.oracle_failures,
             "oracle_skipped": self.oracle_skipped,
+            "installed_files": len(self.installed),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -279,6 +299,7 @@ class ApplyResult:
                 "oracle_checks": self.oracle_checks,
                 "oracle_failures": self.oracle_failures,
                 "oracle_skipped": self.oracle_skipped,
+                "installed_files": len(self.installed),
             },
             "report": self.report,
             "diagnostics": [
@@ -293,6 +314,7 @@ class ApplyResult:
                 for d in self.diagnostics
             ],
             "op_results": [row.to_dict() for row in self.op_results],
+            "installed": [entry.to_dict() for entry in self.installed],
             "diffs": [entry.to_dict() for entry in self.diffs],
         }
 

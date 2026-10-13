@@ -49,6 +49,7 @@ from dportsv3.engine.models import (
     ApplyOpResult,
     ApplyResult,
     Diagnostic,
+    FolderInstall,
     Plan,
     PlanOp,
     order_ops_for_target,
@@ -58,6 +59,7 @@ from dportsv3.engine.oracle import (
     normalize_oracle_profile,
     run_bmake_oracle,
 )
+from dportsv3.engine.payload import folder_installs, with_folder_installs
 from dportsv3.policy import PATCH_TIMEOUT_SECONDS
 
 Executor = Callable[[PlanOp, ApplyContext, FileTransaction], ApplyOpResult]
@@ -78,10 +80,10 @@ def _exec_patch_apply(
     # as file.materialize. Before this fix the executor resolved
     # against port_root, which meant any dops with `patch apply
     # dragonfly/X` failed with E_APPLY_MISSING_SUBJECT under
-    # dops-mode compose (the I_COMPOSE_MODE_DOPS_SUPPRESSES_COMPAT
-    # warning means compose doesn't copy the patches into port_root
-    # anymore). source_root falls back to port_root when not set —
-    # preserves legacy callers + the existing test fixtures.
+    # dops-mode compose (a file an op reads is never copied into
+    # port_root: the folder rule skips it, engine.payload). source_root
+    # falls back to port_root when not set — preserves legacy callers +
+    # the existing test fixtures.
     try:
         patch_path = _resolve_path(context.source_root, rel)
     except ValueError as exc:
@@ -273,11 +275,43 @@ def apply_plan(
 
     registry = _known_registry()
     txn = FileTransaction(dry_run=dry_run)
+    installed: list[FolderInstall] = []
 
     try:
         ordered_ops = order_ops_for_target(plan.ops, target)
+        # THE dragonfly/ FOLDER IS THE INSTALL (poly-u9n4): each folder is
+        # staged at the head of its scope (engine.payload). Only from an
+        # overlay dir of its own: a run applying in place, like
+        # absorb_makefile's scratch apply, has no payload to read. A mask
+        # applies nothing.
+        installs = (
+            folder_installs(context.source_root, plan.ops, target)
+            if plan.type != "mask"
+            and context.source_root.resolve() != port_root.resolve()
+            else []
+        )
 
-        for op in ordered_ops:
+        for op in with_folder_installs(ordered_ops, installs):
+            if isinstance(op, FolderInstall):
+                # The same staging as file materialize, so the bytes and
+                # the mode of what reaches the port do not depend on
+                # whether an op or the folder installed it.
+                try:
+                    data = _resolve_path(context.source_root, op.src).read_bytes()
+                    txn.stage_write_bytes(_resolve_path(port_root, op.dst), data)
+                except ValueError as exc:
+                    diagnostics.append(
+                        _diag(
+                            severity="error",
+                            code="E_APPLY_INVALID_PATH",
+                            message=f"payload {op.src}: {exc}",
+                            source_path=context.source_root,
+                        )
+                    )
+                    continue
+                installed.append(op)
+                continue
+
             if not is_scoped_target(op.target):
                 row = ApplyOpResult(
                     id=op.id,
@@ -307,6 +341,7 @@ def apply_plan(
                         oracle_checks=oracle_checks,
                         oracle_failures=oracle_failures,
                         oracle_skipped=oracle_skipped,
+                        installed=installed,
                     )
                 continue
 
@@ -359,6 +394,7 @@ def apply_plan(
                         oracle_checks=oracle_checks,
                         oracle_failures=oracle_failures,
                         oracle_skipped=oracle_skipped,
+                        installed=installed,
                     )
                 continue
 
@@ -394,6 +430,7 @@ def apply_plan(
                     oracle_checks=oracle_checks,
                     oracle_failures=oracle_failures,
                     oracle_skipped=oracle_skipped,
+                    installed=installed,
                 )
 
         if emit_diff:
@@ -531,6 +568,7 @@ def apply_plan(
                     oracle_checks=oracle_checks,
                     oracle_failures=oracle_failures,
                     oracle_skipped=oracle_skipped,
+                    installed=installed,
                 )
 
         txn.commit()
@@ -554,6 +592,7 @@ def apply_plan(
             oracle_checks=oracle_checks,
             oracle_failures=oracle_failures,
             oracle_skipped=oracle_skipped,
+            installed=installed,
         )
 
     # Only error-severity diagnostics fail the apply. Warnings (e.g. a
@@ -572,4 +611,5 @@ def apply_plan(
         oracle_checks=oracle_checks,
         oracle_failures=oracle_failures,
         oracle_skipped=oracle_skipped,
+        installed=installed,
     )

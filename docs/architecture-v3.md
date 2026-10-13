@@ -200,7 +200,9 @@ are not part of the steady-state design.
 
 1. `patch.apply` (explicit form)
 
-Additionally, implicit payload in `dragonfly/@target/...` remains supported.
+Additionally, the `dragonfly/` folder is installed with no op: `dragonfly/*`
+on every target, `dragonfly/@T/*` on `T` as `dragonfly/*`, except a file an
+op reads (see `dsl-v0.md`, "Payload folder").
 
 ---
 
@@ -308,10 +310,13 @@ For target `T`:
 1. Seed output tree from FreeBSD `T`.
 2. Apply `special/` infrastructure patches/replacements using unscoped `main` payloads for `@main` and target-owned `@<target>` payloads for non-`main` targets.
 3. Validate overlays and op plans.
-4. Apply semantic ops.
+4. Apply semantic ops, with the `dragonfly/` folder installed at the head of
+   its scope: the flat files before the `@any` ops, `dragonfly/@T/` after
+   them and before `T`'s. (This plan first had the folder copied after the
+   ops; installing it first is what lets an op edit or remove an installed
+   file, and lets `T`'s own copy win over an `@any` op's -- poly-u9n4.)
 5. Apply fallback patch payloads.
-6. Copy implicit `dragonfly/@T` payload files.
-7. Finalize output (prune/makefiles/updating).
+6. Finalize output (prune/makefiles/updating).
 
 ---
 

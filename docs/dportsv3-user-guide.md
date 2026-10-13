@@ -564,10 +564,17 @@ Notes:
     (not build-time patch asset registration).
 - `file materialize` v1 accepts explicit file paths only (no wildcard/glob
   source expansion).
+- The overlay's `dragonfly/` folder is installed with no op whenever
+  `--port-root` is not the overlay's own directory: `dragonfly/*` on every
+  target, `dragonfly/@<target>/*` on that target only as `dragonfly/*`,
+  except a file an op reads. Flat files go in before the `@any` ops and the
+  target's folder after them, so an op can still edit or remove what the
+  folder installed (`docs/dsl-v0.md`, "Payload folder"). `--json` lists them
+  under `installed`.
 
-For ports that carry DragonFly-specific build-time patch assets, prefer
-materializing into `dragonfly/` rather than `files/` so the framework can keep
-its layered patch lane behavior (`files/` first, then `dragonfly/`).
+For ports that carry DragonFly-specific build-time patch assets, put them in
+`dragonfly/` rather than `files/` so the framework can keep its layered patch
+lane behavior (`files/` first, then `dragonfly/`).
 
 ## Migration Commands
 

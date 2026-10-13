@@ -88,11 +88,13 @@ def test_the_warning_says_why_it_matters_and_what_to_do(port):
     assert "parity with the legacy generator" in msg
     # The route out.
     assert "overlay.dops" in msg
-    assert "file materialize" in msg
+    # where the folder is the install, per build line (poly-u9n4)
+    assert "installed as dragonfly/X on that build line only" in msg
 
 
 def test_a_dops_port_does_not_warn(port):
-    """dops mode suppresses the compat copy entirely, so there is no hazard."""
+    """dops mode installs dragonfly/@<line>/ on that line (poly-u9n4), so
+    there is no hazard."""
     (port / "dragonfly" / "@main").mkdir(parents=True)
     (port / "dragonfly" / "@main" / "patch-x").write_text("diff\n")
     assert compat_scoped_payload_warnings(_ctx(port, "dops")) == []

@@ -272,7 +272,13 @@ def discover_overlay_contexts(
 
 
 def validate_target_scoped_payloads(port_ctx: ComposePortContext) -> list[str]:
-    """Validate target-scoped payload lane directories."""
+    """Validate target-scoped payload lane directories.
+
+    In a dops port ``dragonfly/@any/`` is an error too: the folder is the
+    install there (engine.payload), and the flat ``dragonfly/`` is the one
+    way to say every build line. Files under ``@any/`` would be installed
+    nowhere, silently. A compat port keeps its script-parity copy.
+    """
     errors: list[str] = []
     for lane in ["diffs", "dragonfly"]:
         lane_dir = port_ctx.path / lane
@@ -282,6 +288,15 @@ def validate_target_scoped_payloads(port_ctx: ComposePortContext) -> list[str]:
         for entry in sorted(lane_dir.iterdir()):
             if entry.name.startswith("@") and not is_scoped_target(entry.name):
                 errors.append(f"invalid target directory in {lane}: {entry.name}")
+            elif (
+                lane == "dragonfly"
+                and entry.name == "@any"
+                and port_ctx.mode == "dops"
+            ):
+                errors.append(
+                    "dragonfly/@any is not a build line: files for every "
+                    "build line go in dragonfly/ itself"
+                )
     return errors
 
 def compat_scoped_payload_warnings(
@@ -356,8 +371,8 @@ def compat_scoped_payload_warnings(
                     f"is copied into this tree regardless"
                 )
             remedy = (
-                f"a `file materialize {lane}/@<target>/X -> {lane}/X` op "
-                f"names the flattening explicitly"
+                f"{lane}/@<target>/X is installed as {lane}/X on that "
+                f"build line only"
             )
         else:
             effect = (

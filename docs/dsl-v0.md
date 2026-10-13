@@ -134,6 +134,30 @@ on_missing        = "on-missing" ("error" | "warn" | "noop") ;
   2) all `T` operations in source order
   3) all other target-scoped operations, marked skipped with target-mismatch
 
+### Payload folder (normative)
+
+For a port with `overlay.dops` (types `port`, `dport` and `lock`), the files
+under the overlay's `dragonfly/` directory are installed with no operation:
+
+- `dragonfly/<path>` is installed on every build line, as `dragonfly/<path>`
+- `dragonfly/@<line>/<path>` is installed on build line `<line>` only, as
+  `dragonfly/<path>`
+- a file an operation reads -- a `file materialize` `<src>` or a `patch apply`
+  `<path>` -- on any build line is not installed by the folder: the
+  operation installs it, where it says
+- `dragonfly/@any/` is invalid: the flat folder is the one way to say every
+  build line
+- an apply run without an overlay directory of its own installs nothing
+
+Each folder is installed at the head of its scope. For an apply run
+targeting `T`, the flat files come before every `@any` operation, and
+`dragonfly/@T/` after them and before every `T` operation. So on `T`,
+`dragonfly/@T/<path>` replaces a flat file, or a file an `@any` operation
+installed, at the same destination; and any operation can edit or remove
+an installed file -- `file remove dragonfly/<path>` under `target T` drops a
+shared patch on `T` only. Installed files are not operations: they take
+no part in the dead-operation rule below.
+
 ### Dead operations (normative)
 
 - An operation is dead when, on every build line it applies to, a later
@@ -303,8 +327,10 @@ Path resolution semantics:
 - `file copy`: `<src>` and `<dst>` are resolved relative to the port root
 - `file materialize`: `<src>` is resolved relative to the `overlay.dops`
   directory (source root), `<dst>` is resolved relative to the port root
-- `file remove`, `text ... file <path>`, and `patch apply <path>` resolve paths
-  relative to the port root
+- `patch apply <path>` reads the patch file from the source root and applies
+  it to the port root
+- `file remove` and `text ... file <path>` resolve paths relative to the port
+  root
 - absolute paths and paths escaping the active root are invalid
 - `file materialize` does not support wildcard source patterns in v1
 
@@ -443,6 +469,10 @@ file materialize dragonfly/patch-a -> dragonfly/patch-a
 target @main
 file materialize dragonfly/@main/patch-a -> dragonfly/patch-a
 ```
+
+The payload folder says the same with no operation: `dragonfly/patch-a` is
+installed on every build line, and `dragonfly/@main/patch-a` replaces it on
+`@main`.
 
 ### Invalid (missing `port`)
 
