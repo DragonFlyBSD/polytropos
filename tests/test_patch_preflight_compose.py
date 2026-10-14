@@ -114,16 +114,20 @@ def test_reset_port_no_longer_claims_it_composes_from_a_reset_tree() -> None:
     assert "from the now-reset substrate" not in doc, (
         "the claim that caused this must not come back"
     )
-    assert "does NOT compose from a reset substrate" in doc
+    # It composes the main checkout now (poly-at76), and says why the
+    # obvious `reapply` is wrong there.
+    assert "Compose each origin from ``PORTS_MAIN_DIR``" in doc
+    assert "Not via ``reapply``" in doc
     assert "poly-15l" in doc
 
 
-def test_the_post_reset_log_says_whether_the_reapply_worked() -> None:
+def test_the_post_reset_log_says_whether_the_compose_worked() -> None:
     """It logged plain success while leaving a tree contradicting the
-    repo. reapply_ok was already in the return value; it just never
-    reached anyone."""
+    repo. The verdict was already in the return value; it just never
+    reached anyone. (Named baseline_compose_ok since poly-at76: nothing
+    runs reapply there any more.)"""
     src = _patch_preflight_source()
-    assert "reapply_ok=" in src
+    assert "baseline_compose_ok=" in src
 
 
 # --- poly-451: the overlay has to be in THIS job's tree ----------------

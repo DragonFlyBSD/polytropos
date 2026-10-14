@@ -2478,9 +2478,9 @@ def assert_port_clean(
 
 
 def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
-    """Wipe the per-origin WRKDIR and re-materialize the compose tree, so the
-    next job starts from a pristine WRKDIR and a baseline-derived composed
-    tree.
+    """Wipe the per-origin WRKDIR and recompose the origin from the main
+    checkout, so the env is left with a pristine WRKDIR and a composed tree
+    that matches the repository.
 
     Both of those live outside the job's worktree — ``/work/obj`` and
     ``/work/artifacts/compose`` — and are shared across jobs, so destroying
@@ -2501,33 +2501,33 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
        (or any .DragonFly fragments) still reflects the patched
        state ``make clean`` was authored against.
 
-    2. ``reapply <origin>`` — regenerate
-       ``/work/artifacts/compose/<target>/<origin>/``.
+    2. Compose each origin from ``PORTS_MAIN_DIR``, regenerating
+       ``/work/artifacts/compose/<target>/<origin>/`` from the repository
+       the job branched from.
 
-       READ THIS BEFORE RELYING ON IT. This does NOT compose from a
-       reset substrate, despite what it used to claim. Stage 1's source
-       reset was removed when B1 gave each job its own worktree, and
-       that worktree is destroyed later, in ``runner.py``, after this
-       runs. So the substrate here still holds the agent's edits and
-       this composes them.
+       Not via ``reapply``, which is what this did until poly-at76. That
+       helper composes ``--delta-root PORTS_DIR``, and for the life of the
+       job that is the symlink to its worktree, destroyed in ``runner.py``
+       only after this returns. So it composed the agent's last state,
+       reported success, and left the shared tree contradicting the repo.
+       Measured on devel/glib20, a build reporting "packages built: 3,
+       failed: 0" against a tree missing two of five patches (poly-15l);
+       and on multimedia/libx264, an operator ``dbuild`` going green on a
+       dead job's re-cut patch that DeltaPorts never had. Composing the
+       main checkout does not depend on when the worktree goes — the same
+       fix verify's cleanup took (poly-mdf7).
 
-       It succeeds — it composed *something* — so ``reapply_ok`` is
-       True and nothing warns, while the shared compose tree is left
-       contradicting the repository. Measured on devel/glib20: a later
-       build reported "packages built: 3, failed: 0" against a tree
-       missing two of the port's five patches (poly-15l).
+       The next job does not rely on this: each attempt composes its
+       origin before it works (the compose-at-start in ``steps.py``), and
+       a job that is killed never gets here. What this stage buys is an
+       env that matches the repository between jobs, which is what an
+       operator build there reads.
 
-       Correctness therefore does not rest on this. Each consumer
-       composes the origin for itself before it works — see the
-       compose-at-start in ``steps.py``. This stage remains only so an
-       operator poking at the env between jobs finds something
-       plausible rather than a half-written tree.
-
-       Best-effort: a reapply failure here means baseline HEAD
-       itself doesn't compose cleanly — which was already the
-       state when we started, so it isn't a regression caused by
-       reset. Surfaces as ``reapply_ok``/``reapply_error`` for
-       diagnosis but does not flip ``ok``.
+       Best-effort, and every origin is attempted: a failure means that
+       origin does not compose at baseline, which was already true when
+       the job started, so it is not a regression caused by reset.
+       Surfaces as ``baseline_compose_ok``/``baseline_compose_error``
+       for diagnosis but does not flip ``ok``.
 
     Cache hygiene: ``_clean_port_workdir`` drops ``_WRKSRC_CACHE``
     and ``_MATERIALIZE_STATE`` entries for ``(env, origin)`` so any
@@ -2535,9 +2535,8 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     re-derives.
 
     Both stages are best-effort: their failures surface as
-    ``workdir_clean_*`` / ``reapply_*`` keys in the result but do not flip
-    ``ok``. Nothing here is load-bearing any more — the stage that was is
-    gone, and correctness now rests on the worktree being thrown away.
+    ``workdir_clean_*`` / ``baseline_compose_*`` keys in the result but do
+    not flip ``ok``.
     """
     # 1. Best-effort WRKDIR cleanup — runs against the still-patched
     # substrate (the in-tree Makefile/.DragonFly is what ``make clean``
@@ -2545,7 +2544,7 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     #
     # poly-lt5q: ``also`` extends both stages to the port's patch
     # origin, so a master edited on the slave's behalf gets its WRKDIR
-    # cleaned and its compose tree re-materialized too.
+    # cleaned and its compose tree re-composed too.
     origins = origin_set(origin, also)
     workdir = _clean_port_workdir(env, origin)
     for extra in origins[1:]:
@@ -2563,21 +2562,25 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     # composed tree under /work/artifacts/compose, both of which live outside
     # the worktree and are shared across jobs.
 
-    # 2. Re-materialize the compose tree from the baseline substrate.
-    # Best-effort: a failure here reflects baseline state we didn't
-    # cause and shouldn't mask as a reset failure.
-    rp = _exec(env, "reapply", origin)
-    reapply_ok = (rp.returncode == 0)
-    for extra in origins[1:]:
-        extra_rp = _exec(env, "reapply", extra)
-        if extra_rp.returncode != 0 and reapply_ok:
-            rp, reapply_ok = extra_rp, False
+    # 2. Compose each origin from the main checkout, not through
+    # `reapply`: that reads PORTS_DIR, still this job's worktree
+    # (poly-at76). Every origin is attempted, and the first failure is
+    # the one reported.
+    failed = None
+    for current in origins:
+        rp = _exec(env, "/bin/sh", "-c", _baseline_compose_cmd(current),
+                   cwd="/work")
+        # Compose rewrites the Makefile the relation is read from, and the
+        # agent may have moved it.
+        forget_port_relation(env, current)
+        if rp.returncode != 0 and failed is None:
+            failed = rp
 
     result = {
         "ok": True,
         "origin": origin,
         "workdir_clean_ok": bool(workdir.get("ok")),
-        "reapply_ok": reapply_ok,
+        "baseline_compose_ok": failed is None,
     }
     if not workdir.get("ok"):
         # Surface diagnosis without flipping the overall result.
@@ -2587,11 +2590,31 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
         result["workdir_clean_error"] = (
             workdir.get("stderr_tail") or workdir.get("error", "")
         )[:300]
-    if not reapply_ok:
-        result["reapply_error"] = (
-            (rp.stderr or "") or (rp.stdout or "")
+    if failed is not None:
+        result["baseline_compose_error"] = (
+            (failed.stderr or "") or (failed.stdout or "")
         )[-300:]
     return result
+
+
+def _baseline_compose_cmd(origin: str) -> str:
+    """The shell command composing ``origin`` from ``PORTS_MAIN_DIR``.
+
+    The ``reapply`` helper's compose with the delta root swapped, spelled
+    the way verify's cleanup spells it (dev-env ``apply_and_build``,
+    poly-mdf7). The other roots and the target come from the env the exec
+    runs in, as they do for ``reapply``.
+    """
+    return (
+        f"{TOOL_BIN} compose"
+        f' --target "$DPORTS_TARGET"'
+        f" --origin {shlex.quote(origin)}"
+        f" --delta-root {PORTS_MAIN_DIR}"
+        f" --freebsd-root {FREEBSD_DIR}"
+        f' --lock-root "${{DPORTS_LOCK_ROOT:-{LOCK_DIR}}}"'
+        f' --output "$DPORTS_COMPOSE_ROOT"'
+        f' --oracle-profile "${{DPORTS_ORACLE_PROFILE:-off}}"'
+    )
 
 
 def is_slave_port(env: str, origin: str) -> bool:
@@ -3000,6 +3023,9 @@ def _branch_name_for(bundle_id: str) -> str:
 # against dev-env's constants so the two cannot drift apart silently.
 PORTS_DIR = "/work/DeltaPorts"
 PORTS_MAIN_DIR = "/work/ports-main"
+FREEBSD_DIR = "/work/freebsd-ports"
+LOCK_DIR = "/work/DPorts"
+TOOL_BIN = "/work/polytropos/bin/dportsv3"
 
 
 def _job_worktree_name(bundle_id: str, kind: str) -> str:

@@ -90,6 +90,10 @@ def test_worker_layout_agrees_with_dev_env():
 
     assert worker.PORTS_DIR == layout.PORTS_DIR
     assert worker.PORTS_MAIN_DIR == layout.PORTS_MAIN_DIR
+    # reset_port's baseline compose (poly-at76).
+    assert worker.FREEBSD_DIR == layout.FREEBSD_DIR
+    assert worker.LOCK_DIR == layout.LOCK_DIR
+    assert worker.TOOL_BIN == layout.TOOL_BIN
 
 
 def test_worktree_name_is_a_relative_sibling(monkeypatch):

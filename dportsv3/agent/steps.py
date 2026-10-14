@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from dportsv3 import settings
 from dportsv3.common import artifacts as _artifacts
@@ -1259,6 +1259,67 @@ def _rescue_work_on_raise(
         pass
 
 
+def _reset_after_patch(
+    services: Any,
+    ctx: StepCtx,
+    *,
+    env: str,
+    origin: str,
+    started_with: Sequence[str] = (),
+) -> None:
+    """Leave the env's shared state matching the repository, however the
+    agent ended.
+
+    ``changes.diff`` is the canonical record; the WRKDIR and the composed
+    tree no longer need to carry the agent's edits, and an operator build
+    in the env reads that composed tree (poly-at76). Runs on the
+    harness-raised path too: returning before this left the tree as the
+    agent's last ``materialize_dports`` wrote it, and the WRKDIR for the
+    next job's first attempt, which does not clean it.
+
+    The origins are the ones the job started with plus the ones the
+    relation names now: the agent can move ``MASTERDIR`` or ``PATCHDIR``,
+    and the master it edited before doing so is still dirty.
+
+    Best-effort: a reset failure is an activity row, not a change to the
+    job's outcome. Never raises — on the raise path it runs inside the
+    ``except``, and must not replace the failure the operator needs.
+    """
+    from dportsv3.agent import worker as _worker  # noqa: PLC0415
+
+    queue_root = ctx.queue_root
+    try:
+        now = _worker.invariant_origins(env, origin)
+    except Exception:  # noqa: BLE001 -- still reset what the job started with
+        now = []
+    also = _worker.origin_set(origin, [*started_with, *now])[1:]
+    try:
+        reset = (_worker.reset_port(env, origin, also=also)
+                 if also else _worker.reset_port(env, origin))
+    except Exception as exc:
+        reset = {"ok": False, "error": str(exc)[:200]}
+    try:
+        if not reset.get("ok"):
+            services.activity_log(
+                queue_root, "patch_post_reset_failed",
+                f"reset_port failed for {origin} after patch "
+                f"({reset.get('error', 'unknown')[:200]}); env "
+                f"may have leftover edits — next patch will "
+                f"refuse via preflight",
+                job_id=ctx.job_id,
+            )
+        else:
+            services.activity_log(
+                queue_root, "patch_post_reset",
+                f"reset {', '.join(f'ports/{o}/' for o in [origin, *also])} "
+                f"to baseline after patch "
+                f"(baseline_compose_ok={reset.get('baseline_compose_ok')})",
+                job_id=ctx.job_id,
+            )
+    except Exception:
+        pass
+
+
 #: Where a transient provider failure is counted. The job file is what
 #: the runner claims from and what moves between pending/ and inflight/,
 #: so the tally travels with the work — no schema, no second source of
@@ -2069,18 +2130,18 @@ class PatchAttemptStep:
         #
         # The compose tree lives outside the job worktree and is shared
         # across jobs, so without this an attempt inherits whatever the
-        # previous one left there. That is not hypothetical: reset_port
-        # regenerates it AFTER the patch but BEFORE runner.py destroys
-        # the worktree, so it composes the previous agent's abandoned
-        # edits, reports success, and leaves a tree contradicting the
-        # repo. Measured on devel/glib20 — a build reported
-        # "packages built: 3, failed: 0" against a tree missing two of
-        # the port's five patches, which is why nothing failed.
+        # previous one left there. That was not hypothetical: reset_port
+        # used to compose the job's worktree, so it left the previous
+        # agent's abandoned edits there and reported success. Measured on
+        # devel/glib20 — a build reported "packages built: 3, failed: 0"
+        # against a tree missing two of the port's five patches, which is
+        # why nothing failed. reset_port composes the main checkout now
+        # (poly-at76), but a killed job runs no reset at all.
         #
         # Establishing it here makes each attempt responsible for its own
-        # starting state instead of trusting an ordering that spans two
-        # modules. It also seeds _MATERIALIZE_STATE, so dsynth_build's
-        # staleness guard has a baseline from the first turn.
+        # starting state instead of trusting whatever ran before it. It
+        # also seeds _MATERIALIZE_STATE, so dsynth_build's staleness guard
+        # has a baseline from the first turn.
         #
         # Refuse on failure rather than proceeding: a compose that did
         # not work means we do not know what is on disk, and the whole
@@ -2304,6 +2365,9 @@ class PatchAttemptStep:
                 env=env, origin=origin, bundle_id=bundle_id,
                 trace_events=dispatcher.trace_events,
             )
+            # The env's shared state, as on the normal path (poly-at76).
+            _reset_after_patch(services, ctx, env=env, origin=origin,
+                               started_with=also_origins)
             outcome = _err(
                 str(exc), services, job_path, JobEvent.PATCH_GAVE_UP,
                 transient=llm.is_transient(
@@ -2433,38 +2497,9 @@ class PatchAttemptStep:
             except Exception:  # noqa: BLE001 -- unknown is not a pass
                 ctx.state["composes_after_patch"] = False
 
-        # Post-job workspace reset. changes.diff is the canonical
-        # record; the env's port subtree no longer needs to carry
-        # the agent's edits. Reset to git HEAD so the next patch job
-        # (or operator inspection) starts from a clean baseline that
-        # the pre-job preflight will accept. Best-effort: a reset
-        # failure surfaces as an activity row but doesn't affect the
-        # patch outcome.
-        try:
-            reset_also = _worker.invariant_origins(env, origin)[1:]
-            reset = (
-                _worker.reset_port(env, origin, also=reset_also)
-                if reset_also else _worker.reset_port(env, origin)
-            )
-        except Exception as exc:
-            reset = {"ok": False, "error": str(exc)[:200]}
-        if not reset.get("ok"):
-            services.activity_log(
-                queue_root, "patch_post_reset_failed",
-                f"reset_port failed for {origin} after patch "
-                f"({reset.get('error', 'unknown')[:200]}); env "
-                f"may have leftover edits — next patch will "
-                f"refuse via preflight",
-                job_id=ctx.job_id,
-            )
-        else:
-            services.activity_log(
-                queue_root, "patch_post_reset",
-                f"reset {', '.join(f'ports/{o}/' for o in [origin, *reset_also])} "
-                f"to baseline after patch "
-                f"(reapply_ok={reset.get('reapply_ok')})",
-                job_id=ctx.job_id,
-            )
+        # Post-job reset of the WRKDIR and the composed tree.
+        _reset_after_patch(services, ctx, env=env, origin=origin,
+                           started_with=also_origins)
 
         # If the cached health probe shows broken, the env poisoned
         # the result — ENV_BROKEN overrides whatever the LLM said.
