@@ -547,23 +547,34 @@ def _genpatch_name(path):
     return "patch-" + path.replace("_", "__").replace("/", "_")
 
 
-def _reads(plan, line):
-    """dst -> src of the materialize/copy that fills it last on ``line``."""
-    from dportsv3.engine.models import order_ops_for_target
+def _reads(plan, line, port_dir):
+    """dst -> src of the materialize, copy or dragonfly/ folder file that
+    fills it last on ``line``. The folder is the engine helper's
+    (poly-u9n4): almost no port names its patches in an op any more."""
+    from dportsv3.engine.models import FolderInstall, order_ops_for_target
+    from dportsv3.engine.payload import folder_installs, with_folder_installs
 
     out = {}
-    for op in order_ops_for_target(plan.ops, line):
-        if (op.kind in ("file.materialize", "file.copy")
-                and op.target in ("@any", line)):
-            out[op.payload["dst"]] = op.payload["src"]
+    for step in with_folder_installs(order_ops_for_target(plan.ops, line),
+                                     folder_installs(port_dir, plan.ops, line)):
+        if isinstance(step, FolderInstall):
+            out[step.dst] = step.src
+        elif (step.kind in ("file.materialize", "file.copy")
+                and step.target in ("@any", line)):
+            out[step.payload["dst"]] = step.payload["src"]
     return out
 
 
 def _read_elsewhere(plan, line, src):
     """Does an op that is not ``line``'s alone read ``src``? (The test's
-    own reading: @any, another line, or a target list naming another.)"""
+    own reading: @any, another line, or a target list naming another.)
+    Or the folder: a flat file no op reads is read by every line."""
     import posixpath
 
+    from dportsv3.engine.payload import explicit_reads, folder_scope
+
+    if src not in explicit_reads(plan.ops) and folder_scope(src) not in (None, line):
+        return True
     return any(
         op.kind == "file.materialize" and op.target != line
         and posixpath.normpath(op.payload["src"]) == src
@@ -598,7 +609,7 @@ def test_a_recut_lands_on_the_file_each_line_reads_on_the_real_ports(
             shutil.copytree(port.overlay.parent, port_dir)
             plan = build_plan(port.overlay.read_text(), port.overlay).plan
             for line in port.lines:
-                reads = _reads(plan, line)
+                reads = _reads(plan, line, port_dir)
                 headers = {}
                 for dst, src in reads.items():
                     if dst.startswith("dragonfly/patch-"):
@@ -645,16 +656,18 @@ def test_the_file_each_line_reads_is_what_apply_installs_on_the_real_ports(
     from dportsv3.engine.api import build_plan
     from dportsv3.engine.apply import apply_plan
     from dportsv3.engine.models import Plan
+    from dportsv3.engine.payload import payload_files
 
     checked = 0
     for port in multi_line_ports:
         plan = build_plan(port.overlay.read_text(), port.overlay).plan
         ops = [op for op in plan.ops if op.kind == "file.materialize"]
         sentinels = tmp_path / "src" / port.origin
-        for op in ops:
-            f = sentinels / op.payload["src"]
+        for rel in ({op.payload["src"] for op in ops}
+                    | set(payload_files(port.overlay.parent))):
+            f = sentinels / rel
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(op.payload["src"])
+            f.write_text(rel)
         for line in port.lines:
             root = tmp_path / "out" / port.origin / line
             root.mkdir(parents=True)
@@ -663,7 +676,7 @@ def test_the_file_each_line_reads_is_what_apply_installs_on_the_real_ports(
                                 target=line, oracle_profile="off")
             assert result.ok, (port.origin, line)
             for dst, src in _reads(Plan(port=port.origin, ops=ops),
-                                   line).items():
+                                   line, sentinels).items():
                 assert (root / dst).read_text() == src, (port.origin, line, dst)
                 checked += 1
     assert checked

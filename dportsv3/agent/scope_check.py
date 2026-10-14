@@ -280,8 +280,36 @@ def _render(op) -> str:
     return f"`{op.kind}{' ' + subject if subject else ''}`"
 
 
+def _own_copies(after_ops: list, files_before: set[str],
+                files_after: set[str], target: str) -> list[str]:
+    """``target``'s new folder files that replace what @any installs.
+
+    Since poly-u9n4 an own copy is a file, not an op: install_patches
+    writes ``dragonfly/@<target>/<name>`` beside the shared patch, and the
+    folder installs it on this line over whatever @any installs at
+    ``dragonfly/<name>`` -- the flat file, or an @any op's.
+    """
+    import posixpath
+    from pathlib import Path
+
+    from dportsv3.engine.payload import folder_installs  # noqa: PLC0415
+
+    installs = folder_installs(Path("."), after_ops, target, files=files_after)
+    shared = {i.dst: i.src for i in installs if i.target == "@any"}
+    for op in after_ops:  # an @any op runs after the flat folder
+        if op.target == "@any" and op.kind == "file.materialize":
+            shared[posixpath.normpath(str(op.payload.get("dst")))] = (
+                posixpath.normpath(str(op.payload.get("src"))))
+    return [
+        f"`{target}` overrides `@any` `{shared[i.dst]}` with `{i.src}`"
+        for i in installs
+        if i.target == target and i.src not in files_before and i.dst in shared
+    ]
+
+
 def any_overrides(before: str | None, after: str | None,
-                  target: str) -> tuple[str, ...]:
+                  target: str, *, files_before: set[str] | None = None,
+                  files_after: set[str] | None = None) -> tuple[str, ...]:
     """The ops this attempt added on ``target`` that override an @any op.
 
     poly-7pwa.27, row 5b. An @any op that composes on this line but is wrong
@@ -289,6 +317,10 @@ def any_overrides(before: str | None, after: str | None,
     it. The reviewer is told, one line per override, so a shared value that
     is wrong everywhere can be split by hand. Only ops the attempt added:
     an override that was already there is old news.
+
+    With the port's ``dragonfly/`` files before and after the attempt
+    (overlay-relative), an own copy the attempt wrote under
+    ``dragonfly/<target>/`` is one too: the folder installs it with no op.
     """
     if not target or after is None or UNREADABLE in (before, after):
         return ()
@@ -307,4 +339,7 @@ def any_overrides(before: str | None, after: str | None,
                 f"`{target}` overrides `@any` {_render(beaten)} "
                 f"with {_render(op)}"
             )
+    if files_before is not None and files_after is not None:
+        out += _own_copies(after_ops, set(files_before), set(files_after),
+                           target)
     return tuple(out)

@@ -266,8 +266,8 @@ def _reject_makefile_dragonfly_authoring(chroot_path: str) -> dict | None:
     ``assess_dops`` rejects.
 
     ``diffs/``, ``dragonfly/`` and ``newport/`` are intentionally NOT
-    blocked — they are dops sources too (``patch apply diffs/X``,
-    ``file materialize dragonfly/X``, type=dport ``newport/``).
+    blocked — they are dops sources too (``patch apply diffs/X``, the
+    ``dragonfly/`` folder, type=dport ``newport/``).
 
     Returns None (allowed) when the path is not a ``Makefile.DragonFly``
     in a port subtree.
@@ -841,8 +841,8 @@ def _reject_malformed_patch_write(chroot_path: str, content: str) -> dict | None
     out of view.
 
     Scoped to ``dragonfly/patch-*`` basenames — other files under
-    ``dragonfly/`` are whole-file ``file materialize`` sources, not
-    diffs, and must not be parsed as one.
+    ``dragonfly/`` are whole files the folder installs, not diffs, and
+    must not be parsed as one.
     """
     if "/dragonfly/" not in chroot_path:
         return None

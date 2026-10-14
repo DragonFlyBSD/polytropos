@@ -233,9 +233,11 @@ Two consequences worth holding onto:
 
 - `get_effective_overlay`'s `effective_ops` is already in this order, and
   `apply_index` is the position. Trust that ordinal over the file.
-- It also decides which op wins when two `file materialize` ops name the
-  same destination — the scoped one wins on its own target and loses on
-  every other.
+- The `dragonfly/` folder follows it: the flat files go in at the head of
+  `@any`, your line's `dragonfly/@<line>/` files at the head of its own
+  block. So a line's own copy wins on that line, every other line keeps
+  the flat file, and any op can still edit or remove what the folder put
+  there.
 
 ## Creating a static source patch (`dragonfly/*`)
 
@@ -312,21 +314,20 @@ almost identically and two of them have opposite fixes.**
   change DragonFly wants; upstream simply edited the lines it targets.
   The tell is `<N> out of <M> hunks failed--saving rejects to <file>.rej`
   after a version bump, with the rejects naming real hunks.
-  → **Not this section.** Refresh it and *keep* the `file materialize`
-  line — see `error-prefer-dops-over-static-patches.md`, "Re-cut a
-  drifted source patch". Deleting a drifted patch throws away a fix
+  → **Not this section.** Refresh it and *keep* the patch — see
+  `error-prefer-dops-over-static-patches.md`, "Re-cut a drifted source
+  patch". Deleting a drifted patch throws away a fix
   that is still wanted.
 - **Superseded** — FreeBSD has added a `files/patch-*` that already
   achieves what ours did, and since `files/*` applies first ours now
   rejects against source that is already fixed. → **Not this section
   either**, and it is the one case where deleting the `dragonfly/` file
-  (`delete_file`) and its `file materialize` line, if it has one, is
-  correct. It has to be established
+  (`delete_file`) is correct. It has to be established
   rather than assumed — same file, even same line, is not evidence. See
   `error-prefer-dops-over-static-patches.md`, "has FreeBSD made our
-  patch unnecessary?", which carries a worked counter-example. If that
-  op is under `target @any` on a port that had an overlay before the
-  job, drop the patch on your line only, with `file remove
+  patch unnecessary?", which carries a worked counter-example. If the
+  patch is a flat `dragonfly/<name>` on a port that had an overlay
+  before the job, drop it on your line only, with `file remove
   dragonfly/<name>` in your line's block: another line's upstream may
   not have FreeBSD's fix yet.
 - **Malformed** — the patch file itself is garbage: a hunk header that
@@ -347,15 +348,14 @@ overwrite in place** — in that order:
    your line's own copy instead, which the folder installs on your line
    with no op. `put_file` and `edit_file` refuse that file the same way.
 
-**`overlay.dops` needs no edit at all.** Whatever installs the patch —
-its `file materialize` line or its folder — already names that path, so
-overwriting the file there is the whole swap: one write, and no moment
-where the port is staged without a patch.
-Only if the replacement must take a *different* filename do you touch
-`overlay.dops`, and then only after the new file exists.
+**`overlay.dops` needs no edit at all.** Its folder already installs the
+patch from that path, so overwriting the file there is the whole swap:
+one write, and no moment where the port is staged without a patch.
+Only if the replacement must take a *different* filename do you delete
+the old file, and then only after the new one exists.
 
-**Never leave `overlay.dops` with the install line removed and no
-replacement written.** In that window the port composes green with the
+**Never leave the port with the old patch deleted and no replacement
+written.** In that window the port composes green with the
 DragonFly fix silently absent — a build that passes and a platform
 regression that nothing reports. If your attempt dies there (budget
 exhausted, a tool error, an interrupted run), that broken-but-green
@@ -384,10 +384,10 @@ created; an `@any` op, or a flat `dragonfly/` file, on a port that had
 an overlay before the job is overridden in your block instead (see
 Scoping) — `file remove dragonfly/<name>` for a file:
 
-- A `dragonfly/*` patch → `delete_file` it, after removing the
-  `file materialize` line that names it, if there is one (a file an op
-  still reads is refused). Removing the line alone does not drop the
-  patch: the folder installs a file no op reads.
+- A `dragonfly/*` patch → `delete_file` it. The folder installs every
+  file in it, so deleting the file is the whole removal; there is no line
+  to take out. (A file an op still reads — a `file materialize` to some
+  other destination — is refused until that op goes.)
 - A `patch apply` / `file copy` line → delete the line; compose stops
   applying it.
 - A whole `mk target <name> <<TAG … TAG` heredoc block → delete the

@@ -128,13 +128,10 @@ mk target rename do-install -> do-install-dragonfly
 
 ```dops
 # Stage a file from the DeltaPorts overlay (source) into the
-# materialized port_root. THIS is the op for "bring something
-# from the overlay into the compose output."
+# materialized port_root somewhere the dragonfly/ folder does not
+# put it. A `dragonfly/*` patch needs no op: the folder installs it
+# (see "Two kinds of patches").
 file materialize dragonfly/keep-alive.c -> files/keep-alive.c
-
-# Same op, common case: stage a `dragonfly/*` patch alongside the
-# port so bsd.port.mk's do-patch picks it up at build time.
-file materialize dragonfly/patch-Makefile.am -> dragonfly/patch-Makefile.am
 
 # Duplicate a file WITHIN port_root (e.g. after an earlier op
 # staged it). Both src and dst are relative to the materialized
@@ -205,20 +202,18 @@ they're inside the tarball and only appear at build time when
 engine has no extracted source to apply against; the patch will
 fail with no target file.
 
-The op that stages one is `file materialize` — it copies the patch from
-the DeltaPorts overlay into `port_root` so the build phase picks it up.
-(Note: `file copy` is a *within-`port_root`* duplication op, NOT
+No op stages one: **the `dragonfly/` folder is the install**. Compose
+copies `dragonfly/X` into `port_root` on every build line, and
+`dragonfly/@<target>/X` on that line only, as `dragonfly/X`; the build
+phase picks them up from there. Writing the file is the whole change,
+and **the folder is the scope** — flat for every line, `@<target>/` for
+one.
+
+`file materialize` is only for what the folder cannot say, a different
+destination (`dragonfly/keep-alive.c -> files/keep-alive.c`). A file an op
+reads is installed by that op, where it says, and not by the folder on any
+line. (`file copy` is a *within-`port_root`* duplication op, NOT
 overlay→port_root; the names are easy to confuse.)
-
-```dops
-file materialize dragonfly/patch-Makefile.am -> dragonfly/patch-Makefile.am
-file materialize dragonfly/patch-Makefile.in -> dragonfly/patch-Makefile.in
-```
-
-Under dops mode the op is optional: the `dragonfly/` folder is installed
-with no op — `dragonfly/X` on every build line, `dragonfly/@<target>/X` on
-that line only, as `dragonfly/X`. An op that reads a file takes it out of
-the folder on every line the op does not run on.
 
 Prefer a `REINPLACE_CMD` recipe over a static patch ONLY when the target is a
 GENERATED file (`Makefile.in`, `configure`) — there, patching the generated
@@ -226,8 +221,8 @@ output is brittle. For a hand-written upstream source file (`.c`, `.h`, …) a
 static patch is the robust form (it fails loudly if it stops matching, where a
 whole-line `REINPLACE` sed silently no-ops). **Do not rewrite a `dragonfly/*`
 patch that already applies.** If such a patch **drifted** (stopped applying
-after an upstream bump), **re-cut it** with `genpatch` and keep the
-`file materialize` — don't convert it to a `REINPLACE`.
+after an upstream bump), **re-cut it** with `genpatch` and keep it a patch —
+don't convert it to a `REINPLACE`.
 
 ## On-missing modifiers
 
@@ -247,8 +242,8 @@ checked, with a comment naming the line and the date.
 | Substituting one identifier in a source file | `text replace-once` against the file |
 | Inserting a whole `.if DragonFly ... .endif` block | `mk block set condition "..."` |
 | Framework patch logic that doesn't reduce to mk/text | `patch apply diffs/X.diff` (only for `diffs/`, not `dragonfly/`) |
-| Upstream-source patch (anything under `dragonfly/`) | `file materialize dragonfly/X -> dragonfly/X` (stage, do NOT patch) |
-| …whose content differs per build line | `file materialize dragonfly/@<target>/X -> dragonfly/X` — source scoped, destination flat, op inside that `target` block |
+| Upstream-source patch (anything under `dragonfly/`) | none: the file is the install — `dragonfly/X` on every line, `dragonfly/@<target>/X` on that line only, as `dragonfly/X` (never `patch apply`) |
+| …which folder a new one goes in | your line's own, unless the port had no overlay content when the job started; `install_patches` picks it |
 | Dropping pkg-plist entries for an option you disabled | `text line-remove file pkg-plist exact "<line>"`, one per entry |
 | Adding a pkg-plist entry | `text line-insert-after file pkg-plist anchor "<line>" line "<new>"` |
 
@@ -277,13 +272,16 @@ or regenerating a deferred `diffs/Makefile.diff` patch. Pick by the patch's
   you turned off would have installed.
 
 **Upstream-source patches (`dragonfly/*`):**
-- Default → `file materialize dragonfly/X -> dragonfly/X`. ALWAYS stage;
-  NEVER `patch apply` for these. `bsd.port.mk`'s `do-patch` applies them at
-  build time. A static patch against a hand-written source file is robust;
-  keep a working one — don't rewrite it into a `REINPLACE`.
+- Default → a patch file in the folder, no op: your line's own
+  `dragonfly/@<target>/` on a port that had overlay content when the job
+  started, the flat `dragonfly/` on one that had none. `install_patches`
+  writes a `genpatch` output to the right one. NEVER `patch apply` for
+  these. `bsd.port.mk`'s `do-patch` applies them at build time. A static
+  patch against a hand-written source file is robust; keep a working one —
+  don't rewrite it into a `REINPLACE`.
 - If a source patch **drifted** (stopped applying because upstream changed
   the file), **re-cut it** — `make_extract` → edit the file in `WRKSRC` →
-  `genpatch` → keep the `file materialize`. A re-cut patch fails loudly on the
+  `genpatch` → `install_patches`. A re-cut patch fails loudly on the
   next drift; do NOT convert it to a `REINPLACE` (a whole-line sed silently
   no-ops the next time the line changes, dropping the fix with no error).
 - A `REINPLACE_CMD` recipe is for GENERATED targets only

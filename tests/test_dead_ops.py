@@ -253,38 +253,43 @@ def test_an_append_to_a_real_overlays_last_block_kills_that_lines_op(
 ):
     """The positive control: the zero above is a check that can fire.
 
-    For each multi-line port whose file ends in a one-line block T,
-    re-append its last materialize whose src is under dragonfly/@T/.
-    The copy lands in the same block, so the original never takes
-    effect: one E_SEM_DEAD_OP, at the original. The same op under its
-    own `target @any` line is the override, and is allowed.
+    For each multi-line port whose file ends in a one-line block T, take
+    the last text op whose statement names T alone and append a `file
+    remove` of its file. The append lands in the same block, after the
+    op, so the op never takes effect: one E_SEM_DEAD_OP, at that op. The
+    same append under its own `target @any` line runs before every op of
+    T, so it kills none of them (it can still kill an @any op on the file
+    above it, as in cad/librecad).
+
+    A text op, not a file materialize: since poly-u9n4.3 the dragonfly/
+    folder installs payload, and no real overlay has one left to
+    re-append.
     """
     checked = []
     for port in multi_line_ports:
         if len(port.last_lines) != 1:
             continue
         line = port.last_lines[0]
-        own = [(s, d) for s, d in port.scoped(line)
-               if s.startswith(f"dragonfly/{line}/")]
-        if not own:
-            continue
-        src, dst = own[-1]
         text = port.overlay.read_text()
-        original = next(
-            op.span.line_start
-            for op in build_plan(text, port.overlay).plan.ops
-            if op.target == line and op.payload.get("src") == src
-            and op.payload.get("dst") == dst
-        )
+        ops = build_plan(text, port.overlay).plan.ops
+        # A target list expands to one op per line, all with one span.
+        alone = [op for op in ops
+                 if op.target == line and op.kind.startswith("text.")
+                 and all(o.target == line for o in ops if o.span == op.span)]
+        if not alone:
+            continue
+        op = alone[-1]
         sep = "" if text.endswith("\n") else "\n"
-        appended = f"file materialize {src} -> {dst}\n"
+        appended = f"file remove {op.payload['file']}\n"
         result = build_plan(text + sep + appended, port.overlay)
         assert [d.line for d in result.diagnostics
-                if d.code == "E_SEM_DEAD_OP"] == [original], port.origin
+                if d.code == "E_SEM_DEAD_OP"] == [op.span.line_start], port.origin
         result = build_plan(text + sep + "target @any\n" + appended,
                             port.overlay)
-        assert result.ok is True, (port.origin, result.diagnostics)
+        assert op.span.line_start not in [
+            d.line for d in result.diagnostics if d.code == "E_SEM_DEAD_OP"
+        ], port.origin
         checked.append(port.origin)
     if not checked:
         pytest.skip("no multi-line port ends in a one-line block "
-                    "with a payload of its own")
+                    "with a text op of its own")

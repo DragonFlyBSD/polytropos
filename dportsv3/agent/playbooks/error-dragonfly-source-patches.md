@@ -134,7 +134,7 @@ that owns it rather than improvising here:
 
 - **Drifted** (well-formed, stopped applying after a version bump) →
   `error-prefer-dops-over-static-patches.md`. Re-cut it and **keep** the
-  `file materialize` line.
+  patch.
 - **Malformed** (the diff itself is broken) → `flow-patch.md`,
   "Recovering from a broken patch". Regenerate first, swap second.
 

@@ -73,10 +73,10 @@ mk eval OPTIONS_DEFAULT "${OPTIONS_DEFAULT:NPULSEAUDIO} ALSA"
 
 ### Option 3: Patch source to make feature optional (Last Resort)
 
-If the port hardcodes the feature without an OPTION, stage a DragonFly source
-patch under `dragonfly/` (`file materialize dragonfly/patch-X -> dragonfly/patch-X`)
-that wraps the code in `#ifdef` guards or drops the problematic includes — never
-`patch apply` a `dragonfly/*` patch (no extracted source at compose time).
+If the port hardcodes the feature without an OPTION, write a DragonFly source
+patch under `dragonfly/` (the folder installs it, no op) that wraps the code in
+`#ifdef` guards or drops the problematic includes — never `patch apply` a
+`dragonfly/*` patch (no extracted source at compose time).
 
 ## The `OPTIONS_DEFAULT:NFOO` filter → `mk eval`
 

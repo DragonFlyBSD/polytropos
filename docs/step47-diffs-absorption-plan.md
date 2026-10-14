@@ -154,5 +154,6 @@ patches. The patch agent (LLM, like me) writes the ops freehand; its functional
       folder, `@main` and `@2026Q3`, byte-identical once the seven files no op
       read were deleted (DeltaPorts `01122ff7d42`, poly-u9n4.1).
 - [ ] 6.3 [comp] Retire compat `diffs/` path per migrated port.
-- Follow-up: poly-u9n4.3 deletes the ~4,483 `file materialize` ops the
-  folder now makes redundant.
+- [x] Follow-up (poly-u9n4.3): the 4,483 `file materialize` ops the folder
+      made redundant were deleted in one DeltaPorts commit; whole-tree compose
+      of `@main` and `@2026Q3` byte-identical before and after.

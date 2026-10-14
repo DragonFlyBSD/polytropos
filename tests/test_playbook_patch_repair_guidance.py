@@ -65,11 +65,11 @@ def test_no_paragraph_tells_the_agent_to_delete_a_drifted_patch() -> None:
     assert offenders == [], "drift + removal in one breath:\n" + "\n".join(offenders)
 
 
-def test_the_recut_flow_keeps_the_materialize_line() -> None:
+def test_the_recut_flow_keeps_the_patch() -> None:
     body = _entry("error-prefer-dops-over-static-patches.md").body
     recut = body[body.index("Re-cut a drifted source patch"):]
     recut = recut[:recut.index("### Option A")]
-    assert re.search(r"\*\*keep\*\* the `file materialize`", recut), recut[:400]
+    assert re.search(r"\*\*keep\*\* the patch", recut), recut[:400]
 
 
 def test_the_recut_flow_warns_against_touching_the_overlay() -> None:
@@ -129,7 +129,7 @@ def test_the_superseded_case_exists_and_owns_the_delete() -> None:
     step = body[body.index("has FreeBSD made our patch unnecessary?"):]
     step = step[:step.index("### Step 2")]
     assert re.search(r"delete", step, re.I)
-    assert "file materialize" in step
+    assert "delete_file" in step
 
 
 def test_the_delete_is_gated_on_evidence_not_on_touching_the_same_file() -> None:
@@ -151,7 +151,7 @@ def test_drift_still_keeps_the_patch() -> None:
     body = _prefer_dops_body()
     recut = body[body.index("Re-cut a drifted source patch"):]
     recut = recut[:recut.index("### Option A")]
-    assert re.search(r"\*\*keep\*\* the `file materialize`", recut)
+    assert re.search(r"\*\*keep\*\* the patch", recut)
     assert "overlay.dops` is not edited at all" in recut
 
 
@@ -177,8 +177,8 @@ def test_regeneration_comes_before_any_overlay_edit() -> None:
 
 def test_the_safe_swap_needs_no_overlay_edit_at_all() -> None:
     """Strongest form of the fix: overwriting the broken patch at its
-    existing path is the entire swap, because the file materialize line
-    already names it. A procedure that never opens overlay.dops cannot
+    existing path is the entire swap, because whatever installs it
+    already names that path. A procedure that never opens overlay.dops cannot
     leave it half-edited.
 
     The path is deliberately NOT described as "the same `dragonfly/`
@@ -187,15 +187,15 @@ def test_the_safe_swap_needs_no_overlay_edit_at_all() -> None:
     that sent a re-cut somewhere no op reads (poly-7pwa.13). The invariant
     the test exists for -- overwrite in place, do not touch the overlay --
     is unchanged, so it is pinned by the op instead of by a literal path.
-    Since poly-u9n4 the folder can be what installs the patch, so the
-    path is the one the line installs it from, op or folder.
+    Since poly-u9n4.3 the folder is what installs the patch, so the path
+    is the one the line installs it from.
     """
     sec = " ".join(_recovery_section().split())
     assert "`overlay.dops` needs no edit at all" in sec
     # Whitespace-collapsed: the phrase spans a line wrap, and a literal
     # match would fail on a reflow for no reason.
     assert "at the path your line installs it from" in sec
-    assert "its `file materialize` line or its folder" in sec
+    assert "Its folder already installs the patch from that path" in sec
 
 
 def test_the_green_window_is_named_as_the_hazard() -> None:
@@ -203,13 +203,14 @@ def test_the_green_window_is_named_as_the_hazard() -> None:
     the steps back. The consequence has to be on the page."""
     sec = _recovery_section()
     assert re.search(r"green", sec, re.I), sec[:300]
-    assert re.search(r"never leave `overlay\.dops`", sec, re.I)
+    assert re.search(r"never leave the port with the old patch deleted",
+                     sec, re.I)
 
 
 def test_the_dops_conversion_removes_and_replaces_in_one_write() -> None:
-    """Option A swaps a static patch for a dops op. Removing the
-    materialize line before the op exists reopens the same green window
-    the recovery section warns about, just in a different branch."""
+    """Option A swaps a static patch for a dops op. Deleting the patch
+    before the op exists reopens the same green window the recovery
+    section warns about, just in a different branch."""
     body = _prefer_dops_body()
     opt = body[body.index("Option A (GENERATED-file target only)"):]
     opt = opt[:opt.index("### Option B")]

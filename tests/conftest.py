@@ -187,17 +187,11 @@ class MultiLinePort:
 
     origin: str                  # "lang/rust"
     overlay: Path                # <delta>/ports/lang/rust/overlay.dops
-    lines: tuple[str, ...]       # concrete targets its ops name, sorted
+    # Concrete targets its ops or its dragonfly/@<line>/ folders name,
+    # sorted. The folder counts: since poly-u9n4 a line can be named by
+    # nothing else (ports-mgmt/pkg's @2026Q3).
+    lines: tuple[str, ...]
     last_lines: tuple[str, ...]  # where an op appended at EOF lands
-    materializes: tuple[tuple[str, str, str], ...]  # (scope, src, dst)
-
-    def scoped(self, line: str) -> list[tuple[str, str]]:
-        """(src, dst) of the materializes bound to ``line`` itself."""
-        return [(s, d) for t, s, d in self.materializes if t == line]
-
-    def flat(self) -> list[tuple[str, str]]:
-        """(src, dst) of the ``@any`` materializes."""
-        return [(s, d) for t, s, d in self.materializes if t == "@any"]
 
 
 @pytest.fixture(scope="session")
@@ -227,18 +221,21 @@ def multi_line_ports(delta_ports: Path) -> list[MultiLinePort]:
     to test, and a test that passed over an empty list would claim
     coverage it does not have.
     """
+    from dportsv3.common.validation import is_compose_target
     from dportsv3.engine.api import build_plan
 
     found: list[MultiLinePort] = []
     for overlay in sorted(delta_ports.glob("*/*/overlay.dops")):
         text = overlay.read_text()
-        if "target @" not in text:
+        folders = {p.name for p in overlay.parent.glob("dragonfly/@*")
+                   if p.is_dir() and is_compose_target(p.name)}
+        if "target @" not in text and not folders:
             continue
         planned = build_plan(text, overlay)
         if not planned.ok or planned.plan is None:
             continue
         ops = planned.plan.ops
-        lines = tuple(sorted({o.target for o in ops} - {"@any"}))
+        lines = tuple(sorted(({o.target for o in ops} | folders) - {"@any"}))
         if len(lines) < 2:
             continue
         sep = "" if text.endswith("\n") else "\n"
@@ -251,10 +248,6 @@ def multi_line_ports(delta_ports: Path) -> list[MultiLinePort]:
             lines=lines,
             last_lines=tuple(o.target for o in probe.ops
                              if o.span == last),
-            materializes=tuple(
-                (o.target, o.payload["src"], o.payload["dst"])
-                for o in ops if o.kind == "file.materialize"
-            ),
         ))
     if not found:
         pytest.skip("no DeltaPorts overlay names two or more build lines")

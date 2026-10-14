@@ -470,9 +470,10 @@ target @main
 file materialize dragonfly/@main/patch-a -> dragonfly/patch-a
 ```
 
-The payload folder says the same with no operation: `dragonfly/patch-a` is
-installed on every build line, and `dragonfly/@main/patch-a` replaces it on
-`@main`.
+The payload folder says the same with no operation, and is how DeltaPorts
+writes it: `dragonfly/patch-a` is installed on every build line, and
+`dragonfly/@main/patch-a` replaces it on `@main`. An operation is only needed
+for what the folder cannot say, such as a destination outside `dragonfly/`.
 
 ### Invalid (missing `port`)
 

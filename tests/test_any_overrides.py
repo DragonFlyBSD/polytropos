@@ -51,6 +51,51 @@ def test_an_own_copy_of_a_shared_patch_is_an_override():
     assert "dragonfly/@main/patch-a -> dragonfly/patch-a" in found
 
 
+# --- an own copy is a file now (poly-u9n4.3) ------------------------------
+
+FOLDER = HEAD + 'target @any\nmk set BOOTSTRAPS_DATE "1.95.0"\n'
+SHARED = {"dragonfly/patch-a"}
+
+
+def test_an_own_copy_written_to_the_lines_folder_is_an_override():
+    """install_patches' re-cut of a shared patch: a file, no op."""
+    (found,) = any_overrides(FOLDER, FOLDER, "@main", files_before=SHARED,
+                             files_after=SHARED | {"dragonfly/@main/patch-a"})
+    assert found == ("`@main` overrides `@any` `dragonfly/patch-a` "
+                     "with `dragonfly/@main/patch-a`")
+
+
+def test_an_own_copy_over_an_any_ops_file_names_that_file():
+    before = FOLDER + "file materialize dragonfly/b.in -> dragonfly/patch-a\n"
+    files = {"dragonfly/b.in"}
+    (found,) = any_overrides(before, before, "@main", files_before=files,
+                             files_after=files | {"dragonfly/@main/patch-a"})
+    assert "`dragonfly/b.in` with `dragonfly/@main/patch-a`" in found
+
+
+def test_an_own_copy_that_was_already_there_is_old_news():
+    files = SHARED | {"dragonfly/@main/patch-a"}
+    assert any_overrides(FOLDER, FOLDER, "@main", files_before=files,
+                         files_after=files) == ()
+
+
+def test_a_new_patch_of_the_lines_own_overrides_nothing():
+    assert any_overrides(FOLDER, FOLDER, "@main", files_before=SHARED,
+                         files_after=SHARED | {"dragonfly/@main/patch-b"}) == ()
+
+
+def test_another_lines_folder_is_not_this_lines_override():
+    assert any_overrides(
+        FOLDER, FOLDER, "@main", files_before=SHARED,
+        files_after=SHARED | {"dragonfly/@2026Q3/patch-a"}) == ()
+
+
+def test_without_a_listing_from_before_no_file_is_judged():
+    assert any_overrides(
+        FOLDER, FOLDER, "@main", files_before=None,
+        files_after=SHARED | {"dragonfly/@main/patch-a"}) == ()
+
+
 def test_ops_that_stack_on_the_any_op_are_not_overrides():
     """mk add, mk bump, mk target append accumulate: nothing is lost, so
     telling the reviewer to split it would be noise."""
@@ -110,3 +155,39 @@ def test_a_fix_without_overrides_has_no_section():
     body = render_proposed_fix(ProposedFixCtx(origin="lang/thing",
                                               target="@main"))
     assert "Overrides of" not in body
+
+
+def test_the_runner_reports_an_own_copy_the_attempt_wrote(tmp_path, monkeypatch):
+    """The steps wiring: the listing taken at attempt start against the
+    port as the attempt left it."""
+    from types import SimpleNamespace
+
+    from dportsv3.agent import steps, worker
+
+    port = tmp_path / "DeltaPorts" / "ports" / "lang" / "thing"
+    (port / "dragonfly" / "@main").mkdir(parents=True)
+    (port / "overlay.dops").write_text(FOLDER)
+    (port / "dragonfly" / "patch-a").write_text("shared\n")
+    monkeypatch.setattr(
+        worker, "env_paths",
+        lambda env: SimpleNamespace(deltaports=tmp_path / "DeltaPorts"),
+    )
+    baseline = steps._read_payload_files(worker, "e", "lang/thing")
+    (port / "dragonfly" / "@main" / "patch-a").write_text("recut\n")
+    events: list = []
+    services = SimpleNamespace(
+        log=lambda *a, **k: None,
+        activity_log=lambda root, kind, msg, **kw: events.append(kind),
+    )
+    worker.set_env_target("e", "@main")
+    try:
+        found = steps._report_any_overrides(
+            services, SimpleNamespace(job_id="j1"), tmp_path, "e",
+            baseline={"lang/thing": FOLDER},
+            payload_baseline={"lang/thing": baseline},
+        )
+    finally:
+        worker.set_env_target("e", None)
+    assert found == ["lang/thing: `@main` overrides `@any` "
+                     "`dragonfly/patch-a` with `dragonfly/@main/patch-a`"]
+    assert events == ["overlay_any_override"]

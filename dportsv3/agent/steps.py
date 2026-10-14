@@ -1576,6 +1576,21 @@ def _read_overlay_text(worker_mod: Any, env: str, origin: str) -> str | None:
         return UNREADABLE
 
 
+def _read_payload_files(worker_mod: Any, env: str, origin: str) -> set[str] | None:
+    """A port's ``dragonfly/`` files, overlay-relative, or None on failure.
+
+    Same contract as _read_overlay_text: this feeds a diagnostic, so a
+    failure means no finding, never an exception.
+    """
+    from dportsv3.engine.payload import payload_files  # noqa: PLC0415
+
+    try:
+        port = worker_mod.env_paths(env).deltaports / "ports" / origin
+        return set(payload_files(port))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _report_scope_drift(
     services: Any,
     ctx: Any,
@@ -1638,13 +1653,16 @@ def _report_any_overrides(
     env: str,
     *,
     baseline: dict,
+    payload_baseline: dict | None = None,
 ) -> list[str]:
     """The @any ops this attempt overrode on its own line, one line each.
 
     poly-7pwa.27, row 5b: the agent overrides a wrong @any op in its line's
     block and leaves @any alone. The reviewer is told, so a shared value
-    that is wrong on every line can be split by hand. Logged here and
-    returned for the proposed fix. Best-effort, like the scope-drift report.
+    that is wrong on every line can be split by hand. Since poly-u9n4 the
+    usual override is a file, an own copy under ``dragonfly/@<line>/``,
+    hence the payload listings. Logged here and returned for the proposed
+    fix. Best-effort, like the scope-drift report.
     """
     found: list[str] = []
     try:
@@ -1654,7 +1672,12 @@ def _report_any_overrides(
         target = _worker.peek_env_target(env) or ""
         for origin, before in (baseline or {}).items():
             after = _read_overlay_text(_worker, env, origin)
-            for line in any_overrides(before, after, target):
+            files_before = (payload_baseline or {}).get(origin)
+            files_after = (_read_payload_files(_worker, env, origin)
+                           if files_before is not None else None)
+            for line in any_overrides(before, after, target,
+                                      files_before=files_before,
+                                      files_after=files_after):
                 found.append(f"{origin}: {line}")
         if found:
             services.activity_log(
@@ -2035,6 +2058,10 @@ class PatchAttemptStep:
             o: _read_overlay_text(_worker, env, o)
             for o in (origin, *also_origins)
         }
+        ctx.state["payload_baseline"] = {
+            o: _read_payload_files(_worker, env, o)
+            for o in (origin, *also_origins)
+        }
 
         # Compose this one origin BEFORE the agent touches anything, so
         # the attempt starts from a tree derived from the repo it can
@@ -2353,6 +2380,7 @@ class PatchAttemptStep:
         ctx.state["any_overrides"] = _report_any_overrides(
             services, ctx, queue_root, env,
             baseline=ctx.state.get("overlay_baseline") or {},
+            payload_baseline=ctx.state.get("payload_baseline") or {},
         )
 
         # Step 30 slice 5: changes.diff is now branch-vs-base
