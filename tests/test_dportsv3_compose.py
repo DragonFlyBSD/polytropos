@@ -1137,6 +1137,108 @@ def test_compose_incremental_origin_reapplies_selected_compat_port_in_place(
     assert [port["origin"] for port in payload["ports"]] == ["devel/a"]
 
 
+def _compose_argv(output, delta, freebsd, *extra) -> list[str]:
+    return [
+        "compose", "--target", "@main", "--output", str(output),
+        "--delta-root", str(delta), "--freebsd-root", str(freebsd),
+        "--oracle-profile", "off", "--json", *extra,
+    ]
+
+
+def test_compose_incremental_origin_without_overlay_composes_the_upstream_port(
+    tmp_path, capsys
+) -> None:
+    """A slave with no delta directory used to fail verify before dsynth
+    ran: reapply composes the master and every slave, and the slave was
+    "not found" (poly-lt5q.1). It has no overlay to apply, so it is the
+    upstream port -- what a STATUS-only port and a full compose give."""
+    freebsd = tmp_path / "freebsd"
+    delta = tmp_path / "delta"
+    output = tmp_path / "out"
+
+    (freebsd / "devel" / "a").mkdir(parents=True)
+    (freebsd / "devel" / "a" / "Makefile").write_text("VAR= old\n")
+    (freebsd / "devel" / "b").mkdir(parents=True)
+    (freebsd / "devel" / "b" / "Makefile").write_text("MASTERDIR= ../a\n")
+    _init_freebsd_repo(freebsd)
+
+    (delta / "ports" / "devel" / "a").mkdir(parents=True)
+    (delta / "ports" / "devel" / "a" / "overlay.dops").write_text(
+        'target @main\nport devel/a\ntype port\nmk set VAR "new"\n'
+    )
+
+    assert main(_compose_argv(output, delta, freebsd, "--replace-output")) == 0
+    capsys.readouterr()
+
+    # What a verify or a patch job leaves behind in the composed slave.
+    (output / "devel" / "b" / "Makefile").write_text("MASTERDIR= ../elsewhere\n")
+    (output / "devel" / "b" / "dragonfly").mkdir()
+    (output / "devel" / "b" / "dragonfly" / "patch-x").write_text("leftover\n")
+
+    code = main(_compose_argv(
+        output, delta, freebsd, "--origin", "devel/a", "--origin", "devel/b",
+    ))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["ok"] is True
+    assert (output / "devel" / "a" / "Makefile").read_text() == "VAR= new\n"
+    assert (output / "devel" / "b" / "Makefile").read_text() == "MASTERDIR= ../a\n"
+    assert not (output / "devel" / "b" / "dragonfly").exists()
+
+    preflight = next(
+        stage for stage in payload["stages"] if stage["name"] == "preflight_validate"
+    )
+    assert preflight["errors"] == []
+    assert preflight["warnings"] == [
+        "I_COMPOSE_SELECTED_ORIGIN_UPSTREAM_ONLY: devel/b: no overlay in the "
+        "delta tree; composed as the upstream port"
+    ]
+    # Counted once: in the stage, not again on the port.
+    assert payload["summary"]["warnings"] == 1
+
+    ports = {port["origin"]: port for port in payload["ports"]}
+    assert sorted(ports) == ["devel/a", "devel/b"]
+    assert ports["devel/b"]["mode"] == "compat"
+    assert ports["devel/b"]["mode_reason"] == "no-overlay"
+    assert ports["devel/b"]["type"] == "port"
+    assert "upstream-only" in ports["devel/b"]["notes"]
+    assert ports["devel/b"]["errors"] == 0
+
+
+def test_compose_incremental_origin_missing_upstream_too_is_not_found(
+    tmp_path, capsys
+) -> None:
+    """With no delta directory and no upstream port there is nothing to
+    compose -- a typo, or a port gone upstream. That stays an error."""
+    freebsd = tmp_path / "freebsd"
+    delta = tmp_path / "delta"
+    output = tmp_path / "out"
+
+    (freebsd / "devel" / "a").mkdir(parents=True)
+    (freebsd / "devel" / "a" / "Makefile").write_text("VAR= old\n")
+    _init_freebsd_repo(freebsd)
+    (delta / "ports").mkdir(parents=True)
+
+    assert main(_compose_argv(output, delta, freebsd, "--replace-output")) == 0
+    capsys.readouterr()
+
+    code = main(_compose_argv(output, delta, freebsd, "--origin", "devel/nope"))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code != 0
+    assert payload["ok"] is False
+    preflight = next(
+        stage for stage in payload["stages"] if stage["name"] == "preflight_validate"
+    )
+    assert preflight["errors"] == [
+        "E_COMPOSE_SELECTED_ORIGIN_NOT_FOUND: origin not found in the delta "
+        "tree or upstream: devel/nope"
+    ]
+    assert payload["ports"] == []
+    assert not (output / "devel" / "nope").exists()
+
+
 def test_compose_failed_patch_does_not_leave_patch_artifacts(tmp_path, capsys) -> None:
     freebsd = tmp_path / "freebsd"
     delta = tmp_path / "delta"

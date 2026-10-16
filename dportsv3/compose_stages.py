@@ -627,17 +627,13 @@ def preflight_stage(
 ) -> tuple[ComposeStageResult, list[ComposePortContext], dict[str, ComposePortReport]]:
     stage = ComposeStageResult(name="preflight_validate", started_at=datetime.now())
     contexts = discover_overlay_contexts(delta_root, target)
+    missing: list[str] = []
     if selected_origins is not None:
         requested = set(selected_origins)
         found = {ctx.origin for ctx in contexts}
         missing = sorted(requested - found)
         contexts = [ctx for ctx in contexts if ctx.origin in requested]
         stage.metadata["selected_origins"] = list(selected_origins)
-        for origin in missing:
-            stage.add_error(
-                "E_COMPOSE_SELECTED_ORIGIN_NOT_FOUND",
-                f"overlay origin not found: {origin}",
-            )
     reports = {ctx.origin: ComposePortReport(origin=ctx.origin) for ctx in contexts}
 
     usable, on_target_branch = _check_freebsd_git_state(
@@ -748,6 +744,38 @@ def preflight_stage(
                 delta_writes=delta_writes,
                 prune_stale_overlays=prune_stale_overlays,
             )
+
+    # A selected origin with no directory in the delta tree has no overlay
+    # to apply, so it composes as the upstream port: what a STATUS-only
+    # port already gets on the compat path, and what a full compose seeds.
+    # Refusing it failed verify for every master with such a slave, before
+    # dsynth ran (poly-lt5q.1). Only an origin upstream lacks as well is
+    # not found.
+    for origin in missing:
+        if origin not in upstream_origins:
+            stage.add_error(
+                "E_COMPOSE_SELECTED_ORIGIN_NOT_FOUND",
+                f"origin not found in the delta tree or upstream: {origin}",
+            )
+            continue
+        ctx = ComposePortContext(
+            origin=origin,
+            path=delta_root / "ports" / origin,
+            dops_path=None,
+            mode="compat",
+            mode_reason="no-overlay",
+        )
+        contexts.append(ctx)
+        reports[origin] = ComposePortReport(
+            origin=origin,
+            mode=ctx.mode,
+            mode_reason=ctx.mode_reason,
+            notes=["upstream-only"],
+        )
+        stage.add_warning(
+            "I_COMPOSE_SELECTED_ORIGIN_UPSTREAM_ONLY",
+            f"{origin}: no overlay in the delta tree; composed as the upstream port",
+        )
 
     if delta_writes:
         stage.metadata["delta_writes"] = delta_writes

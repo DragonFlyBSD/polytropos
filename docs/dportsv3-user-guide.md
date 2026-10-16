@@ -410,6 +410,9 @@ Incremental selected-origin compose:
 - The delta tree is never written: a stale overlay's `removed_in` marker is
   reported as would add and left for a full compose.
 - Only the selected origins are revalidated and recomposed.
+- A selected origin with no directory in the delta tree is composed as the
+  upstream port, with warning `I_COMPOSE_SELECTED_ORIGIN_UPSTREAM_ONLY`. One
+  missing upstream too fails with `E_COMPOSE_SELECTED_ORIGIN_NOT_FOUND`.
 - If `--output` does not already exist, compose fails.
 
 Future selected-origin dependency mode:
