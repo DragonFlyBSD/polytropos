@@ -120,6 +120,23 @@ on_missing        = "on-missing" ("error" | "warn" | "noop") ;
 - `type` defaults to `port` if omitted
 - `reason` and `maintainer` are optional metadata fields
 
+### Port root by type (normative)
+
+`type` names the tree compose copies in as the port root before any
+operation runs. The operations then apply to that copy the same way for
+every type:
+
+- `port`: the origin in the FreeBSD ports checkout, on the branch matching
+  the build line
+- `dport`: the overlay's `newport/`, the same tree on every build line
+- `lock`: the origin in the lock root (`--lock-root`, the DPorts checkout)
+- `mask`: none; the origin is removed and no operation runs
+
+For a `dport`, `newport/` is the port's upstream, as the FreeBSD checkout
+is for a `port`. A change one build line needs goes in that line's scope,
+as an operation or in its `dragonfly/@<line>/` payload; a change to
+`newport/` reaches every build line and no scope can narrow it.
+
 ### Target scope rules (normative)
 
 - Active scope starts as `@any` before the first explicit `target`

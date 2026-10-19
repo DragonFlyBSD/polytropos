@@ -10,8 +10,10 @@ patches in.
 States returned by :func:`classify`:
 
 - ``converted``: the port has ``overlay.dops`` and no unambiguous
-  unmigrated artifacts (``newport/`` or any ``Makefile.DragonFly*``).
-  ``dragonfly/`` and ``diffs/`` may be valid peers referenced by dops.
+  unmigrated artifacts (any ``Makefile.DragonFly*``, or ``newport/`` beside
+  an overlay that is not ``type dport``). ``dragonfly/`` and ``diffs/`` may
+  be valid peers referenced by dops, and a dport's ``newport/`` is its
+  upstream (poly-7pwa.35).
 - ``auto_safe_pending``: a plain ``Makefile.DragonFly`` is present
   whose contents are pure assignments (no conditionals, no recipes).
   The deterministic converter in ``migration.convert`` can handle

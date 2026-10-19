@@ -190,6 +190,16 @@ shared fix breaks a line that was building. So:
 | An `@any` op composes but is wrong for your line | override it in your line's block |
 | An `@any` op fails to compose on your line | your own change did that: undo it. One that already failed when the job started never reaches you; it goes to an operator |
 
+**A dport (`type dport`) is no exception.** Its `newport/` is the port's
+upstream: compose copies it in on every build line, as it copies the
+FreeBSD tree for any other port, and the table applies unchanged. Never
+edit a file under `newport/`: that change reaches every line whatever
+row you are in, and no line can override it, so `put_file` and
+`edit_file` refuse it. A `Makefile` or `pkg-plist` change is an op, a
+source patch goes through `install_patches`, many changes to one file are
+a diff under `diffs/` with `patch apply`, and `file remove <path>` drops
+a file.
+
 **Do not edit or delete an `@any` op** on a port that had an overlay
 before the job: every line reads it, and yours is the only one built.
 Overriding works because `@any` ops run first (next section): `mk set` in

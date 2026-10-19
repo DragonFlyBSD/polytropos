@@ -43,6 +43,9 @@ class OverlayFacts:
     newport: bool = False
     auto_safe_makefile: bool = False
     makefile_reasons: tuple[str, ...] = ()
+    #: The type overlay.dops declares, or None without one that parses.
+    #: For a dport, newport/ is the port's upstream, not leftover compat.
+    overlay_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,21 @@ class OverlayAssessment:
         }
 
 
+def declared_overlay_type(text: str) -> str | None:
+    """The type an overlay.dops declares, as compose reads it: the first
+    ``type`` directive, else ``port``. None when the text does not parse."""
+    from dportsv3.engine.api import parse_dsl  # noqa: PLC0415
+    from dportsv3.engine.ast import TypeDirective  # noqa: PLC0415
+
+    parsed = parse_dsl(text)
+    if not parsed.ok or parsed.ast is None:
+        return None
+    for statement in parsed.ast.statements:
+        if isinstance(statement, TypeDirective):
+            return statement.port_type
+    return "port"
+
+
 def makefile_dragonfly_text_auto_safe(text: str) -> tuple[bool, str]:
     if not text.strip():
         return True, "empty_makefile_dragonfly"
@@ -216,10 +234,11 @@ def facts_from_port_dir(origin: str, port_dir: Path) -> OverlayFacts:
     elif makefiles or targeted:
         reasons.append("targeted_or_multiple_makefile_dragonfly")
 
+    overlay = port_dir / "overlay.dops"
     return OverlayFacts(
         origin=origin,
         port_exists=True,
-        overlay_dops=(port_dir / "overlay.dops").exists(),
+        overlay_dops=overlay.exists(),
         makefile_dragonfly=makefiles,
         targeted_makefile_dragonfly=targeted,
         dragonfly_files=dragonfly_files,
@@ -227,6 +246,8 @@ def facts_from_port_dir(origin: str, port_dir: Path) -> OverlayFacts:
         newport=(port_dir / "newport").exists(),
         auto_safe_makefile=auto_safe,
         makefile_reasons=tuple(reasons),
+        overlay_type=(declared_overlay_type(safe_read_text(overlay))
+                      if overlay.is_file() else None),
     )
 
 
@@ -235,17 +256,23 @@ def assess_overlay(facts: OverlayFacts) -> OverlayAssessment:
     reasons: list[str] = []
     invariants: list[str] = []
 
+    # A dport's newport/ is its upstream, as the FreeBSD tree is a port's:
+    # compose copies it in and the overlay applies to it (poly-7pwa.35).
+    # Beside any other overlay it is an unfinished migration.
+    dport = facts.overlay_type == "dport"
+    legacy_newport = (("newport/",) if facts.newport and not dport else ())
+    no_upstream = dport and not facts.newport
     compat_artifacts = (
         facts.makefile_dragonfly
         + facts.targeted_makefile_dragonfly
         + facts.dragonfly_files
         + facts.diff_files
-        + (("newport/",) if facts.newport else ())
+        + legacy_newport
     )
     unmigrated = (
         facts.makefile_dragonfly
         + facts.targeted_makefile_dragonfly
-        + (("newport/",) if facts.newport else ())
+        + legacy_newport
     )
 
     if not facts.port_exists:
@@ -289,14 +316,26 @@ def assess_overlay(facts: OverlayFacts) -> OverlayAssessment:
                 artifacts=facts.makefile_dragonfly + facts.targeted_makefile_dragonfly,
             ))
             invariants.append("dops_with_unmigrated_makefile_dragonfly")
-        if facts.newport:
+        if legacy_newport:
             rules.append(OverlayRuleResult(
                 "legacy_newport_present",
                 severity="conversion_blocker",
-                artifacts=("newport/",),
+                artifacts=legacy_newport,
             ))
             invariants.append("dops_with_unmigrated_newport")
-        if not unmigrated:
+        elif dport and facts.newport:
+            rules.append(OverlayRuleResult("dport_newport_upstream",
+                                           artifacts=("newport/",)))
+        elif no_upstream:
+            # Compose has nothing to copy in: E_COMPOSE_DPORT_SOURCE_MISSING.
+            rules.append(OverlayRuleResult(
+                "dport_without_newport",
+                severity="conversion_blocker",
+                artifacts=("newport/",),
+                message="type dport declares newport/ and there is none",
+            ))
+            invariants.append("dport_without_newport")
+        if not unmigrated and not no_upstream:
             return OverlayAssessment(
                 state="converted",
                 action="proceed_triage",

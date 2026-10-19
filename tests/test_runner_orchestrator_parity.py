@@ -344,11 +344,24 @@ def test_a_fix_left_as_compat_artifacts_reaches_the_manual_queue(
     monkeypatch.setattr(patch_module, "run",
                         lambda *a, **kw: _StubPatchResult(status="success"))
     monkeypatch.setattr(worker, "classify_dops", lambda env, origin: "compat")
+    from dportsv3.agent.overlay_state import OverlayFacts, assess_overlay
+    monkeypatch.setattr(worker, "assess_dops", lambda env, origin: assess_overlay(
+        OverlayFacts(origin=origin, port_exists=True, overlay_dops=True,
+                     makefile_dragonfly=("Makefile.DragonFly",))))
+    stored: dict[str, bytes] = {}
+    monkeypatch.setattr(runner, "artifact_store_put",
+                        lambda bid, rel, data, kind=None:
+                        stored.__setitem__(rel, data) or True)
 
     job_path = _drop_patch_job(queue_env, job_id="job-compat.job",
                                bundle_dir=bdir, extra={"run_id": "run-1"})
     runner.process_job(queue_env["queue_root"], _claim(queue_env, job_path),
                        [], dry_run=False, playbooks_dir=None)
+
+    # poly-7pwa.35: the handoff names what blocked it, read before the reset.
+    handoff = stored["analysis/manual_handoff.md"].decode()
+    assert "blocked by: unmigrated_makefile_dragonfly (Makefile.DragonFly)" in handoff
+    assert "fix likely written as compat artifacts" not in handoff
 
     assert (lifecycle.current(queue_env["conn"], "job-compat.job")
             == lifecycle.JobState.ESCALATED)

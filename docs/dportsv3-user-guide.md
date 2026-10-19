@@ -254,6 +254,22 @@ Operational behavior for a run targeting `T`:
 2. apply all `T` operations,
 3. skip other explicit target operations.
 
+### A dport across build lines
+
+A `type dport` overlay composes from its `newport/`, and `newport/` is the
+port's upstream: the overlay applies to it as to a FreeBSD port, with the
+same `@any` and per-line scopes and the same `dragonfly/@<line>/` payload.
+A change one line needs goes in the overlay. An edit to `newport/` is
+like a FreeBSD commit merged to every branch at once: it reaches every
+build line. The patch agent never makes one; its file tools refuse paths
+under `newport/`.
+
+Limits of having one `newport/` for every line:
+
+- a new dport appears on every build line at once;
+- a line held at an older version than `newport/` carries that difference
+  as `patch apply` diffs under `diffs/@<line>/`.
+
 For formal grammar/semantics, see `docs/dsl-v0.md`.
 
 ## Exit Codes

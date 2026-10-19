@@ -1451,6 +1451,27 @@ def _err(
     )
 
 
+def _dops_blockers(worker_mod, env: str, origin: str) -> list[str] | None:
+    """The rules that keep ``origin`` from ``converted``, each with the
+    artifacts it found, or None when the assessment cannot be read.
+
+    poly-7pwa.35. The escalation used to say "fix likely written as compat
+    artifacts" without looking, and for every dport that was false: the
+    blocker was its own newport/ (poly-8fxz). A state with no blocking
+    rule (no overlay at all, say) is named by the rules it does have.
+    """
+    try:
+        assessment = worker_mod.assess_dops(env, origin)
+    except Exception:  # noqa: BLE001 -- the escalation still happens
+        return None
+    rules = ([r for r in assessment.rules if r.severity == "conversion_blocker"]
+             or list(assessment.rules))
+    return [
+        rule.code + (f" ({', '.join(rule.artifacts)})" if rule.artifacts else "")
+        for rule in rules
+    ]
+
+
 def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     """The "you are on build line X" section, or "" when there is nothing to say.
 
@@ -1490,6 +1511,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     on every line (poly-u9n4, Q4). install_patches asks the same question
     of the job's HEAD.
 
+    A DPORT GETS ONE MORE PARAGRAPH. Its newport/ is the port's upstream
+    and the rows apply as to any port (poly-7pwa.35); devel/libcxx22's fix
+    was written into newport/pkg-plist instead, which reaches every line.
+    put_file refuses that write; this says so before the attempt is spent.
+
     Best-effort, but not silent: a rename of anything it reaches would
     otherwise drop the section from every prompt with no signal.
     """
@@ -1522,11 +1548,21 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             return no_overlay
         planned = (build_plan(overlay.read_text(), overlay)
                    if overlay.is_file() else None)
+        # A dport's newport/ is its upstream: the rows below apply to it as
+        # to any port, and nothing goes in newport/ (poly-7pwa.35).
+        dport_note = (
+            "\nThis port is a `type dport`: its `newport/` is the port's "
+            "upstream, as the FreeBSD tree is for other ports, and compose "
+            "copies it in on every build line. Do not edit files under it; "
+            "the fix goes in the overlay, as for any port.\n"
+            if planned is not None and planned.ok and planned.plan is not None
+            and planned.plan.type == "dport" else ""
+        )
         # A bootstrap header is a file with no ops: still row 1, unless
         # its dragonfly/ folder installs patches on every line.
         if (planned is not None and planned.ok and planned.plan is not None
                 and not planned.plan.ops and not folders):
-            return no_overlay
+            return no_overlay + dport_note
         brief = [
             head
             + f"Other build lines already build this port's overlay, so keep "
@@ -1534,6 +1570,7 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
             f"`target {target}` block, and `install_patches` says where a "
             f"patch goes. Do not edit or delete an `@any` op: if one is wrong "
             f"for `{target}`, override it in that block.\n"
+            + dport_note
         ]
         if planned is None or not planned.ok or planned.plan is None:
             return "".join(brief)
@@ -2477,6 +2514,11 @@ class PatchAttemptStep:
             ctx.state["post_patch_dops_state"] = (
                 "converted" if "converted" in states else states[0]
             )
+            # What the escalation below names. Read now: the reset drops
+            # whatever the agent wrote (poly-7pwa.35).
+            if ctx.state["post_patch_dops_state"] != "converted":
+                ctx.state["post_patch_blockers"] = _dops_blockers(
+                    _worker, env, origin)
         except Exception as exc:
             ctx.state["post_patch_dops_state"] = None
             services.activity_log(
@@ -2537,13 +2579,15 @@ class PatchAttemptStep:
             # diff attached rather than stamping agent_fixed.
             post_state = ctx.state.get("post_patch_dops_state")
             if post_state != "converted":
+                blockers = ctx.state.get("post_patch_blockers")
                 _try_write_handoff(
                     services, ctx, origin,
                     reason="patch_non_dops_substrate",
                     reason_detail=(
                         f"build passed but port dops_state={post_state!r} "
-                        f"(expected 'converted'); fix likely written as "
-                        f"compat artifacts instead of overlay.dops"
+                        f"(expected 'converted'); blocked by: "
+                        + ("; ".join(blockers) if blockers
+                           else "not recorded")
                     ),
                     patch_result=result,
                 )

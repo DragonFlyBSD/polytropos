@@ -373,6 +373,45 @@ def _reject_dports_write(chroot_path: str) -> dict | None:
     }
 
 
+def _reject_newport_write(chroot_path: str, tool: str) -> dict | None:
+    """Refuse a write under a port's ``newport/``.
+
+    poly-7pwa.35. For a dport, ``newport/`` is the port's upstream: compose
+    copies it in on every build line, as it copies the FreeBSD tree for
+    any other port, and overlay.dops applies to it. A fix belongs in the
+    overlay, where the scoping table (poly-7pwa.27) decides which lines it
+    reaches. A change to ``newport/`` reaches every line whatever that
+    table says, and leaves nothing a line can override. Only a person
+    changes it. install_patches never writes there and delete_file only
+    takes dragonfly/ and diffs/, so these two tools are the way in.
+    """
+    import posixpath
+
+    prefix = "/work/DeltaPorts/ports/"
+    norm = posixpath.normpath(chroot_path)
+    parts = norm[len(prefix):].split("/") if norm.startswith(prefix) else []
+    if len(parts) < 3 or parts[2] != "newport":
+        return None
+    origin = "/".join(parts[:2])
+    return {
+        "ok": False,
+        "error": (
+            f"{tool} refused: {chroot_path} is under newport/, this dport's "
+            f"upstream. Compose copies newport/ in on every build line, as "
+            f"it copies the FreeBSD tree for any other port, so a change "
+            f"here reaches every line and no line can override it "
+            f"(poly-7pwa.35). Fix it in the overlay as for any port, in the "
+            f"block your build-line brief names: a Makefile or pkg-plist "
+            f"change is an `mk` or `text` op in {prefix}{origin}/overlay.dops; "
+            f"a source patch goes through genpatch and `install_patches`; "
+            f"many changes to one file are a diff under diffs/ applied with "
+            f"`patch apply`; `file remove <path>` drops a file."
+        ),
+        "path": chroot_path,
+        "blocked_by": "newport_upstream",
+    }
+
+
 # Paths inside the dsynth build root that are pure scaffolding /
 # per-slot machinery, never the right place to look for a port's
 # source. Refusing list_dir/grep here saves the agent from spending
@@ -1136,6 +1175,9 @@ def put_file(
     refused = _reject_orphan_dops_write(path)
     if refused is not None:
         return refused
+    refused = _reject_newport_write(path, "put_file")
+    if refused is not None:
+        return refused
     if encoding == "text":
         refused = _reject_line_numbered_content(path, content)
         if refused is not None:
@@ -1211,6 +1253,7 @@ def edit_file(
         _reject_dports_write(path),
         _reject_makefile_dragonfly_authoring(path),
         _reject_orphan_dops_write(path),
+        _reject_newport_write(path, "edit_file"),
         _reject_line_numbered_content(path, old_string),
         _reject_line_numbered_content(path, new_string),
     ):
@@ -2274,6 +2317,7 @@ def probe_overlay_facts(env: str, origin: str):
     """Collect raw overlay facts from inside the dev-env chroot."""
     from dportsv3.agent.overlay_state import (  # noqa: PLC0415
         OverlayFacts,
+        declared_overlay_type,
         makefile_dragonfly_text_auto_safe,
     )
 
@@ -2345,6 +2389,14 @@ fi
     elif makefiles or targeted:
         reasons.append("targeted_or_multiple_makefile_dragonfly")
 
+    # The declared type: a dport's newport/ is its upstream (poly-7pwa.35).
+    overlay_type = None
+    if flags.get("DOPS"):
+        cat = _exec(env, "/bin/sh", "-c",
+                    'cat "$DELTAPORTS_ROOT/ports/$1/overlay.dops"', "_", origin)
+        if cat.returncode == 0:
+            overlay_type = declared_overlay_type(cat.stdout)
+
     return OverlayFacts(
         origin=origin,
         port_exists=True,
@@ -2356,6 +2408,7 @@ fi
         newport=bool(flags.get("NEWPORT")),
         auto_safe_makefile=auto_safe,
         makefile_reasons=tuple(reasons),
+        overlay_type=overlay_type,
     )
 
 
