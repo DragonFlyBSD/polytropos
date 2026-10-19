@@ -9,8 +9,9 @@ on run-to-run detail.
 This is the single definition of a fingerprint in the system. It is used
 in two places, which MUST agree:
 
-- at ingest (the failure hook) to stamp ``bundles.error_signature`` the
-  moment an occurrence is born, so issues can be keyed immediately; and
+- at ingest (the store, when the failure hook upserts the bundle) to stamp
+  ``bundles.error_signature`` the moment an occurrence is born, so issues
+  can be keyed immediately; and
 - by the runner's sticky-signature retry cap, which asks "is this the
   same wall we keep hitting?".
 
@@ -40,16 +41,23 @@ _LINECOL = re.compile(r":\d+(?::\d+)?(?=:|\s|\)|,|$)")
 # so digits embedded in identifiers (python312, libssl3) survive.
 _LONG_INT = re.compile(r"\b\d{3,}\b")
 _WS = re.compile(r"\s+")
+# A ports-framework line names the package it is about, version and all:
+# "===>   xorg-server-21.1.24,1 depends on file: ... - not found". The
+# origin is in the issue key already. Left in, it made each flavor
+# (xorg-vfbserver-..., xorg-nestserver-...,2) and each version bump of one
+# failure its own issue (poly-m8m).
+_PKG_PREFIX = re.compile(r"^===>\s+\S+-\d\S*\s+")
 
-# The failure hook's distiller (dports_dev_env dsynth-hooks/hook_common.sh,
-# distill_log) does not write the root-cause line first. It writes
-# banner-delimited sections:
+# The distiller (dportsv3.log_distill) does not write the root-cause line
+# first. It writes banner-delimited sections:
 #
 #     == Summary ==
-#     logfile: /work/dsynth/logs/devel___json-glib.log
+#     log: 887 lines
 #
+#     == Failed phase: build ==
+#     ...
 #     == First error candidates (max 60 matches) ==
-#     1234:configure: error: C compiler cannot create executables
+#     855:../glib/glib-unix.c:1010:10: error: variable 'kf' has ...
 #     ...
 #     == Error blocks (context +/-2, truncated later) ==
 #     == Tail (last 200 lines) ==
@@ -57,9 +65,12 @@ _WS = re.compile(r"\s+")
 # So "the first non-empty line" is the literal "== Summary ==" for every
 # failure in the tree. Measured on a 317-package build: 28 bundles, 19
 # origins, ONE distinct signature (poly-awz). The root cause is the first
-# entry under "First error candidates".
+# entry under "First error candidates". Errors.txt written before the
+# distiller moved into the store has the same sections without the failed
+# phase, and reads the same way.
 _SECTION_HEAD = re.compile(r"^==\s.*\s==$")
 _CANDIDATES_HEAD = re.compile(r"^==\s*First error candidates\b")
+_FAILED_PHASE_HEAD = re.compile(r"^==\s*Failed phase:\s*(\S+)\s*==$")
 # grep -n prefixes every hit with its line number in the source log. That is
 # incidental, and _LONG_INT only reduces runs of 3+ digits, so a two-digit
 # line number would otherwise split one failure into several signatures.
@@ -70,28 +81,39 @@ def _root_cause_line(text: str) -> str | None:
     """The line to fingerprint, from either shape of ``logs/errors.txt``.
 
     Distilled output is section-delimited (see ``_SECTION_HEAD``): take the
-    first entry under "First error candidates" and strip grep's line-number
-    prefix. Anything else — the ``missing_log=1`` key/value file the hook
-    writes when the log is unreadable, or a caller passing a raw error line
-    — keeps the original "first non-empty line" rule.
+    first entry under "First error candidates" and strip the line-number
+    prefix. With no candidate, the failed phase stands in for it. Anything
+    else — the ``missing_log=1`` key/value file the hook writes when the log
+    is unreadable, or a caller passing a raw error line — keeps the original
+    "first non-empty line" rule.
     """
     lines = text.splitlines()
     in_candidates = False
     distilled = False
+    phase = None
     for raw in lines:
         stripped = raw.strip()
         if _SECTION_HEAD.match(stripped):
             distilled = True
+            head = _FAILED_PHASE_HEAD.match(stripped)
+            if head and phase is None:
+                phase = head.group(1)
             in_candidates = bool(_CANDIDATES_HEAD.match(stripped))
             continue
         if in_candidates and stripped:
             return _GREP_LINENO.sub("", stripped, count=1).strip() or None
+    if distilled and phase:
+        # No pattern matched in the phase that failed. Its name still
+        # tells a port's patch failures from its depends failures, which
+        # the catch-all below cannot (poly-m8m).
+        return f"failed phase: {phase}"
     if distilled:
-        # Distilled, but no candidate matched: a failure phase the
-        # distiller has no pattern for (fetch, patch — poly-m8m). There is
-        # no root-cause line, and saying so is right. issue_key collapses
-        # signatureless failures for one (target, origin) into a single
-        # fallback issue instead of inventing a shared constant.
+        # Distilled, but no candidate matched and no phase is known: a log
+        # without phase markers, or errors.txt from before the store
+        # distilled. There is no root-cause line, and saying so is right.
+        # issue_key collapses signatureless failures for one
+        # (target, origin) into a single fallback issue instead of
+        # inventing a shared constant.
         return None
     for raw in lines:
         stripped = raw.strip()
@@ -112,6 +134,7 @@ def normalize_error(text: str | None) -> str | None:
     line = _root_cause_line(text)
     if not line:
         return None
+    line = _PKG_PREFIX.sub("", line, count=1)
     line = _HEX_ADDR.sub("0xADDR", line)
     line = _TIMESTAMP.sub("TIMESTAMP", line)
     line = _PATH.sub(lambda m: m.group(0).rsplit("/", 1)[-1], line)

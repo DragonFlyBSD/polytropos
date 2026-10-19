@@ -15,6 +15,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,11 @@ from .db.identifiers import require_identifier
 from .db.schema import init_db as _init_state_db
 
 DEFAULT_LOGS_ROOT = "/build/synth/logs"
+
+#: Where the failure hook puts a bundle's build log, and where the store
+#: puts what it distills from it.
+FULL_LOG_RELPATH = "logs/full.log.gz"
+ERRORS_RELPATH = "logs/errors.txt"
 
 
 def log(level: str, message: str) -> None:
@@ -177,14 +183,19 @@ class ArtifactStore:
         # comparing wall clocks across hosts. Absent whenever tracking is off,
         # which the derivation handles by falling back to timestamps.
         build_run_id = _coerce_build_run_id(payload.get("build_run_id"))
+        # The failure hook uploads the full log before the upsert, and the
+        # store distills it here (poly-m8m). Before the lock: distilling a
+        # large log is the slow part, and put_blob takes the lock itself.
+        distilled = self._distill_stored_log(bundle_id)
         # Fingerprint at ingest: prefer a caller-supplied signature, else
-        # derive it here from the distilled errors text. Computing it in
-        # the store keeps a single normalization rule (dportsv3.fingerprint,
-        # shared with the runner's sticky-signature check) and lets the
-        # stdlib-only hook client stay dumb.
+        # derive it here from the distilled errors text -- the store's own,
+        # or, from a hook that has not been updated, the text it sent.
+        # Computing it in the store keeps a single normalization rule
+        # (dportsv3.fingerprint, shared with the runner's sticky-signature
+        # check) and lets the stdlib-only hook client stay dumb.
         error_signature = payload.get("error_signature") or None
         if not error_signature:
-            errors_text = payload.get("errors_text")
+            errors_text = distilled or payload.get("errors_text")
             if errors_text:
                 from dportsv3.fingerprint import compute_fingerprint
                 error_signature = compute_fingerprint(errors_text)
@@ -249,6 +260,30 @@ class ArtifactStore:
                     seen_ts=seen_ts, now=now, build_run_id=build_run_id,
                 )
             self.conn.commit()
+
+    def _distill_stored_log(self, bundle_id: str) -> str | None:
+        """Distill the bundle's stored full log into ``logs/errors.txt``.
+
+        Returns the text, or None when there is nothing to do: no full log
+        yet (a hook that uploads it after the upsert, as they all did before
+        poly-m8m, still sends its own errors text), or errors.txt already
+        there (a re-upsert, or that same older hook's upload). A log that
+        cannot be read is logged and treated as absent, so the upsert still
+        records the occurrence.
+        """
+        stored = self.get_artifact(bundle_id, FULL_LOG_RELPATH)
+        if stored is None:
+            return None
+        if self.get_artifact(bundle_id, ERRORS_RELPATH) is not None:
+            return None
+        from dportsv3.log_distill import distill_file  # noqa: PLC0415
+        try:
+            text = distill_file(stored[1])
+        except (OSError, EOFError, zlib.error) as exc:
+            log("WARN", f"{bundle_id}: cannot distill {FULL_LOG_RELPATH}: {exc}")
+            return None
+        self.put_blob(bundle_id, ERRORS_RELPATH, text.encode("utf-8"), None)
+        return text
 
     def _upsert_issue_for_occurrence(self, *, issue_key: str, target: str | None,
                                      origin: str, fingerprint: str | None,

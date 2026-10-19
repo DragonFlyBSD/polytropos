@@ -35,14 +35,31 @@ tracker_config_defaults
 # instead of comparing wall clocks across hosts. Empty when tracking is off.
 build_run_id=$(tracker_run_ordinal)
 
-# Distill the failure log up front so the bundle upsert can carry the
-# errors text — the store fingerprints it at ingest to establish issue
-# identity the moment this occurrence is born.
+# The full log goes up before the bundle upsert: the store distills it
+# into logs/errors.txt and fingerprints that at ingest, which establishes
+# issue identity the moment this occurrence is born (poly-m8m).
+#
+# It travels as bytes, compressed. It used to be registered with put-fs,
+# which records a path instead of content: unresolvable from another host,
+# and unresolvable even on this one when the hook runs inside a chroot and
+# computes /work/dsynth/logs/... for a store outside it. gzip -9 on
+# build-log text is a large win, so the upload is small.
 logfile=$(logfile_for_origin "$ORIGIN" "$FLAVOR")
 tmpdir=$(mktemp -d)
-# Best-effort: a distill failure must never cost us the bundle record.
-distill_log "$logfile" "$tmpdir" || true
 errors_txt="${tmpdir}/errors.txt"
+if [ -r "$logfile" ]; then
+	full_log_gz="${tmpdir}/full.log.gz"
+	# Best-effort: a failed upload must never cost us the bundle record.
+	# Without the log the occurrence lands on the port's catch-all issue.
+	if ! { gzip -c -9 "$logfile" > "$full_log_gz" &&
+		artifact_store put-blob --bundle-id "${bundle_id}" --relpath "logs/full.log.gz" --file "$full_log_gz" --kind gzip >/dev/null; }; then
+		tracker_log "WARN: ${bundle_id}: full log upload failed; no errors.txt for this occurrence"
+	fi
+else
+	# No log to distill. This file is the errors text instead, and it
+	# fingerprints as "missing_log=1".
+	write_kv_file "$errors_txt" "missing_log=1" "logfile=${logfile}"
+fi
 
 artifact_store bundle-upsert \
 	--run-id "${run_id}" \
@@ -112,26 +129,11 @@ if [ -d "${portdir}/dragonfly" ]; then
 	done
 fi
 
-# Persist the (already-distilled) bounded error bundle.
+# The missing-log stand-in. With a log, the store wrote errors.txt itself.
 if [ -r "${errors_txt}" ]; then
 	artifact_store put-blob --bundle-id "${bundle_id}" --relpath "logs/errors.txt" --file "${errors_txt}" >/dev/null
 fi
 rm -rf "$tmpdir"
-
-# The full log travels as bytes, compressed. It used to be registered
-# with put-fs, which records a path instead of content: unresolvable from
-# another host, and unresolvable even on this one when the hook runs
-# inside a chroot and computes /work/dsynth/logs/... for a store outside
-# it. gzip -9 on build-log text is a large win, so the upload is small.
-if [ -r "$logfile" ]; then
-	full_log_gz="$(mktemp -t dportsv3-fullog)" || full_log_gz=""
-	if [ -n "$full_log_gz" ]; then
-		if gzip -c -9 "$logfile" > "$full_log_gz"; then
-			artifact_store put-blob --bundle-id "${bundle_id}" --relpath "logs/full.log.gz" --file "$full_log_gz" --kind gzip >/dev/null
-		fi
-		rm -f "$full_log_gz"
-	fi
-fi
 
 # Enqueue job for processing.
 enqueue_job "$bundle_id" "$origin_base" "$FLAVOR" "$PROFILE" "$run_id" "$ts"

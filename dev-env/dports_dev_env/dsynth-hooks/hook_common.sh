@@ -345,22 +345,6 @@ copy_glob_if_exists() {
 	fi
 }
 
-truncate_bytes() {
-	infile=$1
-	max_bytes=$2
-	outfile=$3
-
-	# Preserve whole file if already under limit.
-	size=$(wc -c <"$infile" | tr -d ' ')
-	if [ "$size" -le "$max_bytes" ]; then
-		cp -p "$infile" "$outfile"
-		return
-	fi
-
-	dd if="$infile" of="$outfile" bs=1 count="$max_bytes" 2>/dev/null
-	printf '\n[...truncated to %s bytes...]\n' "$max_bytes" >>"$outfile"
-}
-
 # -----------------------------------------------------------------------------
 # dportsv3 tracker integration (was scripts/builderhooks/tracker_common.sh)
 # -----------------------------------------------------------------------------
@@ -672,58 +656,4 @@ tracker_run_end() {
 	tracker_log "finished tracker run $RUN_ID for profile=$PROFILE"
 	tracker_clear_state
 	return 0
-}
-
-distill_log() {
-	logfile=$1
-	outdir=$2
-
-	mkdir -p "$outdir"
-
-	if [ ! -r "$logfile" ]; then
-		write_kv_file "${outdir}/errors.txt" "missing_log=1" "logfile=${logfile}"
-		return
-	fi
-
-	# High-signal patterns. One list, both greps: the candidates section
-	# and the blocks section answered different questions when they were
-	# maintained separately, so a log whose only hit was "ERROR: " got
-	# candidates with no context at all (java/openjdk25, 2026-09-14).
-	# `file:line:col: error:` is the clang/gcc diagnostic shape. Bare
-	# "error:" is what the conservative list was avoiding; requiring the
-	# position prefix keeps prose out.
-	# Note: use grep -nE (extended-regex, line-number); rg isn't in
-	# dfly base. \s+ → [[:space:]]+ for POSIX ERE compatibility.
-
-	set -- \
-		-e 'fatal error:' \
-		-e '^[^[:space:]]+:[0-9]+:[0-9]+: error:' \
-		-e 'undefined reference' \
-		-e 'ld: error:' \
-		-e 'collect2: error' \
-		-e 'CMake Error' \
-		-e 'configure: error' \
-		-e 'meson\.build:.*ERROR' \
-		-e '^ninja: build stopped' \
-		-e 'error: failed to run custom build command for' \
-		-e 'ERROR: ' \
-		-e 'No such file or directory' \
-		-e '^===>[[:space:]]+Stopped[[:space:]]+in[[:space:]]+'
-
-	{
-		echo "== Summary =="
-		echo "logfile: ${logfile}"
-		echo
-		echo "== First error candidates (max 60 matches) =="
-		grep -nE -m 60 "$@" "$logfile" || true
-		echo
-		echo "== Error blocks (context +/-2, truncated later) =="
-		grep -nE -C 2 "$@" "$logfile" || true
-		echo
-		echo "== Tail (last 200 lines) =="
-		tail -n 200 "$logfile" || true
-	} >"${outdir}/errors.txt.tmp"
-
-	truncate_bytes "${outdir}/errors.txt.tmp" 200000 "${outdir}/errors.txt"
-	rm -f "${outdir}/errors.txt.tmp"
 }

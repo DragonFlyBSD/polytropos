@@ -55,18 +55,25 @@ def client(tmp_path):
     return path
 
 
-def _run_failure_hook(tmp_path, url, client, **env_extra):
-    """Fire hook_pkg_failure for a failed editors/vim, and return the run."""
+_VIM_LOG = (
+    "===>  Building for vim-9.1\n"
+    "buffer.c:120:5: error: use of undeclared identifier 'nosuchsym'\n"
+    "*** Error code 1\n"
+)
+
+
+def _run_failure_hook(tmp_path, url, client, log_text=_VIM_LOG, **env_extra):
+    """Fire hook_pkg_failure for a failed editors/vim, and return the run.
+
+    ``log_text=None`` leaves the build log out: the unreadable-log case.
+    """
     logs = tmp_path / "logs"
     ports = tmp_path / "ports" / "editors" / "vim"
     ports.mkdir(parents=True)
     (ports / "Makefile").write_text("PORTNAME=\tvim\n")
     logs.mkdir()
-    (logs / "editors___vim.log").write_text(
-        "===>  Building for vim-9.1\n"
-        "buffer.c:120:5: error: use of undeclared identifier 'nosuchsym'\n"
-        "*** Error code 1\n"
-    )
+    if log_text is not None:
+        (logs / "editors___vim.log").write_text(log_text)
     env = {
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin",
         "RESULT": "failure",
@@ -185,3 +192,46 @@ def test_no_artifact_is_left_pointing_at_a_path(tmp_path, store_url, client):
         for r in store.conn.execute("SELECT DISTINCT backend FROM artifact_refs")
     }
     assert backends == {"blob"}
+
+
+def _errors_and_signature(store):
+    from dportsv3.artifact_store import blob_path
+    row = store.conn.execute(
+        "SELECT r.sha256, b.error_signature FROM artifact_refs r "
+        "JOIN bundles b USING (bundle_id) WHERE r.relpath = 'logs/errors.txt'"
+    ).fetchone()
+    assert row is not None, "no errors.txt"
+    return (blob_path(store.blob_root, row["sha256"]).read_text(),
+            row["error_signature"])
+
+
+def test_the_store_distills_the_log_the_hook_sent_first(
+    tmp_path, store_url, client
+):
+    """The hook uploads the full log before the upsert so the store can
+    distill it and fingerprint the result at ingest (poly-m8m). Sent after,
+    as it used to be, the occurrence would be born with no signature."""
+    from dportsv3.fingerprint import compute_fingerprint
+
+    url, store = store_url
+    done = _run_failure_hook(tmp_path, url, client)
+    assert done.returncode == 0, done.stderr
+
+    errors, signature = _errors_and_signature(store)
+    assert "2:buffer.c:120:5: error: use of undeclared identifier" in errors
+    assert signature is not None
+    assert signature == compute_fingerprint(errors)
+
+
+def test_a_missing_log_still_leaves_errors_txt(tmp_path, store_url, client):
+    """No log, nothing to distill: the hook's key/value stand-in is the
+    errors text, as before."""
+    from dportsv3.fingerprint import compute_fingerprint
+
+    url, store = store_url
+    done = _run_failure_hook(tmp_path, url, client, log_text=None)
+    assert done.returncode == 0, done.stderr
+
+    errors, signature = _errors_and_signature(store)
+    assert errors.startswith("missing_log=1\n")
+    assert signature == compute_fingerprint(errors)

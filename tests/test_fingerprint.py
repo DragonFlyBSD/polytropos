@@ -76,7 +76,9 @@ def test_digits_embedded_in_identifiers_survive():
 # --- distilled errors.txt (poly-awz) ---------------------------------------
 
 def _distilled(*candidates: str, tail: str = "some tail line") -> str:
-    """One errors.txt in the shape distill_log() actually writes."""
+    """One errors.txt in the sectioned shape (poly-awz). The store's
+    distiller (dportsv3.log_distill) writes the same sections, with the
+    failed phase ahead of them."""
     body = "\n".join(candidates)
     return (
         "== Summary ==\n"
@@ -129,9 +131,10 @@ def test_tail_noise_does_not_reach_the_signature():
 
 
 def test_distilled_without_candidates_has_no_fingerprint():
-    """A phase the distiller has no pattern for (fetch, patch) yields an
-    empty candidate section. That is 'no root cause', not a shared
-    constant -- issue_key collapses these per (target, origin)."""
+    """No candidate and no failed phase -- a log without phase markers,
+    or errors.txt from before the store distilled -- is 'no root cause',
+    not a shared constant: issue_key collapses these per (target, origin).
+    With a failed phase, its name stands in (tests/test_log_distill.py)."""
     empty = (
         "== Summary ==\n"
         "logfile: /work/dsynth/logs/lang___rust.log\n"

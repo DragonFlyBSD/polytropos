@@ -61,9 +61,10 @@ def cmd_bundle_upsert(args):
         # regression derivation falls back to timestamps.
         "build_run_id": args.build_run_id,
     }
-    # Ship the distilled errors text so the store can fingerprint the
-    # failure at ingest (issue identity). Best-effort: a missing/unreadable
-    # file just means no signature this pass.
+    # Ship errors text for the store to fingerprint at ingest (issue
+    # identity) when it has no full log to distill its own from: the
+    # missing-log stand-in, or an older hook's distillation. Best-effort:
+    # a missing/unreadable file just means the store has nothing from us.
     if args.errors_file:
         try:
             with open(args.errors_file, "r", encoding="utf-8", errors="replace") as f:
@@ -135,7 +136,8 @@ def main():
     p_bundle.add_argument("--target", default="")
     p_bundle.add_argument("--build-run-id", default="")
     p_bundle.add_argument("--errors-file", default="",
-                          help="distilled errors.txt to fingerprint at ingest")
+                          help="errors text to fingerprint at ingest when no "
+                               "full log was uploaded first")
     p_bundle.set_defaults(func=cmd_bundle_upsert)
 
     p_blob = sub.add_parser("put-blob")
