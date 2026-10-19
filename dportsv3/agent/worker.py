@@ -376,7 +376,7 @@ def _reject_dports_write(chroot_path: str) -> dict | None:
 def _reject_newport_write(chroot_path: str, tool: str) -> dict | None:
     """Refuse a write under a port's ``newport/``.
 
-    poly-7pwa.35. For a dport, ``newport/`` is the port's upstream: compose
+    poly-7pwa.35. For a dport, ``newport/`` is the port's origin: compose
     copies it in on every build line, as it copies the FreeBSD tree for
     any other port, and overlay.dops applies to it. A fix belongs in the
     overlay, where the scoping table (poly-7pwa.27) decides which lines it
@@ -397,7 +397,7 @@ def _reject_newport_write(chroot_path: str, tool: str) -> dict | None:
         "ok": False,
         "error": (
             f"{tool} refused: {chroot_path} is under newport/, this dport's "
-            f"upstream. Compose copies newport/ in on every build line, as "
+            f"origin. Compose copies newport/ in on every build line, as "
             f"it copies the FreeBSD tree for any other port, so a change "
             f"here reaches every line and no line can override it "
             f"(poly-7pwa.35). Fix it in the overlay as for any port, in the "
@@ -2320,6 +2320,7 @@ def probe_overlay_facts(env: str, origin: str):
         declared_overlay_type,
         makefile_dragonfly_text_auto_safe,
     )
+    from dportsv3.newport import compat_entries  # noqa: PLC0415
 
     cmd = r'''
 set -u
@@ -2343,6 +2344,9 @@ if [ -d "$PORT/diffs" ]; then
         | sed "s|^$PORT/||; s|^|DIFF_FILE=|"
 fi
 [ -d "$PORT/newport" ] && echo NEWPORT=1 || echo NEWPORT=0
+for f in "$PORT"/newport/*; do
+    [ -e "$f" ] && echo NEWPORT_ENTRY=${f##*/}
+done
 '''
     p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)
     if p.returncode != 0:
@@ -2357,6 +2361,7 @@ fi
         "TARGET_MKDFLY": [],
         "DRAGONFLY_FILE": [],
         "DIFF_FILE": [],
+        "NEWPORT_ENTRY": [],
     }
     for line in (p.stdout or "").splitlines():
         if "=" not in line:
@@ -2364,7 +2369,8 @@ fi
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip()
-        if key in {"MKDFLY", "TARGET_MKDFLY", "DRAGONFLY_FILE", "DIFF_FILE"}:
+        if key in {"MKDFLY", "TARGET_MKDFLY", "DRAGONFLY_FILE", "DIFF_FILE",
+                   "NEWPORT_ENTRY"}:
             flags.setdefault(key, [])
             assert isinstance(flags[key], list)
             flags[key].append(value)
@@ -2389,7 +2395,7 @@ fi
     elif makefiles or targeted:
         reasons.append("targeted_or_multiple_makefile_dragonfly")
 
-    # The declared type: a dport's newport/ is its upstream (poly-7pwa.35).
+    # The declared type: a dport's newport/ is its origin (poly-7pwa.35).
     overlay_type = None
     if flags.get("DOPS"):
         cat = _exec(env, "/bin/sh", "-c",
@@ -2409,6 +2415,7 @@ fi
         auto_safe_makefile=auto_safe,
         makefile_reasons=tuple(reasons),
         overlay_type=overlay_type,
+        newport_compat=tuple(compat_entries(flags.get("NEWPORT_ENTRY") or ())),
     )
 
 

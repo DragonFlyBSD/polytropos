@@ -12,7 +12,7 @@ the minimal subset patch agents need 90% of the time.
 ```dops
 # overlay.dops at ports/<category>/<name>/overlay.dops
 port <category>/<name>
-type port                    # port | dport (newport/ is its upstream; fixes still go here) | mask | lock
+type port                    # port | dport (newport/ is its origin; fixes still go here) | mask | lock
 target @any                  # or @main, @2026Q2, @2026Q1, etc.
 reason "<one-line why this overlay exists>"
 
@@ -290,5 +290,6 @@ or regenerating a deferred `diffs/Makefile.diff` patch. Pick by the patch's
 A `type dport` port needs no body ops at all unless you're fixing a
 specific build failure — the header alone composes it from `newport/`.
 `newport/` plays the FreeBSD tree's role: a fix is ops in this file (or a
-patch through `install_patches`), scoped like any port's, never an edit
-under `newport/`, which would reach every build line.
+patch through `install_patches`, into the `dragonfly/` beside `newport/`),
+scoped like any port's, never an edit under `newport/`, which would reach
+every build line.

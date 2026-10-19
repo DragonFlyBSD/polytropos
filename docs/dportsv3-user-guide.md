@@ -257,8 +257,23 @@ Operational behavior for a run targeting `T`:
 ### A dport across build lines
 
 A `type dport` overlay composes from its `newport/`, and `newport/` is the
-port's upstream: the overlay applies to it as to a FreeBSD port, with the
+port's origin: the overlay applies to it as to a FreeBSD port, with the
 same `@any` and per-line scopes and the same `dragonfly/@<line>/` payload.
+
+```text
+ports/<category>/<port>/
+  overlay.dops   type dport; ops, if any
+  newport/       the port: Makefile and includes, distinfo, pkg-*, files/
+  dragonfly/     DragonFly source patches, installed by the payload folder
+  diffs/         patch apply diffs, if any
+```
+
+`newport/` holds FreeBSD-port content only. `files/patch-*` is the port's
+own and may be DragonFly-specific; that is the author's choice. A
+`dragonfly/` or `Makefile.DragonFly*` inside `newport/` is compat content
+in the wrong place: compose warns `W_COMPOSE_DPORT_NEWPORT_COMPAT`, and a
+patch job on such a port ends on the Manual Queue, not as an agent fix.
+
 A change one line needs goes in the overlay. An edit to `newport/` is
 like a FreeBSD commit merged to every branch at once: it reaches every
 build line. The patch agent never makes one; its file tools refuse paths

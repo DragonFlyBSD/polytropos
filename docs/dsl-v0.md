@@ -132,10 +132,18 @@ every type:
 - `lock`: the origin in the lock root (`--lock-root`, the DPorts checkout)
 - `mask`: none; the origin is removed and no operation runs
 
-For a `dport`, `newport/` is the port's upstream, as the FreeBSD checkout
-is for a `port`. A change one build line needs goes in that line's scope,
-as an operation or in its `dragonfly/@<line>/` payload; a change to
-`newport/` reaches every build line and no scope can narrow it.
+For a `dport`, `newport/` is the port's origin, read-only, as the FreeBSD
+checkout is for a `port`. It holds what a FreeBSD port directory holds:
+the Makefile and its includes, `distinfo`, `pkg-*` and `files/`, whose
+`patch-*` files are the port's own, DragonFly-specific or not. It holds no
+compat content, no `dragonfly/` and no `Makefile.DragonFly*`: that is
+overlay content, and it goes beside `newport/` as it would beside a
+FreeBSD port, in the `dragonfly/` payload folder, in `diffs/`, or as
+operations. Compose warns on a dport whose `newport/` holds it
+(`W_COMPOSE_DPORT_NEWPORT_COMPAT`). A change one build line needs goes in
+that line's scope, as an operation or in its `dragonfly/@<line>/`
+payload; a change to `newport/` reaches every build line and no scope can
+narrow it.
 
 ### Target scope rules (normative)
 

@@ -1,4 +1,4 @@
-"""A dport's newport/ is its upstream (poly-7pwa.35).
+"""A dport's newport/ is its origin (poly-7pwa.35).
 
 Compose copies newport/ in as the port root and applies overlay.dops to it,
 as it does to the FreeBSD tree for any other port. So a fix goes in the
@@ -264,3 +264,168 @@ def test_the_quickref_no_longer_calls_newport_the_whole_port():
     assert "IS the whole port" not in text
     assert "newport/ is the complete port" not in text
     assert "never an edit under `newport/`" in text
+
+
+# --- what newport/ may hold (poly-7pwa.35 v3) -------------------------------
+#
+# newport/ is the dport's origin, read-only like a FreeBSD port directory:
+# FreeBSD-port content only. A dragonfly/ or Makefile.DragonFly* inside it
+# is overlay content in the wrong place. Compose accepted both layouts and
+# composed them the same, so nothing noticed, and v1 of this bead called
+# every such dport converted.
+
+
+def _newport(port: Path, *entries: str) -> Path:
+    newport = port / "newport"
+    newport.mkdir(parents=True, exist_ok=True)
+    (newport / "Makefile").write_text("PORTNAME= thing\n")
+    for entry in entries:
+        path = newport / entry
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x\n")
+    return newport
+
+
+@pytest.mark.parametrize("entries", [
+    (),
+    ("Makefile.common", "Makefile.inc", "distinfo", "pkg-descr", "pkg-plist"),
+    ("files/patch-src_dragonfly.c", "files/pkg-message.in"),
+    ("files/dragonfly/patch-x", "files/Makefile.DragonFly"),
+], ids=["makefile-only", "freebsd-files", "files-dir", "only-top-level-counts"])
+def test_freebsd_port_content_is_allowed(tmp_path, entries):
+    from dportsv3.newport import newport_compat_content
+    assert newport_compat_content(_newport(tmp_path, *entries)) == []
+
+
+@pytest.mark.parametrize("entry, found", [
+    ("dragonfly/patch-src_x.c", "newport/dragonfly/"),
+    ("Makefile.DragonFly", "newport/Makefile.DragonFly"),
+    ("Makefile.DragonFly.@any", "newport/Makefile.DragonFly.@any"),
+])
+def test_compat_content_is_flagged(tmp_path, entry, found):
+    from dportsv3.newport import newport_compat_content
+    assert newport_compat_content(_newport(tmp_path, entry)) == [found]
+
+
+def test_no_newport_has_nothing_to_flag(tmp_path):
+    from dportsv3.newport import newport_compat_content
+    assert newport_compat_content(tmp_path / "newport") == []
+
+
+@pytest.mark.parametrize("entry", ["dragonfly/patch-src_x.c",
+                                   "Makefile.DragonFly"])
+def test_a_dport_with_compat_in_newport_is_not_converted(tmp_path, entry):
+    port = _port(tmp_path, DPORT, newport=False)
+    _newport(port, entry)
+    assessment = assess("devel/thing", tmp_path)
+    assert assessment.state != "converted"
+    assert "dport_newport_compat" in assessment.invariant_violations
+    flagged = [r for r in assessment.rules if r.code == "dport_newport_compat"]
+    assert flagged and flagged[0].severity == "conversion_blocker"
+    assert set(flagged[0].artifacts) <= set(assessment.unmigrated_artifacts)
+
+
+def test_a_dport_with_its_patches_beside_newport_is_converted(tmp_path):
+    port = _port(tmp_path, DPORT, newport=False)
+    _newport(port, "files/patch-own", "distinfo")
+    (port / "dragonfly").mkdir()
+    (port / "dragonfly" / "patch-src_x.c").write_text("x\n")
+    assessment = assess("devel/thing", tmp_path)
+    assert assessment.state == "converted"
+    assert "dport_newport_compat" not in _codes(assessment)
+
+
+def test_a_type_port_with_a_stray_newport_is_still_legacy_newport(tmp_path):
+    """newport/ is not its origin at all: the whole directory is leftover."""
+    port = _port(tmp_path, PORT, newport=False)
+    _newport(port, "dragonfly/patch-x")
+    codes = _codes(assess("devel/thing", tmp_path))
+    assert "legacy_newport_present" in codes
+    assert "dport_newport_compat" not in codes
+
+
+def test_the_probe_lists_newport_entries(monkeypatch):
+    from dportsv3.agent.overlay_state import assess_overlay
+
+    def fake_exec(env, *argv, cwd="/work/DeltaPorts", input_text=None,
+                  timeout=None):
+        if argv[2] == 'cat "$DELTAPORTS_ROOT/ports/$1/overlay.dops"':
+            return subprocess.CompletedProcess(argv, 0, DPORT, "")
+        return subprocess.CompletedProcess(argv, 0, "\n".join([
+            "MISSING=0", "DOPS=1", "NEWPORT=1",
+            "NEWPORT_ENTRY=Makefile", "NEWPORT_ENTRY=dragonfly",
+            "NEWPORT_ENTRY=files", ""]), "")
+
+    monkeypatch.setattr(worker, "_exec", fake_exec)
+    facts = worker.probe_overlay_facts("env", "devel/thing")
+    assert facts.newport_compat == ("newport/dragonfly/",)
+    assert assess_overlay(facts).state != "converted"
+
+
+def test_the_brief_puts_a_dport_with_patches_on_its_line(brief_env):
+    """Its patches in the sibling dragonfly/ are overlay content: row 2."""
+    (brief_env / "overlay.dops").write_text(DPORT)
+    (brief_env / "dragonfly").mkdir()
+    (brief_env / "dragonfly" / "patch-src_x.c").write_text("x\n")
+    brief = steps._build_line_brief(worker, "brief-env", "devel/thing")
+    assert "no overlay ops yet" not in brief
+    assert "`target @2026Q3` block" in brief
+    assert "the `dragonfly/` beside `newport/`" in brief
+
+
+# --- compose warns, and still composes -------------------------------------
+
+
+def _compose(tmp_path, capsys):
+    import json
+
+    from dportsv3.cli import main
+
+    freebsd = tmp_path / "freebsd"
+    (freebsd / "devel").mkdir(parents=True)
+    for cmd in (["git", "init", "-q"], ["git", "checkout", "-q", "-b", "main"]):
+        subprocess.run(cmd, cwd=freebsd, check=True, capture_output=True)
+    code = main(["compose", "--target", "@main",
+                 "--output", str(tmp_path / "out"),
+                 "--delta-root", str(tmp_path / "delta"),
+                 "--freebsd-root", str(freebsd),
+                 "--lock-root", str(tmp_path / "lock"),
+                 "--oracle-profile", "off", "--replace-output", "--json"])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def _dport(delta: Path, name: str, *entries: str, dops: bool = True) -> Path:
+    port = delta / "ports" / "devel" / name
+    _newport(port, *entries)
+    if dops:
+        (port / "overlay.dops").write_text(
+            f'port devel/{name}\ntype dport\nreason "fixture"\ntarget @any\n')
+    else:
+        (port / "STATUS").write_text("DPORT\n")
+    return port
+
+
+def test_compose_warns_on_compat_in_newport_and_composes_anyway(
+        tmp_path, capsys):
+    delta = tmp_path / "delta"
+    clean = _dport(delta, "clean", "files/patch-own")
+    (clean / "dragonfly").mkdir()
+    (clean / "dragonfly" / "patch-src_x.c").write_text("x\n")
+    _dport(delta, "inside", "dragonfly/patch-src_x.c")
+    _dport(delta, "mkdfly", "Makefile.DragonFly")
+    _dport(delta, "compat", "dragonfly/patch-src_x.c", dops=False)
+
+    code, payload = _compose(tmp_path, capsys)
+
+    from dportsv3.newport import WARNING_CODE
+    warned = sorted(w.split(": ", 2)[1] for stage in payload["stages"]
+                    for w in stage["warnings"] if w.startswith(WARNING_CODE))
+    assert warned == ["devel/compat", "devel/inside", "devel/mkdfly"]
+    assert code == 0 and payload["ok"] is True
+    out = tmp_path / "out" / "devel"
+    assert (out / "inside" / "dragonfly" / "patch-src_x.c").is_file()
+    assert (out / "mkdfly" / "Makefile.DragonFly").is_file()
+    assert (out / "clean" / "dragonfly" / "patch-src_x.c").is_file()
+    ports = {p["origin"]: p for p in payload["ports"]}
+    assert ports["devel/clean"]["warnings"] == 0
+    assert ports["devel/inside"]["warnings"] == 1

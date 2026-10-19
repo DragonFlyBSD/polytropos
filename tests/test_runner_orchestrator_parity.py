@@ -693,3 +693,57 @@ def test_a_port_that_needs_conversion_reaches_the_manual_queue(
     (classification,) = queue_env["conn"].execute(
         "SELECT classification FROM user_context_requests").fetchone()
     assert classification == "patch-error"
+
+
+# --- the gate on a dport (poly-7pwa.35) -------------------------------------
+
+
+def _dport_gate(queue_env, tmp_path, monkeypatch, *, job_id, inside):
+    """A patch job on a type dport whose real overlay facts reach the gate:
+    only the chroot probe is replaced, by the same facts read from disk."""
+    from dportsv3.agent import patch as patch_module
+    from dportsv3.agent import worker
+    from dportsv3.agent.overlay_state import facts_from_port_dir
+
+    port = tmp_path / "dp" / "ports" / "foo" / "bar"
+    (port / "newport").mkdir(parents=True)
+    (port / "newport" / "Makefile").write_text("PORTNAME= bar\n")
+    (port / "overlay.dops").write_text(
+        'port foo/bar\ntype dport\nreason "fixture"\ntarget @any\n'
+        'mk set FIXED "yes"\n')
+    patches = port / ("newport/dragonfly" if inside else "dragonfly")
+    patches.mkdir(parents=True)
+    (patches / "patch-src_x.c").write_text("x\n")
+    monkeypatch.setattr(worker, "probe_overlay_facts",
+                        lambda env, origin: facts_from_port_dir(origin, port))
+    monkeypatch.setattr(patch_module, "run",
+                        lambda *a, **kw: _StubPatchResult(status="success"))
+    stored: dict[str, bytes] = {}
+    monkeypatch.setattr(runner, "artifact_store_put",
+                        lambda bid, rel, data, kind=None:
+                        stored.__setitem__(rel, data) or True)
+    job_path = _drop_patch_job(queue_env, job_id=job_id,
+                               bundle_dir=_make_bundle_dir(tmp_path))
+    runner.process_job(queue_env["queue_root"], _claim(queue_env, job_path),
+                       [], dry_run=False, playbooks_dir=None)
+    return lifecycle.current(queue_env["conn"], job_id), stored
+
+
+def test_a_dport_fix_in_its_overlay_is_not_escalated(
+        queue_env, tmp_path, monkeypatch):
+    """poly-8fxz: every successful dport fix used to escalate as
+    patch_non_dops_substrate, because newport/ counted as unmigrated."""
+    state, _ = _dport_gate(queue_env, tmp_path, monkeypatch,
+                           job_id="job-dport.job", inside=False)
+    assert state == lifecycle.JobState.DONE
+
+
+def test_a_dport_with_compat_in_newport_escalates_naming_it(
+        queue_env, tmp_path, monkeypatch):
+    """Overlay content inside newport/ is in the wrong place: the fix is
+    not stamped agent_fixed, and the handoff says why."""
+    state, stored = _dport_gate(queue_env, tmp_path, monkeypatch,
+                                job_id="job-inside.job", inside=True)
+    assert state == lifecycle.JobState.ESCALATED
+    handoff = stored["analysis/manual_handoff.md"].decode()
+    assert "dport_newport_compat (newport/dragonfly/)" in handoff

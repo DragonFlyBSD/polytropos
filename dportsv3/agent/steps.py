@@ -1511,10 +1511,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
     on every line (poly-u9n4, Q4). install_patches asks the same question
     of the job's HEAD.
 
-    A DPORT GETS ONE MORE PARAGRAPH. Its newport/ is the port's upstream
+    A DPORT GETS ONE MORE PARAGRAPH. Its newport/ is the port's origin
     and the rows apply as to any port (poly-7pwa.35); devel/libcxx22's fix
     was written into newport/pkg-plist instead, which reaches every line.
     put_file refuses that write; this says so before the attempt is spent.
+    Its patches in the sibling dragonfly/ make it row 2, as for any port.
 
     Best-effort, but not silent: a rename of anything it reaches would
     otherwise drop the section from every prompt with no signal.
@@ -1552,9 +1553,11 @@ def _build_line_brief(worker_mod, env: str, port_origin: str) -> str:
         # to any port, and nothing goes in newport/ (poly-7pwa.35).
         dport_note = (
             "\nThis port is a `type dport`: its `newport/` is the port's "
-            "upstream, as the FreeBSD tree is for other ports, and compose "
+            "origin, as the FreeBSD tree is for other ports, and compose "
             "copies it in on every build line. Do not edit files under it; "
-            "the fix goes in the overlay, as for any port.\n"
+            "the fix goes in the overlay, as for any port. Its DragonFly "
+            "source patches are in the `dragonfly/` beside `newport/`, "
+            "where `install_patches` puts them.\n"
             if planned is not None and planned.ok and planned.plan is not None
             and planned.plan.type == "dport" else ""
         )

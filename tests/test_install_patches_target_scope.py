@@ -877,3 +877,39 @@ def test_an_op_in_the_lines_block_that_fills_the_name_still_needs_one(env):
     _overlay(env, text + snippet.group(0).rstrip("\n") + "\n")
     assert _composed(env, "@main")["patch-configure"] != "both lines\n"
     assert _composed(env, "@2026Q3")["patch-configure"] == "both lines\n"
+
+
+# --- a dport is no exception (poly-7pwa.35) ---------------------------------
+
+DPORT = 'port devel/thing\ntype dport\nreason "fixture"\ntarget @any\n'
+
+
+def test_a_dport_recut_writes_this_lines_own_copy_beside_newport(env):
+    """newport/ is the dport's origin and never written; its patches are in
+    the sibling dragonfly/, and a re-cut there follows the same rule as for
+    any port: this line's own copy, the shared file untouched."""
+    _overlay(env, DPORT)
+    newport = _port(env) / "newport"
+    newport.mkdir()
+    (newport / "Makefile").write_text("PORTNAME= thing\n")
+    shared = _shared(env)
+    worker.set_env_target("scope-env", "@main")
+    _genpatch(env, "patch-configure")
+    result = _install(env)
+    assert result["installed"] == [
+        "ports/devel/thing/dragonfly/@main/patch-configure"
+    ]
+    assert shared.read_text() == "shared\n"
+    assert sorted(p.name for p in newport.iterdir()) == ["Makefile"]
+
+
+def test_a_new_dport_patch_goes_to_this_lines_folder(env):
+    _overlay(env, DPORT)
+    (_port(env) / "newport").mkdir()
+    (_port(env) / "newport" / "Makefile").write_text("PORTNAME= thing\n")
+    _shared(env, "patch-old", "old\n")
+    worker.set_env_target("scope-env", "@2026Q3")
+    _genpatch(env, "patch-brand_new.rs")
+    assert _install(env)["installed"] == [
+        "ports/devel/thing/dragonfly/@2026Q3/patch-brand_new.rs"
+    ]

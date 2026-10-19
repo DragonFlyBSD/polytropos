@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dportsv3.common.text import safe_read_text
+from dportsv3.newport import newport_compat_content
 
 
 CLASSIFICATION_STATES = (
@@ -44,8 +45,10 @@ class OverlayFacts:
     auto_safe_makefile: bool = False
     makefile_reasons: tuple[str, ...] = ()
     #: The type overlay.dops declares, or None without one that parses.
-    #: For a dport, newport/ is the port's upstream, not leftover compat.
+    #: For a dport, newport/ is the port's origin, not leftover compat.
     overlay_type: str | None = None
+    #: Compat content inside newport/ (dportsv3.newport), port-relative.
+    newport_compat: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -248,6 +251,7 @@ def facts_from_port_dir(origin: str, port_dir: Path) -> OverlayFacts:
         makefile_reasons=tuple(reasons),
         overlay_type=(declared_overlay_type(safe_read_text(overlay))
                       if overlay.is_file() else None),
+        newport_compat=tuple(newport_compat_content(port_dir / "newport")),
     )
 
 
@@ -256,11 +260,13 @@ def assess_overlay(facts: OverlayFacts) -> OverlayAssessment:
     reasons: list[str] = []
     invariants: list[str] = []
 
-    # A dport's newport/ is its upstream, as the FreeBSD tree is a port's:
+    # A dport's newport/ is its origin, as the FreeBSD tree is a port's:
     # compose copies it in and the overlay applies to it (poly-7pwa.35).
-    # Beside any other overlay it is an unfinished migration.
+    # Beside any other overlay it is an unfinished migration. Compat
+    # content inside it is overlay content in the wrong place.
     dport = facts.overlay_type == "dport"
     legacy_newport = (("newport/",) if facts.newport and not dport else ())
+    newport_compat = facts.newport_compat if dport and facts.newport else ()
     no_upstream = dport and not facts.newport
     compat_artifacts = (
         facts.makefile_dragonfly
@@ -273,6 +279,7 @@ def assess_overlay(facts: OverlayFacts) -> OverlayAssessment:
         facts.makefile_dragonfly
         + facts.targeted_makefile_dragonfly
         + legacy_newport
+        + newport_compat
     )
 
     if not facts.port_exists:
@@ -326,6 +333,14 @@ def assess_overlay(facts: OverlayFacts) -> OverlayAssessment:
         elif dport and facts.newport:
             rules.append(OverlayRuleResult("dport_newport_upstream",
                                            artifacts=("newport/",)))
+            if newport_compat:
+                rules.append(OverlayRuleResult(
+                    "dport_newport_compat",
+                    severity="conversion_blocker",
+                    artifacts=newport_compat,
+                    message="compat content inside newport/ belongs beside it",
+                ))
+                invariants.append("dport_newport_compat")
         elif no_upstream:
             # Compose has nothing to copy in: E_COMPOSE_DPORT_SOURCE_MISSING.
             rules.append(OverlayRuleResult(

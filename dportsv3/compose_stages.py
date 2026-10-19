@@ -28,6 +28,11 @@ from dportsv3.compose_models import (
 from dportsv3.compose_patching import copy_treetop_identity_files
 from dportsv3.engine.api import apply_dsl, build_plan
 from dportsv3.fsutils import copy_tree
+from dportsv3.newport import (
+    WARNING_CODE as NEWPORT_WARNING,
+    newport_compat_content,
+    warning_message as newport_warning_message,
+)
 from dportsv3.plan_types import materialize_plan_type
 from dportsv3.policy import (
     EXCLUDED_TOP_LEVEL,
@@ -943,6 +948,8 @@ def semantic_stage(
 
         runtime_root = materialized.runtime_root or output_origin
         stage.changed += materialized.changed
+        if ctx.plan_type == "dport":
+            _warn_newport_compat(stage, report, ctx.origin, overlay_newport)
 
         if ctx.plan_type == "mask":
             report.notes.append("masked")
@@ -1068,6 +1075,8 @@ def fallback_stage(
             patch_runner=patch_runner,
         )
         stage.changed += compat_result.changed
+        if compat_result.ok and compat_result.port_type == "dport":
+            _warn_newport_compat(stage, report, ctx.origin, ctx.path / "newport")
         report.port_type = compat_result.port_type
         report.fallback_patch_count += compat_result.fallback_patch_count
         report.implicit_files_copied += compat_result.payload_file_count
@@ -1085,6 +1094,20 @@ def fallback_stage(
 
     stage.finished_at = datetime.now()
     return stage
+
+
+def _warn_newport_compat(stage: ComposeStageResult, report, origin: str,
+                         newport_dir: Path) -> None:
+    """Warn when a dport's newport/ holds compat content (poly-7pwa.35).
+
+    A warning, not an error: the port still composes as it did. Ports that
+    predate the rule carry it, and poly-7pwa.36 moves it out before this
+    becomes an error.
+    """
+    found = newport_compat_content(newport_dir)
+    if found:
+        stage.add_warning(NEWPORT_WARNING, newport_warning_message(origin, found))
+        report.warnings += 1
 
 
 def _write_category_makefiles(
