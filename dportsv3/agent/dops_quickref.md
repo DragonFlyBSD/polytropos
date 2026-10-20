@@ -64,6 +64,15 @@ mk shell  PG_UID "grep -E '^pgsql:' ${PORTSDIR}/GIDs | awk -F ':' '{print $$3}'"
 
 # mk set inserts an absent variable under every on-missing policy;
 # on-missing only matters if the Makefile itself is missing.
+
+# A variable the port sets in a file it includes from its own directory
+# (.include "${.CURDIR}/Makefile.common") is edited in that file: every mk
+# op takes `file <path>` (relative to the port root) before on-missing.
+mk remove BUILD_DEPENDS "${LOCALBASE}/libdata/pkgconfig/dri.pc:graphics/mesa-dri" file Makefile.common
+mk add    BUILD_DEPENDS "${LOCALBASE}/libdata/pkgconfig/dri.pc:graphics/mesa-libs" file Makefile.common
+# Without it the op edits Makefile, and an op whose value an included file
+# replaces (VAR= after the line it writes) fails E_APPLY_MK_OVERRIDDEN,
+# naming the file to put it in.
 ```
 
 ## Conditional / block ops

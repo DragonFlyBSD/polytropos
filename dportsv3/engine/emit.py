@@ -52,6 +52,11 @@ def _on_missing(on_missing: str | None) -> str:
     return f" on-missing {on_missing}"
 
 
+def _file(file: str | None) -> str:
+    """The trailing ``file <path>`` of an mk op; empty for the Makefile."""
+    return "" if file is None else f" file {_path(file)}"
+
+
 def _heredoc(recipe: str | Sequence[str]) -> tuple[str, str]:
     """Return (tag, body) for a heredoc, picking a tag that does not collide
     with any recipe line. Body has no trailing newline."""
@@ -85,89 +90,113 @@ def header(
 
 # --- mk scalar ops -------------------------------------------------------
 
-def mk_set(name: str, value: str) -> str:
-    return f"mk set {name} {quote(value)}"
+def mk_set(name: str, value: str, *, file: str | None = None) -> str:
+    return f"mk set {name} {quote(value)}{_file(file)}"
 
 
-def mk_eval(name: str, value: str) -> str:
-    return f"mk eval {name} {quote(value)}"
+def mk_eval(name: str, value: str, *, file: str | None = None) -> str:
+    return f"mk eval {name} {quote(value)}{_file(file)}"
 
 
-def mk_shell(name: str, value: str) -> str:
-    return f"mk shell {name} {quote(value)}"
+def mk_shell(name: str, value: str, *, file: str | None = None) -> str:
+    return f"mk shell {name} {quote(value)}{_file(file)}"
 
 
-def mk_unset(name: str, *, on_missing: str | None = None) -> str:
-    return f"mk unset {name}{_on_missing(on_missing)}"
+def mk_unset(
+    name: str, *, on_missing: str | None = None, file: str | None = None,
+) -> str:
+    return f"mk unset {name}{_file(file)}{_on_missing(on_missing)}"
 
 
-def mk_bump(name: str, *, by: int = 1) -> str:
-    return f"mk bump {name}" + (f" by {by}" if by != 1 else "")
+def mk_bump(name: str, *, by: int = 1, file: str | None = None) -> str:
+    return f"mk bump {name}" + (f" by {by}" if by != 1 else "") + _file(file)
 
 
 # --- mk token ops --------------------------------------------------------
 
-def mk_add(name: str, token: str, *, on_missing: str | None = None) -> str:
-    return f"mk add {name} {quote(token)}{_on_missing(on_missing)}"
+def mk_add(
+    name: str, token: str, *, on_missing: str | None = None,
+    file: str | None = None,
+) -> str:
+    return f"mk add {name} {quote(token)}{_file(file)}{_on_missing(on_missing)}"
 
 
-def mk_remove(name: str, token: str, *, on_missing: str | None = None) -> str:
-    return f"mk remove {name} {quote(token)}{_on_missing(on_missing)}"
+def mk_remove(
+    name: str, token: str, *, on_missing: str | None = None,
+    file: str | None = None,
+) -> str:
+    return (
+        f"mk remove {name} {quote(token)}{_file(file)}{_on_missing(on_missing)}"
+    )
 
 
 # --- mk block ops --------------------------------------------------------
 
 def mk_block_set(
     condition: str, recipe: str | Sequence[str], *, contains: str | None = None,
+    file: str | None = None,
 ) -> str:
     tag, body = _heredoc(recipe)
     head = f"mk block set condition {quote(condition)}"
     if contains is not None:
         head += f" contains {quote(contains)}"
-    return f"{head} <<'{tag}'\n{body}\n{tag}"
+    return f"{head}{_file(file)} <<'{tag}'\n{body}\n{tag}"
 
 
 def mk_disable_if(
     condition: str, *, contains: str | None = None, on_missing: str | None = None,
+    file: str | None = None,
 ) -> str:
     head = f"mk disable-if condition {quote(condition)}"
     if contains is not None:
         head += f" contains {quote(contains)}"
-    return head + _on_missing(on_missing)
+    return head + _file(file) + _on_missing(on_missing)
 
 
 def mk_replace_if(
     from_condition: str, to_condition: str, *,
     contains: str | None = None, on_missing: str | None = None,
+    file: str | None = None,
 ) -> str:
     head = f"mk replace-if from {quote(from_condition)} to {quote(to_condition)}"
     if contains is not None:
         head += f" contains {quote(contains)}"
-    return head + _on_missing(on_missing)
+    return head + _file(file) + _on_missing(on_missing)
 
 
 # --- mk target ops -------------------------------------------------------
 
-def mk_target_set(name: str, recipe: str | Sequence[str]) -> str:
+def mk_target_set(
+    name: str, recipe: str | Sequence[str], *, file: str | None = None,
+) -> str:
     tag, body = _heredoc(recipe)
-    return f"mk target set {name} <<'{tag}'\n{body}\n{tag}"
+    return f"mk target set {name}{_file(file)} <<'{tag}'\n{body}\n{tag}"
 
 
-def mk_target_append(name: str, recipe: str | Sequence[str]) -> str:
+def mk_target_append(
+    name: str, recipe: str | Sequence[str], *, file: str | None = None,
+) -> str:
     tag, body = _heredoc(recipe)
-    return f"mk target append {name} <<'{tag}'\n{body}\n{tag}"
+    return f"mk target append {name}{_file(file)} <<'{tag}'\n{body}\n{tag}"
 
 
-def mk_ensure_include(name: str) -> str:
-    return f"mk ensure-include {name}"
+def mk_ensure_include(name: str, *, file: str | None = None) -> str:
+    return f"mk ensure-include {name}{_file(file)}"
 
 
-def mk_target_remove(name: str, *, on_missing: str | None = None) -> str:
-    return f"mk target remove {name}{_on_missing(on_missing)}"
+def mk_target_remove(
+    name: str, *, on_missing: str | None = None, file: str | None = None,
+) -> str:
+    return f"mk target remove {name}{_file(file)}{_on_missing(on_missing)}"
 
 
-def mk_target_rename(old: str, new: str, *, on_missing: str | None = None) -> str:
-    return f"mk target rename {old} -> {new}{_on_missing(on_missing)}"
+def mk_target_rename(
+    old: str, new: str, *, on_missing: str | None = None,
+    file: str | None = None,
+) -> str:
+    return (
+        f"mk target rename {old} -> {new}{_file(file)}{_on_missing(on_missing)}"
+    )
 
 
 # --- file ops ------------------------------------------------------------

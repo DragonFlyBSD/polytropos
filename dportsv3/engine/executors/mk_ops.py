@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import posixpath
+from pathlib import Path
+
 from dportsv3.engine.apply_common import (
     _failed_row,
     _load_makefile,
@@ -33,6 +36,160 @@ from dportsv3.engine.makefile_rewrite import (
     unset_var,
 )
 from dportsv3.engine.models import ApplyContext, ApplyOpResult, PlanOp
+
+
+def _mk_file(op: PlanOp) -> str | None:
+    """The file an op names with ``file <path>``; None is the Makefile."""
+    value = op.payload.get("file")
+    return value if isinstance(value, str) else None
+
+
+def _no_file(op: PlanOp) -> str:
+    return f"{_mk_file(op) or 'Makefile'} does not exist"
+
+
+def _in_included_file(op: PlanOp) -> bool:
+    """Whether the op edits a file other than the port's Makefile."""
+    name = _mk_file(op)
+    return name is not None and posixpath.normpath(name) != "Makefile"
+
+
+#: Operators that replace whatever was assigned before them. ``+=`` adds to
+#: it and ``?=`` keeps it, so neither undoes an op's line.
+_REPLACING_OPERATORS = ("=", ":=", "!=")
+
+
+def _included_path(
+    port_root: Path, including_dir: Path, include: str
+) -> Path | None:
+    """The file a quoted ``.include`` names, when it is inside the port root.
+
+    ``${.CURDIR}`` is the port root, ``${.PARSEDIR}`` the including file's
+    directory, ``${.CURDIR:H}``, ``${.CURDIR:H:H}`` and ``${PORTSDIR}`` its
+    parents in the composed tree, and a bare relative path is taken from
+    the including file's directory, where bmake looks first. Anything else
+    -- a framework ``<...>`` include, another variable, a file outside the
+    port root -- is None: not followed.
+    """
+    if len(include) < 2 or not (include[0] == include[-1] == '"'):
+        return None
+    spec = include[1:-1].strip()
+    for var, value in (
+        ("${.CURDIR:H:H}", port_root.parent.parent),
+        ("${.CURDIR:H}", port_root.parent),
+        ("${.CURDIR}", port_root),
+        ("${.PARSEDIR}", including_dir),
+        ("${PORTSDIR}", port_root.parent.parent),
+    ):
+        spec = spec.replace(var, str(value))
+    if "$" in spec:
+        return None
+    resolved = (including_dir / spec).resolve()
+    try:
+        resolved.relative_to(port_root.resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
+def _reassigned_by_include(
+    txn: FileTransaction,
+    port_root: Path,
+    path: Path,
+    document,
+    name: str,
+    after_line: int,
+    seen: set[Path],
+) -> tuple[Path, int, str] | None:
+    """Where a file included after ``after_line`` of ``path`` replaces
+    ``name``: (that file, its line, the operator), or None.
+
+    Only top-level includes and assignments count: one inside ``.if``
+    replaces the value only when the condition holds, which apply cannot
+    tell. Each included file is read whole, with its own includes, since
+    all of it comes after the line.
+    """
+    depth = 0
+    for node in document.nodes:
+        if isinstance(node, DirectiveIfNode):
+            depth += 1
+        elif isinstance(node, DirectiveEndifNode):
+            depth = max(0, depth - 1)
+        elif depth or node.span.line_start <= after_line:
+            continue
+        elif isinstance(node, AssignmentNode):
+            if (
+                path not in seen
+                and node.name == name
+                and node.operator in _REPLACING_OPERATORS
+            ):
+                return path, node.span.line_start, node.operator
+        elif isinstance(node, IncludeNode):
+            included = _included_path(port_root, path.parent, node.include)
+            if included is None or included in seen or included == path:
+                continue
+            try:
+                loaded = _load_makefile(txn, included)
+            except ValueError:
+                loaded = None
+            if loaded is None:
+                continue
+            hit = _reassigned_by_include(
+                txn, port_root, included, loaded[1], name, 0, seen | {path}
+            )
+            if hit is not None:
+                return hit
+    return None
+
+
+def _overridden_row(
+    op: PlanOp,
+    context: ApplyContext,
+    txn: FileTransaction,
+    path: Path,
+    document,
+    name: str,
+    after_line: int,
+) -> ApplyOpResult | None:
+    """A failed row when a file included after the line this op writes
+    assigns ``name`` again, so the op's value never reaches the build.
+
+    Apply would otherwise report success for an op that does nothing:
+    multimedia/avidemux's ``mk add USES "alias"`` became ``USES= alias``
+    above ``.include "${.CURDIR}/Makefile.common"``, whose ``USES=``
+    replaced it (poly-bz7n.2). The cure is to edit the variable where it
+    is set, with ``file <that file>``.
+    """
+    hit = _reassigned_by_include(
+        txn, context.port_root.resolve(), path, document, name, after_line,
+        {path},
+    )
+    if hit is None:
+        return None
+    where, line, operator = hit
+    rel = where.relative_to(context.port_root.resolve()).as_posix()
+    return _failed_row(
+        op,
+        code="E_APPLY_MK_OVERRIDDEN",
+        message=(
+            f"{name}{operator} in {rel}:{line} replaces what this op writes: "
+            f"{rel} is included after it, so the op's value never reaches "
+            f"the build. Edit {name} where it is set: add 'file {rel}' to "
+            "the op"
+        ),
+        source_path=path,
+    )
+
+
+def _written_after(text: str, document, node_index: int | None,
+                   insert_before: int | None) -> int:
+    """The last original line before the one an op writes: the node it
+    rewrites, or the line it is inserted above, or the end of the file."""
+    if node_index is not None:
+        return document.nodes[node_index].span.line_end
+    if insert_before is None:
+        return len(text.splitlines())
+    return insert_before - 1
 
 
 def _mk_var_set_insert_line(document) -> int | None:
@@ -154,7 +311,7 @@ def exec_mk_var_set(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -167,7 +324,7 @@ def exec_mk_var_set(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -180,12 +337,16 @@ def exec_mk_var_set(
             source_path=path,
         )
 
-    updated = _write_assignment(
-        text,
-        document,
-        intent.node_indices[0] if intent.node_indices else None,
-        f"{name}= {value}",
+    node_index = intent.node_indices[0] if intent.node_indices else None
+    overridden = _overridden_row(
+        op, context, txn, path, document, name,
+        _written_after(
+            text, document, node_index, _mk_var_set_insert_line(document)
+        ),
     )
+    if overridden is not None:
+        return overridden
+    updated = _write_assignment(text, document, node_index, f"{name}= {value}")
     txn.stage_write(path, updated)
     return _success_row(op, "mk-var-set")
 
@@ -254,7 +415,7 @@ def exec_mk_var_bump(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -268,7 +429,7 @@ def exec_mk_var_bump(
         return _missing_row(
             op,
             policy="error",
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
@@ -323,6 +484,12 @@ def exec_mk_var_bump(
             return _bump_unsupported(
                 op, f"{name} is '{current}', not an integer", path
             )
+        overridden = _overridden_row(
+            op, context, txn, path, document, name,
+            assignment.span.line_end,
+        )
+        if overridden is not None:
+            return overridden
         updated = _write_assignment(
             text,
             document,
@@ -364,7 +531,7 @@ def exec_mk_var_eval(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -378,13 +545,19 @@ def exec_mk_var_eval(
         return _missing_row(
             op,
             policy=_on_missing(op),
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
     text, document = loaded
     replacement = f"{name}:= {value}"
     insert_before = _eval_insert_line(document, name)
+    overridden = _overridden_row(
+        op, context, txn, path, document, name,
+        _written_after(text, document, None, insert_before),
+    )
+    if overridden is not None:
+        return overridden
     if insert_before is None:
         line_count = len(text.splitlines(keepends=False))
         updated = _replace_line_range(
@@ -422,7 +595,7 @@ def exec_mk_var_shell(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -436,13 +609,19 @@ def exec_mk_var_shell(
         return _missing_row(
             op,
             policy=_on_missing(op),
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
     text, document = loaded
     replacement = f"{name}!= {value}"
     insert_before = _insert_before_last_include_line(document)
+    overridden = _overridden_row(
+        op, context, txn, path, document, name,
+        _written_after(text, document, None, insert_before),
+    )
+    if overridden is not None:
+        return overridden
     if insert_before is None:
         line_count = len(text.splitlines(keepends=False))
         updated = _replace_line_range(
@@ -474,7 +653,7 @@ def exec_mk_ensure_include(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -488,7 +667,7 @@ def exec_mk_ensure_include(
         return _missing_row(
             op,
             policy=_on_missing(op),
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
@@ -522,7 +701,7 @@ def exec_mk_var_unset(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -535,7 +714,7 @@ def exec_mk_var_unset(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -573,7 +752,7 @@ def exec_mk_var_token_add(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -586,7 +765,7 @@ def exec_mk_var_token_add(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -604,8 +783,19 @@ def exec_mk_var_token_add(
         # neither translator can answer reliably without an extra
         # read. Matches the existing exec_mk_var_set "no prior
         # assignment" code path so set/add stay symmetric.
-        replacement = f"{name}= {value}"
+        #
+        # Not in an included file (``file <path>``): the file that
+        # includes it may have assigned VAR before the include, and `=`
+        # there would throw that away. `+=` is what add means anywhere.
+        operator = "+=" if _in_included_file(op) else "="
+        replacement = f"{name}{operator} {value}"
         insert_before = _mk_var_set_insert_line(document)
+        overridden = _overridden_row(
+            op, context, txn, path, document, name,
+            _written_after(text, document, None, insert_before),
+        )
+        if overridden is not None:
+            return overridden
         if insert_before is None:
             line_count = len(text.splitlines(keepends=False))
             updated = _replace_line_range(
@@ -636,6 +826,11 @@ def exec_mk_var_token_add(
             tokens = [tok for tok in node.value.split() if tok]
             if value in tokens:
                 return _success_row(op, "mk-token-exists")
+            overridden = _overridden_row(
+                op, context, txn, path, document, name, node.span.line_end,
+            )
+            if overridden is not None:
+                return overridden
             tokens.append(value)
             # Preserve the original operator (`=`, `+=`, `?=`, `:=`,
             # `!=`). Flattening to `=` would silently change semantics
@@ -662,6 +857,12 @@ def exec_mk_var_token_add(
 
     replacement = f"{name}+= {value}"
     insert_before = _mk_var_set_insert_line(document)
+    overridden = _overridden_row(
+        op, context, txn, path, document, name,
+        _written_after(text, document, None, insert_before),
+    )
+    if overridden is not None:
+        return overridden
     if insert_before is None:
         line_count = len(text.splitlines(keepends=False))
         updated = _replace_line_range(
@@ -694,7 +895,7 @@ def exec_mk_var_token_remove(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -707,7 +908,7 @@ def exec_mk_var_token_remove(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -765,7 +966,7 @@ def exec_mk_target_set(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -779,7 +980,7 @@ def exec_mk_target_set(
         return _failed_row(
             op,
             code="E_APPLY_MISSING_SUBJECT",
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
@@ -835,7 +1036,7 @@ def exec_mk_target_append(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -849,7 +1050,7 @@ def exec_mk_target_append(
         return _failed_row(
             op,
             code="E_APPLY_MISSING_SUBJECT",
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 
@@ -890,7 +1091,7 @@ def exec_mk_target_remove(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -903,7 +1104,7 @@ def exec_mk_target_remove(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -939,7 +1140,7 @@ def exec_mk_target_rename(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -952,7 +1153,7 @@ def exec_mk_target_rename(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -1000,7 +1201,7 @@ def exec_mk_block_disable(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -1013,7 +1214,7 @@ def exec_mk_block_disable(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -1074,7 +1275,7 @@ def exec_mk_block_replace_condition(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -1087,7 +1288,7 @@ def exec_mk_block_replace_condition(
     loaded = _load_makefile(txn, path)
     if loaded is None:
         return _missing_row(
-            op, policy=policy, message="Makefile does not exist", source_path=path
+            op, policy=policy, message=_no_file(op), source_path=path
         )
 
     text, document = loaded
@@ -1156,7 +1357,7 @@ def exec_mk_block_set(
         )
 
     try:
-        path = _resolve_path(context.port_root, None, default="Makefile")
+        path = _resolve_path(context.port_root, _mk_file(op), default="Makefile")
     except ValueError as exc:
         return _failed_row(
             op,
@@ -1170,7 +1371,7 @@ def exec_mk_block_set(
         return _failed_row(
             op,
             code="E_APPLY_MISSING_SUBJECT",
-            message="Makefile does not exist",
+            message=_no_file(op),
             source_path=path,
         )
 

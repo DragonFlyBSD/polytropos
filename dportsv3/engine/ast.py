@@ -66,6 +66,8 @@ class MkOpNode(AstNode):
     recipe: str | None = None
     on_missing: str | None = None
     include: str | None = None
+    #: The file the op edits, relative to the port root; None is Makefile.
+    file_path: str | None = None
 
 
 @dataclass(frozen=True)

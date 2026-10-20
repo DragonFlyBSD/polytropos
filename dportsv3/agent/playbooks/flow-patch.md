@@ -130,6 +130,16 @@ must already exist (else `assignment not found`) and the token must be
 present (else `token not found`). To make a whole variable go away you
 want `unset`, not `remove`.
 
+### a variable set in an included file is edited there
+
+When the port's Makefile includes a file of its own
+(`.include "${.CURDIR}/Makefile.common"`) and the variable is assigned in
+that file, add `file Makefile.common` to the `mk` op. Without it the op
+edits Makefile, above the include, and an `=` in the included file
+replaces its value: apply refuses that with `E_APPLY_MK_OVERRIDDEN`, naming
+the file. Reach for `text replace-once` only when no `mk` op expresses
+the change.
+
 ### ambiguity and accumulation
 
 - A `set`/`unset`/`remove` that matches **more than one** upstream

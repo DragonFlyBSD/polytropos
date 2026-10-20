@@ -79,22 +79,26 @@ port_type         = "port" | "mask" | "dport" | "lock" ;
 
 operation         = mk_op | file_op | text_op | patch_op ;
 
-mk_op             = mk_var_op | mk_block_op | mk_target_op ;
+mk_op             = mk_var_op | mk_block_op | mk_target_op | mk_include_op ;
 
-mk_var_op         = "mk" "set" var string [on_missing]
-                  | "mk" "unset" var [on_missing]
-                  | "mk" "add" var token [on_missing]
-                  | "mk" "remove" var token [on_missing]
-                  | "mk" "bump" var ["by" integer] ;
+mk_var_op         = "mk" "set" var string [mk_file] [on_missing]
+                  | "mk" "eval" var string [mk_file]
+                  | "mk" "shell" var string [mk_file]
+                  | "mk" "unset" var [mk_file] [on_missing]
+                  | "mk" "add" var token [mk_file] [on_missing]
+                  | "mk" "remove" var token [mk_file] [on_missing]
+                  | "mk" "bump" var ["by" integer] [mk_file] ;
 
-mk_block_op       = "mk" "disable-if" "condition" string [contains] [on_missing]
-                  | "mk" "replace-if" "from" string "to" string [contains] [on_missing]
-                  | "mk" "block" "set" "condition" string [contains] heredoc ;
+mk_block_op       = "mk" "disable-if" "condition" string [contains] [mk_file] [on_missing]
+                  | "mk" "replace-if" "from" string "to" string [contains] [mk_file] [on_missing]
+                  | "mk" "block" "set" "condition" string [contains] [mk_file] heredoc ;
 
-mk_target_op      = "mk" "target" "set" ident heredoc
-                  | "mk" "target" "append" ident heredoc
-                  | "mk" "target" "remove" ident [on_missing]
-                  | "mk" "target" "rename" ident "->" ident [on_missing] ;
+mk_target_op      = "mk" "target" "set" ident [mk_file] heredoc
+                  | "mk" "target" "append" ident [mk_file] heredoc
+                  | "mk" "target" "remove" ident [mk_file] [on_missing]
+                  | "mk" "target" "rename" ident "->" ident [mk_file] [on_missing] ;
+
+mk_include_op     = "mk" "ensure-include" ident [mk_file] ;
 
 file_op           = "file" "copy" path "->" path
                   | "file" "materialize" path "->" path
@@ -107,6 +111,7 @@ text_op           = "text" "line-remove" "file" path "exact" string [on_missing]
 patch_op          = "patch" "apply" path ;
 
 contains          = "contains" string ;
+mk_file           = "file" path ;
 on_missing        = "on-missing" ("error" | "warn" | "noop") ;
 ```
 
@@ -190,7 +195,8 @@ no part in the dead-operation rule below.
   in, and no operation in between reads that file.
 - `file materialize` and `file copy` leave their result in `<dst>` and
   replace it whole; `file remove` removes `<path>`; `text` operations edit
-  `file <path>` and `mk` operations edit `Makefile` in place. `file copy`
+  `file <path>` and `mk` operations edit `Makefile`, or their
+  `file <path>`, in place. `file copy`
   reads `<src>`, `text` and `mk` operations read the file they edit, and
   `patch apply` counts as reading every file. Paths compare after
   normalization (`./x`, `a/../x` and `x` are one file).
@@ -206,6 +212,39 @@ no part in the dead-operation rule below.
 ---
 
 ## Operation Forms
+
+### The file an mk op edits (normative)
+
+Every `mk` operation edits the port's `Makefile`, or the file its
+`file <path>` names. `file <path>` comes after the operation's arguments,
+after `contains` and before `on-missing`, and before `<<'TAG'` on a heredoc
+operation. The path is resolved like a `text` operation's: relative to the
+port root, and an absolute path or one escaping the port root is
+`E_APPLY_INVALID_PATH`.
+
+It is for a file the port includes from its own directory, such as
+`.include "${.CURDIR}/Makefile.common"`, when the variable or target is set
+there. A file another port owns is edited by that port's overlay. Not for
+`mk`: generated lists the framework includes (`Makefile.crates`,
+`Makefile.cabal`, `Makefile.zig`), where an edit pins a version, and files
+under `files/`, which belong to the software, not the port.
+
+The forms and rules below are the same in any file, except that `mk add`
+creates an absent variable with `<VAR>+= <token>` in a file other than
+`Makefile`: the file that includes it may have assigned the variable
+first, and `=` would discard that.
+
+An operation that writes an assignment to `<VAR>` (`mk set`, `mk add`,
+`mk eval`, `mk shell`, `mk bump`) fails with `E_APPLY_MK_OVERRIDDEN` when a
+file included after the line it writes assigns `<VAR>` again with `=`, `:=`
+or `!=`, because that assignment replaces the operation's value and the
+operation would do nothing. The message names the file and line; put the
+operation in that file with `file <path>`. Only top-level `.include` lines
+and assignments count (one inside `.if` depends on its condition), and
+only quoted includes that resolve inside the port root through
+`${.CURDIR}`, `${.PARSEDIR}`, `${.CURDIR:H}`, `${.CURDIR:H:H}`,
+`${PORTSDIR}` or a relative path are followed. `+=` and `?=` keep the
+operation's value and pass.
 
 ### Makefile variable ops
 
@@ -354,8 +393,8 @@ Path resolution semantics:
   directory (source root), `<dst>` is resolved relative to the port root
 - `patch apply <path>` reads the patch file from the source root and applies
   it to the port root
-- `file remove` and `text ... file <path>` resolve paths relative to the port
-  root
+- `file remove`, `text ... file <path>` and `mk ... file <path>` resolve
+  paths relative to the port root
 - absolute paths and paths escaping the active root are invalid
 - `file materialize` does not support wildcard source patterns in v1
 

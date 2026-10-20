@@ -222,17 +222,19 @@ _REPLACING = frozenset({
 def _override_subject(op) -> tuple | None:
     """What an op writes, for matching an override to the @any op it beats.
 
-    A make variable, a make target, or a composed file. Text and patch ops
-    edit a file without owning it, so they have no subject here.
+    A make variable or target in the file the op edits (``file <path>``,
+    else the Makefile), or a composed file. Text and patch ops edit a file
+    without owning it, so they have no subject here.
     """
     import posixpath  # noqa: PLC0415
 
     p = op.payload
+    mk_file = posixpath.normpath(str(p.get("file") or "Makefile"))
     if op.kind.startswith("mk.var.") and p.get("name"):
-        return ("var", p["name"])
+        return ("var", p["name"], mk_file)
     if op.kind.startswith("mk.target."):
         name = p.get("name") or p.get("old")
-        return ("mk-target", name) if name else None
+        return ("mk-target", name, mk_file) if name else None
     if op.kind in ("file.materialize", "file.copy") and p.get("dst"):
         return ("file", posixpath.normpath(str(p["dst"])))
     if op.kind == "file.remove" and p.get("path"):
@@ -270,8 +272,9 @@ def _render(op) -> str:
     p = op.payload
     if op.kind.startswith("mk.var."):
         value = p.get("value")
+        where = f" file {p['file']}" if p.get("file") else ""
         return f"`{op.kind} {p.get('name')}" + (
-            f' "{value}"`' if value is not None else "`")
+            f' "{value}"' if value is not None else "") + f"{where}`"
     if op.kind in ("file.materialize", "file.copy"):
         return f"`{op.kind} {p.get('src')} -> {p.get('dst')}`"
     if op.kind == "mk.target.rename":

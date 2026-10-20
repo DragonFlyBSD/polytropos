@@ -84,7 +84,8 @@ def _file_effect(
         path = posixpath.normpath(op.file_path) if op.file_path else None
         return path, False, frozenset({path} if path else ())
     if isinstance(op, MkOpNode):
-        return "Makefile", False, frozenset({"Makefile"})
+        path = posixpath.normpath(op.file_path) if op.file_path else "Makefile"
+        return path, False, frozenset({path})
     return None, False, None
 
 

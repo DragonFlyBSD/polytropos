@@ -500,6 +500,10 @@ def compile_plan(
                 )
             )
             continue
+        # Only when given, so a plan without it is the plan it always was.
+        operation = scoped.operation
+        if isinstance(operation, MkOpNode) and operation.file_path is not None:
+            payload = {**payload, "file": operation.file_path}
 
         op_id = f"op-{idx:04d}-{kind.replace('.', '-')}"
         ops.append(

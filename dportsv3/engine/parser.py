@@ -147,6 +147,20 @@ class _Parser:
             return None, value
         return normalized, value
 
+    def _parse_file_clause(self) -> tuple[str | None, Token | None]:
+        """``file <path>`` after an mk op's arguments: the file it edits.
+
+        Trailing, unlike text ops, where the file is required and comes
+        first: here the word after the action can be a variable name.
+        """
+        if not self._at("WORD", "file"):
+            return None, None
+        self._advance()
+        value = self._expect_value("after 'file'")
+        if value is None:
+            return None, None
+        return value.value, value
+
     def _parse_contains(self) -> tuple[str | None, Token | None]:
         if not self._at("WORD", "contains"):
             return None, None
@@ -372,10 +386,15 @@ class _Parser:
             value = amount.value
             end_span = amount.span
 
+        file_path, file_tok = self._parse_file_clause()
+        if file_tok is not None:
+            end_span = file_tok.span
+
         if not (self._at("NEWLINE") or self._at("EOF")):
             self._error(
                 "E_PARSE_UNEXPECTED_TOKEN",
-                "unexpected token after mk bump; expected 'by <N>' or end of line",
+                "unexpected token after mk bump; expected 'by <N>', "
+                "'file <path>' or end of line",
             )
             self._sync_line()
             return None
@@ -386,6 +405,7 @@ class _Parser:
             action="bump",
             var=var.value,
             value=value,
+            file_path=file_path,
         )
 
     def _parse_mk_ensure_include(self, start: Token) -> MkOpNode | None:
@@ -393,11 +413,14 @@ class _Parser:
         if name is None:
             self._sync_line()
             return None
+        file_path, file_tok = self._parse_file_clause()
+        end_span = file_tok.span if file_tok is not None else name.span
         self._finish_statement()
         return MkOpNode(
-            span=_join_span(start.span, name.span),
+            span=_join_span(start.span, end_span),
             action="ensure-include",
             include=name.value,
+            file_path=file_path,
         )
 
     def _parse_mk_block_set_op(self, start: Token) -> MkOpNode | None:
@@ -414,6 +437,7 @@ class _Parser:
             return None
 
         contains, _ = self._parse_contains()
+        file_path, _ = self._parse_file_clause()
         heredoc_start = self._expect_kind(
             "HEREDOC_START",
             "after block condition (expected <<'TAG')",
@@ -440,6 +464,7 @@ class _Parser:
             contains=contains,
             heredoc_tag=heredoc_start.value,
             recipe=heredoc_body.value,
+            file_path=file_path,
         )
 
     def _parse_mk_var_op(self, start: Token, action: str) -> MkOpNode | None:
@@ -467,6 +492,10 @@ class _Parser:
             token = token_tok.value
             end_span = token_tok.span
 
+        file_path, file_tok = self._parse_file_clause()
+        if file_tok is not None:
+            end_span = file_tok.span
+
         on_missing, on_missing_tok = self._parse_on_missing()
         if on_missing_tok is not None:
             end_span = on_missing_tok.span
@@ -479,6 +508,7 @@ class _Parser:
             value=value,
             token=token,
             on_missing=on_missing,
+            file_path=file_path,
         )
 
     def _parse_mk_block_op(self, start: Token, action: str) -> MkOpNode | None:
@@ -496,6 +526,10 @@ class _Parser:
                 contains_tok.span if contains_tok is not None else condition_tok.span
             )
 
+            file_path, file_tok = self._parse_file_clause()
+            if file_tok is not None:
+                end_span = file_tok.span
+
             on_missing, on_missing_tok = self._parse_on_missing()
             if on_missing_tok is not None:
                 end_span = on_missing_tok.span
@@ -507,6 +541,7 @@ class _Parser:
                 condition=condition_tok.value,
                 contains=contains,
                 on_missing=on_missing,
+                file_path=file_path,
             )
 
         if self._expect_word_value("from", "after 'mk replace-if'") is None:
@@ -527,6 +562,10 @@ class _Parser:
         contains, contains_tok = self._parse_contains()
         end_span = contains_tok.span if contains_tok is not None else to_tok.span
 
+        file_path, file_tok = self._parse_file_clause()
+        if file_tok is not None:
+            end_span = file_tok.span
+
         on_missing, on_missing_tok = self._parse_on_missing()
         if on_missing_tok is not None:
             end_span = on_missing_tok.span
@@ -539,6 +578,7 @@ class _Parser:
             condition_to=to_tok.value,
             contains=contains,
             on_missing=on_missing,
+            file_path=file_path,
         )
 
     def _parse_mk_target_op(self, start: Token) -> MkOpNode | None:
@@ -552,6 +592,7 @@ class _Parser:
             if name is None:
                 self._sync_line()
                 return None
+            file_path, _ = self._parse_file_clause()
             heredoc_start = self._expect_kind(
                 "HEREDOC_START",
                 "after target name (expected <<'TAG')",
@@ -577,6 +618,7 @@ class _Parser:
                 name=name.value,
                 heredoc_tag=heredoc_start.value,
                 recipe=heredoc_body.value,
+                file_path=file_path,
             )
 
         if target_action.value == "remove":
@@ -584,14 +626,20 @@ class _Parser:
             if name is None:
                 self._sync_line()
                 return None
+            end_span = name.span
+            file_path, file_tok = self._parse_file_clause()
+            if file_tok is not None:
+                end_span = file_tok.span
             on_missing, on_missing_tok = self._parse_on_missing()
-            end_span = on_missing_tok.span if on_missing_tok is not None else name.span
+            if on_missing_tok is not None:
+                end_span = on_missing_tok.span
             self._finish_statement()
             return MkOpNode(
                 span=_join_span(start.span, end_span),
                 action="target-remove",
                 name=name.value,
                 on_missing=on_missing,
+                file_path=file_path,
             )
 
         if target_action.value == "rename":
@@ -607,10 +655,13 @@ class _Parser:
             if new_name is None:
                 self._sync_line()
                 return None
+            end_span = new_name.span
+            file_path, file_tok = self._parse_file_clause()
+            if file_tok is not None:
+                end_span = file_tok.span
             on_missing, on_missing_tok = self._parse_on_missing()
-            end_span = (
-                on_missing_tok.span if on_missing_tok is not None else new_name.span
-            )
+            if on_missing_tok is not None:
+                end_span = on_missing_tok.span
             self._finish_statement()
             return MkOpNode(
                 span=_join_span(start.span, end_span),
@@ -618,6 +669,7 @@ class _Parser:
                 old_name=old_name.value,
                 new_name=new_name.value,
                 on_missing=on_missing,
+                file_path=file_path,
             )
 
         self._error(
