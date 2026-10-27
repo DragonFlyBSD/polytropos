@@ -15,20 +15,34 @@ from .state import EnvironmentState
 from .store import EnvironmentStore
 
 
+#: Statuses in which an operation owns the env's mounts. Nothing else may mount
+#: or enter it meanwhile: a remount mid-rebase would put the old base back
+#: under a state that names the new one.
+IN_FLIGHT_STATUSES = {"creating", "destroying", "rebasing"}
+
+
+def refuse_in_flight(state: EnvironmentState, *, rebasing: bool = False) -> None:
+    """Refuse an env another operation holds; ``rebasing`` is rebase's own pass."""
+    if state.status not in IN_FLIGHT_STATUSES or (rebasing and state.status == "rebasing"):
+        return
+    hint = (
+        f"wait for the rebase, or re-run `rebase {state.name}` if it was interrupted"
+        if state.status == "rebasing"
+        else "wait for the in-flight operation or destroy the partial env first"
+    )
+    raise UsageError(f"environment {state.name} is in status '{state.status}'; {hint}")
+
+
 class EnvironmentSession:
     def __init__(self, config: DevEnvConfig, store: EnvironmentStore) -> None:
         self.config = config
         self.store = store
 
-    def prepare(self, name: str, *, refresh: bool = False) -> EnvironmentState:
+    def prepare(self, name: str, *, refresh: bool = False, rebasing: bool = False) -> EnvironmentState:
         state = self.store.load(name)
         if state.backend != "chroot":
             raise UsageError(f"unsupported backend in environment: {state.backend}")
-        if state.status in {"creating", "destroying"}:
-            raise UsageError(
-                f"environment {name} is in status '{state.status}'; "
-                "wait for the in-flight operation or destroy the partial env first"
-            )
+        refuse_in_flight(state, rebasing=rebasing)
         if state.status == "failed":
             warn(f"environment {name} is marked failed; proceeding anyway for inspection")
 
@@ -43,6 +57,10 @@ class EnvironmentSession:
         if not (state.root_dir / HELPER_BIN_DIR.lstrip("/") / "dbuild").exists():
             warn("helper scripts missing in /usr/local/bin; recreate the env to pick up current helpers")
         prepare_root_runtime(self.config, state.root_dir, refresh_resolv_conf=refresh)
+        # Again, after the mounting: a rebase that started meanwhile must not
+        # find this session entering the env once its last busy check is done
+        # (rebase.SESSION_GRACE_SECONDS).
+        refuse_in_flight(self.store.load(name), rebasing=rebasing)
         return state
 
     def enter(self, name: str, *, refresh: bool = False) -> None:

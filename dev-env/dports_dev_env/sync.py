@@ -40,11 +40,15 @@ class DirtySyncer:
         self.store = store
 
     def sync(self, name: str) -> list[str]:
-        from .session import EnvironmentSession
+        from .session import EnvironmentSession, refuse_in_flight
 
         state = self.store.load(name)
+        # Mounts without going through prepare, so it takes the gate itself,
+        # before mounting and after, as prepare does.
+        refuse_in_flight(state)
         env_dir = self.store.env_dir(name)
         EnvironmentSession(self.config, self.store).ensure_root_mounted(env_dir, state)
+        refuse_in_flight(self.store.load(name))
 
         host_repo = Path(state.source.delta_root)
         # The real checkout. Job worktrees branch from it; resetting it through

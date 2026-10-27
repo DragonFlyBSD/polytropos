@@ -80,6 +80,21 @@ def mount_env_root(provisioned_root: Path, env_dir: Path, root_dir: Path) -> Non
     mount_env_writable_dirs(env_dir, root_dir)
 
 
+#: Mounted by prepare_root_runtime, relative to the env root.
+RUNTIME_MOUNTS = ["dev", "proc", "usr/distfiles", "work/repos"]
+
+
+def env_mount_targets(root_dir: Path) -> set[Path]:
+    """Every mount target the dev-env makes for the env at ``root_dir``.
+
+    Anything else under the env was mounted by hand, and an unmount of the
+    whole env would take it down without anything putting it back.
+    """
+    root_dir = root_dir.resolve(strict=False)
+    relative = [target for _source, target, _mode in WRITABLE_DIRS] + RUNTIME_MOUNTS
+    return {root_dir} | {root_dir / name for name in relative}
+
+
 def prepare_root_runtime(config: Config, root_dir: Path, *, refresh_resolv_conf: bool = False) -> list[Path]:
     mounted_targets: list[Path] = []
     for name in ["dev", "proc", "work"]:

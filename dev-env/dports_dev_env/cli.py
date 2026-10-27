@@ -115,6 +115,26 @@ def build_parser() -> argparse.ArgumentParser:
                               "(repeatable); default: all of them")
     update_.add_argument("name", help="Environment name")
 
+    rebase_ = subparsers.add_parser(
+        "rebase",
+        help="Move one environment onto another DragonFly world, keeping its "
+             "checkouts, packages and ccache",
+        description="Swap the read-only base under an environment for one built "
+                    "from another DragonFly world. Everything in writable/ stays; "
+                    "the generator venv is replaced. Refuses, changing nothing, "
+                    "while a job, a dsynth run, a process or a hand-made mount "
+                    "holds the env: stop the runner, or point it at another env, "
+                    "first.",
+    )
+    rebase_.add_argument("--asset", help="World archive name, e.g. "
+                         "DragonFly-x86_64-20261023-DEV-v6.5.0-2121-gf25f77d1f4.world.tar.gz "
+                         "(default: Avalon's latest)")
+    rebase_.add_argument("--dry-run", action="store_true",
+                         help="Print the current and target worlds and what holds the env; "
+                              "download, provision and unmount nothing. Exits 1 when the "
+                              "env is busy")
+    rebase_.add_argument("name", help="Environment name")
+
     path_ = subparsers.add_parser("path", help="Print one environment's host-side path")
     path_.add_argument(
         "--writable",
@@ -281,6 +301,27 @@ def cmd_update(args: argparse.Namespace) -> int:
     update_env(config, store, args.name, force=args.force,
                only=getattr(args, "only", None))
     return 0
+
+
+def cmd_rebase(args: argparse.Namespace) -> int:
+    require_root()
+    config = load_config()
+    validate_cache_root(config.cache_root)
+    store = EnvironmentStore(config)
+    from .rebase import rebase_env
+    if args.dry_run:
+        return rebase_env(config, store, args.name, asset=args.asset, dry_run=True)
+
+    # Provisioning is as noisy as in create, so the same per-run log.
+    ts = time.strftime("%Y%m%d-%H%M%SZ", time.gmtime())
+    log_path = config.cache_root / ".logs" / "dev-env" / f"rebase-{args.name}-{ts}.log"
+    to_user(f"==> rebasing dev-env {args.name} (log: {log_path})")
+    try:
+        with run_log_context(log_path):
+            return rebase_env(config, store, args.name, asset=args.asset)
+    except DevEnvError:
+        to_user(f"    log: {log_path}")
+        raise
 
 
 def cmd_path(args: argparse.Namespace) -> int:
@@ -731,10 +772,14 @@ def cmd_cleanup_mounts(args: argparse.Namespace) -> int:
         info(f"no dports-dev mounts under {config.cache_root}")
         return 0
 
-    creating = [env_info.name for _, env_info in store.list_infos() if env_info.status == "creating"]
-    if creating:
-        error(f"refusing to clean mounts; create is in progress for: {', '.join(creating)}")
-        error("wait for it to finish or destroy the partial environment first")
+    in_flight = [
+        f"{env_info.name} ({env_info.status})"
+        for _, env_info in store.list_infos()
+        if env_info.status in {"creating", "rebasing"}
+    ]
+    if in_flight:
+        error(f"refusing to clean mounts; create or rebase is in progress for: {', '.join(in_flight)}")
+        error("wait for it to finish, re-run an interrupted rebase, or destroy the partial environment first")
         return 1
 
     info(f"the following mounts under {config.cache_root} will be unmounted:")
@@ -922,6 +967,7 @@ def dispatch(args: argparse.Namespace) -> int:
         "cleanup-mounts": cmd_cleanup_mounts,
         "status": cmd_status,
         "update": cmd_update,
+        "rebase": cmd_rebase,
         "path": cmd_path,
         "apply-and-build": cmd_apply_and_build,
         "reset-port": cmd_reset_port,

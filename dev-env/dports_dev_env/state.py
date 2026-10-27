@@ -13,7 +13,10 @@ from .errors import StateError
 # built when the tool lived inside the ports checkout, a layout that cannot be
 # provisioned or run any more, so there is nothing a migration could produce.
 STATE_SCHEMA = 2
-EnvStatus = Literal["creating", "ready", "failed", "destroying"]
+#: ``rebasing``: ``rebase`` is moving the env onto another base. Added without
+#: a schema bump: an older tool reading an env mid-rebase reports an invalid
+#: status, which is true.
+EnvStatus = Literal["creating", "ready", "failed", "destroying", "rebasing"]
 ComposeStatus = Literal["not-run", "running", "ok", "failed", "skipped"]
 
 
@@ -105,7 +108,7 @@ def _require_str(data: dict[str, object], key: str) -> str:
     return value
 
 
-_VALID_STATUSES = {"creating", "ready", "failed", "destroying"}
+_VALID_STATUSES = {"creating", "ready", "failed", "destroying", "rebasing"}
 _VALID_COMPOSE_STATUSES = {"not-run", "running", "ok", "failed", "skipped"}
 
 

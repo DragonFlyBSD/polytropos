@@ -99,6 +99,49 @@ sudo bin/dportsv3 dev-env destroy 2026Q2-editors_vim
 sudo bin/dportsv3 dev-env destroy --yes 2026Q2-editors_vim
 ```
 
+## Rebase
+
+An env keeps the DragonFly world it was created on. `rebase` moves it to
+another one without a destroy:
+
+```bash
+sudo bin/dportsv3 dev-env rebase --dry-run 2026Q4   # what would happen, changes nothing
+sudo bin/dportsv3 dev-env rebase 2026Q4             # Avalon's latest world
+sudo bin/dportsv3 dev-env rebase --asset DragonFly-x86_64-20261023-DEV-v6.5.0-2121-gf25f77d1f4.world.tar.gz 2026Q4
+```
+
+Only the read-only base under `root/` changes. Everything in `writable/`
+stays: the checkouts, dsynth's packages, logs and ccache, `/root`, `/tmp`,
+`/construction` and the hooks in `/etc/dsynth`. The generator venv is
+replaced, because it links the base's Python. dsynth rebuilds its Template
+by itself when the world changes. Packages built on the old world stay in
+`writable/work/dsynth/packages`; clear them yourself after a big jump.
+
+The env has to be unmounted in between, so `rebase` refuses, changing
+nothing, while anything holds it:
+
+* a job: `/work/DeltaPorts` points at a job worktree instead of `ports-main`.
+  Stop the runner, or point it at another env, before rebasing one it uses.
+* dsynth worker mounts under `/work/dsynth/build`.
+* a process inside the env, such as an open `shell` (found with `fstat`).
+* a mount the dev-env did not make, such as a hand-mounted ccache directory.
+  The rebase would take it down and not put it back, so unmount it first and
+  mount it again afterwards.
+
+The new base is provisioned while the env stays usable; the env is unmounted
+only after that. A downloaded world that does not match the checksum Avalon
+publishes for it is moved to `bases/archives/<asset>.bad`, and the rebase
+stops. During the swap the env's status is `rebasing`, and `shell`,
+`exec`, `sync-dirty` and `cleanup-mounts` refuse it. If a rebase is
+interrupted, the env stays `rebasing`: run the same `rebase` again to resume,
+or `destroy` it.
+
+To go back, rebase with `--asset` and the old world's name (printed at the
+end of a rebase). That reuses the old base only while the base inputs
+(package lists, runtime profile, helper scripts) are unchanged, and only while
+the old archive is still in `bases/archives` or on Avalon, which keeps about
+two months of worlds.
+
 ## List
 
 ```bash

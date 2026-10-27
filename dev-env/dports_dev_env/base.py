@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import DevEnvConfig
-from .errors import ProvisionError, StateError
+from .errors import ProvisionError, StateError, UsageError
 from .helpers import helper_signature
 from .locks import CacheLock
 from .log import info, subphase
@@ -48,6 +49,41 @@ def fetch_latest_world_asset(config: DevEnvConfig) -> str:
     if not assets:
         raise ProvisionError("could not locate DragonFly x86_64 world asset in Avalon listing")
     return assets[-1]
+
+
+def validate_world_asset(asset: str) -> str:
+    """``asset`` if it names one world archive, else raise.
+
+    WORLD_ASSET_RE is written for scanning a listing, so it is unanchored
+    and its middle admits "/"; the name is joined onto archives_dir and the
+    download URL, so both are checked here.
+    """
+    if "/" in asset or not WORLD_ASSET_RE.fullmatch(asset):
+        raise UsageError(f"not a DragonFly world asset name: {asset!r}")
+    return asset
+
+
+def published_world_sha256(config: DevEnvConfig, asset: str) -> str:
+    """The sha256 Avalon publishes for ``asset``, from ``<asset>.sha256``.
+
+    That file is one line, "<64 hex> <asset>"; anything else is an error
+    rather than a guess. Raises FileNotFoundError when Avalon has no such
+    file (HTTP 404).
+    """
+    url = config.avalon_releases_url.rstrip("/") + "/" + asset + ".sha256"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            text = response.read(4096).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise FileNotFoundError(url) from exc
+        raise ProvisionError(f"cannot fetch {url}: {exc}") from exc
+    except OSError as exc:
+        raise ProvisionError(f"cannot fetch {url}: {exc}") from exc
+    match = re.fullmatch(r"([0-9a-f]{64}) (\S+)\n?", text)
+    if match is None or match.group(2) != asset:
+        raise ProvisionError(f"unexpected checksum file {url}: {text[:200]!r}")
+    return match.group(1)
 
 
 def ensure_base_archive(config: DevEnvConfig, asset: str) -> BaseArchive:

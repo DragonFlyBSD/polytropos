@@ -71,6 +71,46 @@ def ordered_mounts_under(root: Path) -> list[Mount]:
     return [mount for _index, mount in indexed_mounts]
 
 
+@dataclass(frozen=True)
+class Holder:
+    """One fstat line: process ``pid`` has ``path`` open as ``fd``."""
+
+    cmd: str
+    pid: str
+    fd: str
+    path: str
+
+
+def holders_under(root: Path) -> list[Holder]:
+    """Processes whose root, cwd or an open file is at or below ``root``.
+
+    One entry per fstat line; ``fd`` is "root", "wd", "text" or a
+    descriptor number. Plain ``fstat``, not ``fstat -f root``: on DragonFly
+    the latter lists nothing for a nullfs target, even for a shell chrooted
+    into it, while plain fstat prints each root, wd and file by its path
+    through the mount. Raises MountError when there is no fstat or it
+    fails, so a caller cannot read "no holders" off a check that did not
+    run.
+    """
+    if shutil.which("fstat") is None:
+        raise MountError("fstat not found; cannot tell whether anything holds the env")
+    result = subprocess.run(["fstat"], text=True, capture_output=True)
+    if result.returncode != 0:
+        raise MountError(f"fstat failed (rc={result.returncode}): {result.stderr.strip()[:200]}")
+    root_s = str(root.resolve(strict=False))
+    holders: list[Holder] = []
+    # USER CMD PID FD PATH INUM MODE SZ|DV R/W; pipes and sockets put
+    # something other than a path in the PATH column.
+    for line in result.stdout.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 5:
+            continue
+        path = fields[4]
+        if path == root_s or path.startswith(root_s + "/"):
+            holders.append(Holder(cmd=fields[1], pid=fields[2], fd=fields[3], path=path))
+    return holders
+
+
 def unmount(target: Path) -> bool:
     info(f"unmounting {target}")
     last_stderr = ""
