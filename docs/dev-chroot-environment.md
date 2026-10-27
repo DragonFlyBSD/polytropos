@@ -151,13 +151,26 @@ provisioning. When a future Python release changes those package names, update
 the manifest default/profile and recreate affected environments; the changed
 profile data naturally creates a distinct provisioned base.
 
-The generator virtualenv cache is keyed by provisioned base id, Python version,
-and both `pyproject.toml` files in the tool checkout — the generator's and
-`dev-env/`'s. Both count because `bin/dportsv3` installs dev-env into that same
-venv; keying on the generator alone hands back a stale venv whenever dev-env's
-dependencies move. The venv lives at `/work/polytropos/.venv` and is restored
-into fresh envs before the initial compose, avoiding repeated `pip install -e`
-work while still letting the editable install use the env-local sources.
+The generator virtualenv cache is keyed by what the venv is built from, not by
+the provisioned base:
+
+- the chroot's interpreter (its version and path): the venv's `bin/python` is
+  a symlink to it;
+- every distribution that interpreter can import, by name and version:
+  `bin/dportsv3` creates the venv with `--system-site-packages`, so these are
+  on its path and pip resolved against them;
+- both `pyproject.toml` files in the tool checkout, the generator's and
+  `dev-env/`'s, because `bin/dportsv3` installs dev-env into that same venv;
+- the dev-env sources, hashed exactly as `bin/dportsv3` hashes them for its
+  install stamp. The wrapper reinstalls a venv whose stamp does not match, so
+  a key that left them out restored a venv only to have it reinstalled.
+
+A new world or a helper-script change gives a new base but, with the same
+Python and packages, the same venv. Each entry's `metadata.json` records
+these inputs and the bases it has served. The venv lives at
+`/work/polytropos/.venv` and is restored into fresh envs before the initial
+compose, avoiding repeated `pip install -e` work, which needs PyPI, while
+still letting the editable install use the env-local sources.
 
 Default shared distfiles mount:
 
