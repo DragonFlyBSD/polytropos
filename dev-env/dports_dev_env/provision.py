@@ -87,6 +87,7 @@ class BaseProvisioner:
             self.install_required_packages(root)
             self.ensure_python(root)
             self.install_runtime_profile_packages(root)
+            self.check_profile_python(root)
             self.install_optional_packages(root)
             write_helper_scripts(root)
             self.prepare_mountpoints(root)
@@ -206,6 +207,28 @@ class BaseProvisioner:
         if result.returncode != 0:
             raise ProvisionError(
                 f"failed to install runtime profile {self.config.runtime_profile.name} packages"
+            )
+
+    def check_profile_python(self, root: Path) -> None:
+        """Refuse a base whose python3 is not the profile's Python.
+
+        The generator venv is built on plain ``python3``. When that is
+        another minor than the profile's modules are for (the ports tree
+        moved PYTHON_DEFAULT), the venv cannot import them and pip falls
+        back to building pydantic-core from source, which needs a Rust
+        toolchain the base does not have. Say so here, by name.
+        """
+        profile = self.config.runtime_profile
+        result = ChrootRunner(root).run(
+            ["python3", "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True,
+        )
+        found = result.stdout.strip() if result.returncode == 0 else ""
+        if found != profile.python:
+            raise ProvisionError(
+                f"python3 in this base is {found or 'not runnable'}, but runtime profile "
+                f"{profile.name} is for Python {profile.python}; select the profile for "
+                "the repo's Python (runtime-profiles.toml)"
             )
 
     def validate_tools(self, root: Path) -> bool:

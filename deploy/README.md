@@ -209,9 +209,14 @@ so pull those first. Without `--only` it also fetches freebsd-ports and
 moves the env's upstream tree, which an upgrade should not do on the side.
 
 The venv is built with `--system-site-packages` so the pkg-installed
-`py311-fastapi`, `py311-pydantic` and friends are visible. Without that
+`py312-fastapi`, `py312-pydantic2` and friends are visible. Without that
 pip builds them from source and wants a Rust toolchain the base system
-does not have.
+does not have. It is built with the default runtime profile's Python
+(`python3.12`), or `python3` when that is missing, and only when the venv
+does not exist: an install upgrades the software in place and keeps the
+venv's Python. To move a host from 3.11 to 3.12, install the py312
+packages from `docs/OPERATOR_SETUP.md`, remove the venv, and run
+`deploy install` again.
 
 `--no-software` skips all of that and only wires the host, for the case
 where a port owns the software.

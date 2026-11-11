@@ -140,7 +140,9 @@ To go back, rebase with `--asset` and the old world's name (printed at the
 end of a rebase). That reuses the old base only while the base inputs
 (package lists, runtime profile, helper scripts) are unchanged, and only while
 the old archive is still in `bases/archives` or on Avalon, which keeps about
-two months of worlds.
+two months of worlds. When the old base was provisioned with another runtime
+profile than the default, the end of the rebase says so: set
+`DPORTS_DEV_RUNTIME_PROFILE` to that profile to reuse the base.
 
 ## List
 
@@ -181,8 +183,8 @@ The provisioned base cache is keyed by the Avalon world asset and configured
 tool package lists, including the selected runtime profile from
 `dev-env/dports_dev_env/runtime-profiles.toml`. It sits inside the package
 rather than beside it because the generator reads the same manifest — the
-agent's `python_runtime` health check compares it against what is actually
-installed in the chroot — and can only reach it through the installed
+agent's `python_runtime` health check falls back to it for a base that does
+not record its profile — and can only reach it through the installed
 package. Fresh envs mount this
 provisioned root read-only and layer small writable per-env directories over the
 paths that need mutation, avoiding both repeated `pkg-bootstrap` work and full
@@ -190,9 +192,15 @@ root copies.
 
 Runtime profiles declare the DragonFly packages required by the repo tooling
 inside the chroot. The default profile is installed automatically during
-provisioning. When a future Python release changes those package names, update
-the manifest default/profile and recreate affected environments; the changed
-profile data naturally creates a distinct provisioned base.
+provisioning, and provisioning stops if the base's `python3` is not the
+profile's Python. When the ports tree moves its default Python (DPorts 2026Q4
+went to 3.12, and `dportsv3-py312` became the default), add a profile, make it
+the default, and rebase the environments; the changed profile data naturally
+creates a distinct provisioned base. Until they are rebased, existing envs keep
+working: each base records the profile it was provisioned with, the agent's
+`python_runtime` check reads that record, and `bin/dportsv3` checks the profile
+that matches the interpreter it runs. So keep the old profile until no env or
+host uses it.
 
 The generator virtualenv cache is keyed by what the venv is built from, not by
 the provisioned base:

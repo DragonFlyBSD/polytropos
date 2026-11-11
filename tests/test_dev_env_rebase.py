@@ -270,6 +270,31 @@ def test_rebase_moves_the_env_to_the_latest_world(world, capsys):
     assert f"rebase e --asset {OLD}" in err
 
 
+@pytest.mark.parametrize("recorded, reused", [
+    ("dportsv3-py311", False),
+    ("dportsv3-py312", True),
+])
+def test_going_back_names_the_old_bases_runtime_profile(world, capsys, recorded, reused):
+    """The profile is a base input: going back under another default
+    provisions the old world again, unless the old profile is selected."""
+    world.config.runtime_profile = SimpleNamespace(name="dportsv3-py312")
+    metadata = world.config.provisioned_bases_dir / world.old_id / "metadata.json"
+    metadata.write_text(json.dumps({
+        "archive": {"asset": OLD},
+        "runtime_profile": {"schema": 1, "name": recorded, "python": "3.11",
+                            "packages": ["py311-fastapi"]},
+    }))
+    assert world.rebase() == 0
+    err = capsys.readouterr().err
+    assert f"rebase e --asset {OLD}" in err
+    if reused:
+        assert f"reuses base {world.old_id}" in err
+        assert "DPORTS_DEV_RUNTIME_PROFILE" not in err
+    else:
+        assert f"DPORTS_DEV_RUNTIME_PROFILE={recorded} set" in err
+        assert f"under dportsv3-py312, {OLD} is provisioned again" in err
+
+
 def test_asset_is_used_verbatim(world):
     world.latest = "not consulted"
     world.published["DragonFly-x86_64-20261010-DEV-v6.5.0-2000-g0123456789.world.tar.gz"] = "c" * 64

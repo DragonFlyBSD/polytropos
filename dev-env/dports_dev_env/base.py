@@ -14,6 +14,7 @@ from .helpers import helper_signature
 from .locks import CacheLock
 from .log import info, subphase
 from .names import sanitize_name
+from .runtime_profiles import RuntimeProfile
 
 
 WORLD_ASSET_RE = re.compile(r'DragonFly-x86_64-[^"<>\s]*\.world\.tar\.gz')
@@ -124,6 +125,32 @@ def provisioned_base_id(config: DevEnvConfig, archive: BaseArchive) -> str:
     }
     encoded = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def provisioned_runtime_profile(config: DevEnvConfig, provisioned_base_id: str) -> RuntimeProfile | None:
+    """The runtime profile base ``provisioned_base_id`` was provisioned with,
+    from its metadata.json, or None when the base does not say.
+
+    Not the configured profile: that is what the next base gets, and a base
+    provisioned before the default changed has the old one's packages.
+    """
+    if not provisioned_base_id:
+        return None
+    path = config.provisioned_bases_dir / provisioned_base_id / "metadata.json"
+    try:
+        recorded = json.loads(path.read_text())["runtime_profile"]
+        profile = RuntimeProfile(
+            schema=recorded["schema"],
+            name=recorded["name"],
+            python=recorded["python"],
+            packages=list(recorded["packages"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not (isinstance(profile.name, str) and profile.name
+            and all(isinstance(p, str) and p for p in profile.packages)):
+        return None
+    return profile
 
 
 def find_ready_provisioned_base(config: DevEnvConfig, provisioned_base_id: str) -> Path:

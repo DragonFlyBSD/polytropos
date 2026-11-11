@@ -94,8 +94,79 @@ def test_python_runtime_all_present(monkeypatch):
     assert "runtime profile" in c.detail
 
 
+def _py311_profile():
+    from dports_dev_env.runtime_profiles import load_runtime_profile
+
+    return load_runtime_profile("dportsv3-py311")
+
+
+def test_python_runtime_checks_the_profile_the_base_was_provisioned_with(monkeypatch):
+    """An env provisioned before the default moved to py312 is checked
+    against py311, which it has, not py312, which it does not (poly-0nfd)."""
+    monkeypatch.setattr(health, "_provisioned_profile", lambda env: _py311_profile())
+    seen = []
+
+    def fake(env, *argv, **kw):
+        seen.append(argv)
+        return _FakeCP(returncode=0)
+
+    _patch_run(monkeypatch, fake)
+    c = health._check_python_runtime("env")
+    assert c.status == "ok"
+    assert "dportsv3-py311" in c.detail
+    assert seen == [("pkg", "info", "-e", *_py311_profile().packages)]
+
+
+def test_python_runtime_falls_back_to_the_default_profile(monkeypatch):
+    from dports_dev_env.runtime_profiles import load_runtime_profile
+
+    monkeypatch.setattr(health, "_provisioned_profile", lambda env: None)
+    seen = []
+
+    def fake(env, *argv, **kw):
+        seen.append(argv)
+        return _FakeCP(returncode=0)
+
+    _patch_run(monkeypatch, fake)
+    c = health._check_python_runtime("env")
+    assert c.status == "ok"
+    assert seen == [("pkg", "info", "-e", *load_runtime_profile().packages)]
+
+
+def test_provisioned_profile_reads_the_envs_base(set_setting, tmp_path):
+    from dports_dev_env.config import load_config
+    from dports_dev_env.state import (
+        STATE_SCHEMA, EnvironmentState, RepoState, RuntimeState, SourceState,
+    )
+    from dports_dev_env.store import EnvironmentStore
+
+    set_setting("dev_env.cache_root", str(tmp_path / "cache"))
+    config = load_config()
+    store = EnvironmentStore(config)
+    store.save(EnvironmentState(
+        schema=STATE_SCHEMA, name="e", backend="chroot", target="@2026Q4",
+        origin="", status="ready", created_at="2026-10-22T00:00:00Z",
+        updated_at="2026-10-22T00:00:00Z", root_dir=store.root_dir("e"),
+        writable_dir=store.writable_dir("e"), provisioned_base_id="abc",
+        repos=RepoState("master", "2026Q4", "master", "master"),
+        source=SourceState("/host/DeltaPorts", "/host/polytropos"),
+        runtime=RuntimeState("/usr/distfiles", "off"),
+    ))
+    profile = _py311_profile()
+    base_dir = config.provisioned_bases_dir / "abc"
+    base_dir.mkdir(parents=True)
+    (base_dir / "metadata.json").write_text(json.dumps({"runtime_profile": {
+        "schema": profile.schema, "name": profile.name,
+        "python": profile.python, "packages": profile.packages,
+    }}))
+
+    assert health._provisioned_profile("e") == profile
+    assert health._provisioned_profile("no-such-env") is None
+
+
 def test_python_runtime_missing_some(monkeypatch):
     """Aggregate fails, per-pkg loop identifies which are missing."""
+    monkeypatch.setattr(health, "_provisioned_profile", lambda env: _py311_profile())
     calls = {"n": 0}
     missing = {"py311-sqlite3", "py311-pydantic2"}
 

@@ -1,6 +1,29 @@
 schema = 1
-default = "dportsv3-py311"
+default = "dportsv3-py312"
 
+# DPorts 2026Q4 builds Python modules for 3.12 only (PYTHON_DEFAULT 3.12),
+# so a base provisioned from today's repo can only install this profile.
+[profiles.dportsv3-py312]
+python = "3.12"
+packages = [
+  "py312-sqlite3",
+  "py312-pydantic2",
+  "py312-pydantic-core",
+  "py312-fastapi",
+  "py312-uvicorn",
+  "py312-watchfiles",
+  "py312-uvloop",
+  "py312-httptools",
+  "py312-websockets",
+  "py312-python-dotenv",
+]
+
+# Not the default, and no longer installable: the repo has none of these
+# but py311-sqlite3. Kept for what already runs 3.11. bin/dportsv3 checks a
+# 3.11 interpreter against this list (a host, or an env provisioned before
+# the switch), and selecting it with DPORTS_DEV_RUNTIME_PROFILE is how
+# `rebase --asset <old world>` reuses a base provisioned with it.
+# Drop it once no host or env runs 3.11.
 [profiles.dportsv3-py311]
 python = "3.11"
 packages = [

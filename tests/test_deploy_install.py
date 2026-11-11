@@ -418,3 +418,18 @@ def test_the_post_install_message_names_the_current_layout(capsys) -> None:
     assert "harness.env" not in source
     assert "polytropos.toml" in source
     assert "config show" in source
+
+
+@pytest.mark.parametrize("on_path, chosen", [
+    ({"python3.12", "python3.11", "python3"}, "python3.12"),
+    ({"python3.11", "python3"}, "python3"),
+])
+def test_the_venv_is_built_with_the_runtime_profiles_python(monkeypatch, on_path, chosen) -> None:
+    """--system-site-packages only finds the pkg-installed modules when the
+    venv's Python is the one they are packaged for (poly-0nfd)."""
+    from dports_dev_env.runtime_profiles import load_runtime_profile
+
+    assert load_runtime_profile().python == "3.12"
+    monkeypatch.setattr(dep.shutil, "which",
+                        lambda name: f"/usr/local/bin/{name}" if name in on_path else None)
+    assert dep._python_for_venv() == f"/usr/local/bin/{chosen}"

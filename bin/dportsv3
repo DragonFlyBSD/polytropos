@@ -136,8 +136,18 @@ import sys
 import tomllib
 
 data = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
-name = os.environ.get("DPORTS_DEV_RUNTIME_PROFILE") or data["default"]
-print(" ".join(data["profiles"][name]["packages"]))
+profiles = data["profiles"]
+name = os.environ.get("DPORTS_DEV_RUNTIME_PROFILE")
+if not name:
+    # The profile for the interpreter that builds the venv, which is not
+    # always the default's: a 3.11 host, or an env provisioned before the
+    # default moved to 3.12, has the old profile's modules and none of the
+    # new one's (poly-0nfd).
+    running = "%d.%d" % sys.version_info[:2]
+    name = data["default"]
+    if profiles[name]["python"] != running:
+        name = next((n for n, p in profiles.items() if p["python"] == running), name)
+print(" ".join(profiles[name]["packages"]))
 PY
 }
 

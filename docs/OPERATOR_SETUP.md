@@ -9,14 +9,20 @@ agentic dsynth build with the tracker UI open. For architecture see
 DragonFly packages required by the generator + tracker venv:
 
 ```sh
-pkg install py311-sqlite3 py311-pydantic2 py311-pydantic-core \
-            py311-fastapi py311-uvicorn py311-watchfiles \
-            py311-uvloop py311-httptools py311-websockets \
-            py311-python-dotenv
+pkg install py312-sqlite3 py312-pydantic2 py312-pydantic-core \
+            py312-fastapi py312-uvicorn py312-watchfiles \
+            py312-uvloop py312-httptools py312-websockets \
+            py312-python-dotenv
 ```
 
 (These keep us off Rust-built wheels — the venv is set up with
 `--system-site-packages` to pick them up.)
+
+The list is the default runtime profile in
+`dev-env/dports_dev_env/runtime-profiles.toml`, and it follows the Python
+the DPorts package set builds modules for: 3.12 since 2026Q4. A host
+already running 3.11 keeps working, because `bin/dportsv3` checks the
+profile that matches its `python3`.
 
 You also need `dsynth` itself, of course, and a profile set up
 (`/usr/local/etc/dsynth/<profile>-make.conf` etc).

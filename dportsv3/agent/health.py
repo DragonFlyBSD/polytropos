@@ -75,8 +75,29 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _runtime_profile() -> tuple[str, tuple[str, ...]]:
-    """The runtime profile the env *should* have been built from.
+def _provisioned_profile(env: str):
+    """The runtime profile ``env``'s base was provisioned with, or None.
+
+    Read from the base's metadata through dports_dev_env's store, as
+    env_resolver reads an env's target. An env provisioned before the
+    default profile changed has the old profile's packages and none of the
+    new one's, so checking it against the default would call it broken
+    until it is rebased (poly-0nfd).
+    """
+    from dports_dev_env.base import provisioned_runtime_profile  # noqa: PLC0415
+    from dports_dev_env.config import load_config  # noqa: PLC0415
+    from dports_dev_env.store import EnvironmentStore  # noqa: PLC0415
+
+    try:
+        config = load_config()
+        state = EnvironmentStore(config).load(env)
+    except Exception:  # noqa: BLE001 — unreadable state falls back to the default
+        return None
+    return provisioned_runtime_profile(config, state.provisioned_base_id)
+
+
+def _runtime_profile(env: str) -> tuple[str, tuple[str, ...]]:
+    """The runtime profile ``env`` should have: its base's, else the default.
 
     Read through `dports_dev_env`, which owns the manifest, rather than
     re-parsed from a guessed path. That kept two copies of the selection
@@ -87,7 +108,7 @@ def _runtime_profile() -> tuple[str, tuple[str, ...]]:
     """
     from dports_dev_env.runtime_profiles import load_runtime_profile  # noqa: PLC0415
 
-    profile = load_runtime_profile()
+    profile = _provisioned_profile(env) or load_runtime_profile()
     return profile.name, tuple(profile.packages)
 
 
@@ -122,13 +143,13 @@ def _run_in_env(env: str, *argv: str, timeout: int = 10) -> subprocess.Completed
 
 
 def _check_python_runtime(env: str) -> HealthCheck:
-    """Verify required py311-* packages are installed in the chroot.
+    """Verify the runtime profile's packages are installed in the chroot.
 
     One subprocess per pkg would be wasteful, so we use a single
     ``pkg info -e`` form before probing individual missing packages.
     """
     try:
-        profile_name, runtime_pkgs = _runtime_profile()
+        profile_name, runtime_pkgs = _runtime_profile(env)
     except Exception as exc:  # noqa: BLE001 — health output should not crash
         return HealthCheck(
             name="python_runtime", status="broken",

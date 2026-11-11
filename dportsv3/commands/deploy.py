@@ -233,9 +233,13 @@ def _python_for_venv() -> str:
     """The interpreter to build the venv with.
 
     Not sys.executable: this command runs inside the checkout's own venv,
-    and building a venv from a venv inherits it. Take the system one.
+    and building a venv from a venv inherits it. Take the system one, of
+    the Python the default runtime profile's modules are packaged for, so
+    --system-site-packages finds them (docs/OPERATOR_SETUP.md).
     """
-    for name in ("python3.11", "python3"):
+    from dports_dev_env.runtime_profiles import load_runtime_profile  # noqa: PLC0415
+
+    for name in (f"python{load_runtime_profile().python}", "python3"):
         found = shutil.which(name)
         if found:
             return found
@@ -260,8 +264,8 @@ def apply(actions, *, deploy: Path, prefix: Path, user: str, group: str,
         log(f"  do    {action.detail}")
 
         if action.kind == "venv":
-            # --system-site-packages so the pkg-installed py311-fastapi,
-            # py311-pydantic and friends are visible. Without it pip builds
+            # --system-site-packages so the pkg-installed py312-fastapi,
+            # py312-pydantic2 and friends are visible. Without it pip builds
             # them from source and needs a Rust toolchain the base system
             # does not have.
             _run([_python_for_venv(), "-m", "venv",

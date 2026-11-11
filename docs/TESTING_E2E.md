@@ -64,10 +64,10 @@ on the dfly box. Slowest path; use when:
 ### Prerequisites
 
 ```
-pkg install py311-sqlite3 py311-pydantic2 py311-pydantic-core \
-            py311-fastapi py311-uvicorn py311-watchfiles \
-            py311-uvloop py311-httptools py311-websockets \
-            py311-python-dotenv
+pkg install py312-sqlite3 py312-pydantic2 py312-pydantic-core \
+            py312-fastapi py312-uvicorn py312-watchfiles \
+            py312-uvloop py312-httptools py312-websockets \
+            py312-python-dotenv
 ```
 
 A prepared dev-env for the target: `dportsv3 dev-env create NAME @TARGET`,

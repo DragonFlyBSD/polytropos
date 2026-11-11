@@ -29,6 +29,7 @@ from .base import (
     fetch_latest_world_asset,
     file_sha256,
     provisioned_base_id,
+    provisioned_runtime_profile,
     published_world_sha256,
     validate_world_asset,
 )
@@ -192,7 +193,19 @@ def _rebase(
     to_user(f"==> {name}: {current_asset} -> {target.asset}")
     to_user(f"    base {old_id} -> {target.base_id}")
     to_user("    packages built on the old world stay in writable/work/dsynth/packages; clear them after a big jump")
-    if current_asset != "unknown":
+    if current_asset == "unknown":
+        return 0
+    old_profile = provisioned_runtime_profile(config, old_id)
+    if old_profile is not None and old_profile.name != config.runtime_profile.name:
+        # The profile is a base input, so going back under the new one
+        # provisions the old world again instead of reusing old_id.
+        to_user(
+            f"    to go back: rebase {name} --asset {current_asset} with "
+            f"DPORTS_DEV_RUNTIME_PROFILE={old_profile.name} set (base {old_id} was "
+            f"provisioned with that profile; under {config.runtime_profile.name}, "
+            f"{current_asset} is provisioned again)"
+        )
+    else:
         to_user(
             f"    to go back: rebase {name} --asset {current_asset} (reuses base {old_id} "
             "while the base inputs are unchanged and the archive is cached or on Avalon)"
