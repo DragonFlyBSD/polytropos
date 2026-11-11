@@ -20,11 +20,13 @@ composed the agent's last state. A dead libx264 job's re-cut patch then
 built green under an operator ``dbuild`` while DPorts failed on ironman
 (poly-at76). The compose now reads ``/work/ports-main``.
 
-Stage order: ``make clean`` (best-effort) → baseline compose per origin
-(best-effort). ``make clean`` runs first against the still-patched
-substrate because its in-tree Makefile is what the existing WRKDIR was
-authored against. A compose failure is treated as "baseline already
-broken" — surfaced but not flipped to ok=False.
+Stage order: ``make clean`` (best-effort) → drop the origins' packages
+(best-effort) → baseline compose per origin (best-effort). ``make clean``
+runs first against the still-patched substrate because its in-tree
+Makefile is what the existing WRKDIR was authored against. The package
+drop reads its names from that same tree, so it too precedes the compose
+(poly-jao2). A compose failure is treated as "baseline already broken" —
+surfaced but not flipped to ok=False.
 """
 
 from __future__ import annotations
@@ -43,24 +45,31 @@ def _clear_caches():
     observation."""
     worker._WRKSRC_CACHE.clear()
     worker._MATERIALIZE_STATE.clear()
+    worker._BUILT_ORIGINS.clear()
     yield
     worker._WRKSRC_CACHE.clear()
     worker._MATERIALIZE_STATE.clear()
+    worker._BUILT_ORIGINS.clear()
 
 
 def _make_exec_recorder(clean_rc=0, compose_rc=0,
                         clean_out="", clean_err="",
-                        compose_out="", compose_err=""):
+                        compose_out="", compose_err="",
+                        drop_rc=0, drop_out="", drop_err=""):
     """Return (recorded_calls, fake_exec). The fake routes by the
-    ``/bin/sh -c <cmd>`` shape: `` compose `` in the cmd → baseline
-    compose; ``make `` → workdir clean. ``compose_rc`` may be a dict of
-    origin → rc. Any git, any ``reapply``, or anything else raises — git
-    because reset_port must not touch the source checkout, reapply
-    because it composes the job's worktree (poly-at76)."""
+    ``/bin/sh -c <cmd>`` shape: the package-drop script → package drop;
+    `` compose `` in the cmd → baseline compose; ``make `` → workdir
+    clean. ``compose_rc`` may be a dict of origin → rc. Any git, any
+    ``reapply``, or anything else raises — git because reset_port must
+    not touch the source checkout, reapply because it composes the job's
+    worktree (poly-at76)."""
     calls: list[tuple[str, ...]] = []
 
     def _fake(env, *argv, **kwargs):
         calls.append(argv)
+        if len(argv) > 2 and argv[2] == worker._DROP_PACKAGES_SH:
+            return SimpleNamespace(returncode=drop_rc,
+                                   stdout=drop_out, stderr=drop_err)
         cmd = argv[-1] if argv else ""
         if (argv and argv[0] == "reapply") or "reapply" in cmd:
             raise AssertionError(
@@ -95,13 +104,14 @@ def test_reset_port_runs_clean_then_the_baseline_compose(monkeypatch):
     assert result["baseline_compose_ok"] is True
     # Two invocations, in order: clean against the still-patched substrate,
     # then the compose. The substrate reset that sat between them is gone —
-    # the job's worktree is thrown away instead. The recorder asserts on any
-    # git and any reapply.
+    # the job's worktree is thrown away instead. Nothing was built, so no
+    # package drop either. The recorder asserts on any git and any reapply.
     assert len(calls) == 2
     assert "make " in calls[0][-1]
     assert "WRKDIRPREFIX=" in calls[0][-1]
     assert " compose" in calls[1][-1]
     assert "--origin devel/foo " in calls[1][-1]
+    assert result["packages_dropped"] == []
 
 
 def test_the_compose_reads_the_main_checkout_not_the_job_worktree(monkeypatch):
@@ -195,15 +205,16 @@ def test_reset_port_tolerates_make_clean_failure(monkeypatch):
         clean_rc=2, clean_err="make: no such target 'clean'",
     )
     monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"devel/foo"}
 
     result = worker.reset_port("test-env", "devel/foo")
 
     assert result["ok"] is True
     assert result["workdir_clean_ok"] is False
     assert "make: no such target" in result["workdir_clean_error"]
-    # Both stages still ran — a make clean failure must not short-circuit
-    # the compose.
-    assert len(calls) == 2
+    # Every stage still ran — a make clean failure must not short-circuit
+    # the drop or the compose.
+    assert len(calls) == 3
 
 
 def test_reset_port_tolerates_a_baseline_compose_failure(monkeypatch):
@@ -247,3 +258,151 @@ def test_reset_port_does_not_leak_state_when_caches_were_empty(monkeypatch):
     assert result["ok"] is True
     assert ("test-env", "devel/foo") not in worker._WRKSRC_CACHE
     assert ("test-env", "devel/foo") not in worker._MATERIALIZE_STATE
+
+
+# --- the package drop (poly-jao2) ------------------------------------------
+
+
+def test_what_was_built_is_dropped_before_the_compose(monkeypatch):
+    """A dsynth_build of the port and its patch origin left packages built
+    from the agent's tree. They go before the compose: their names are read
+    from the tree that was built."""
+    calls, fake = _make_exec_recorder()
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"multimedia/libx264",
+                                         "multimedia/x264"}
+
+    worker.reset_port("test-env", "multimedia/libx264",
+                      also=["multimedia/x264"])
+
+    drops = [i for i, c in enumerate(calls)
+             if c[2] == worker._DROP_PACKAGES_SH]
+    composes = [i for i, c in enumerate(calls) if " compose" in c[-1]]
+    assert len(drops) == 1
+    assert drops[0] < min(composes)
+    assert calls[drops[0]][3:] == ("_", worker.DSYNTH_REPO_DIR,
+                                   "multimedia/libx264", "multimedia/x264")
+    # Dropped once: the next job starts with nothing recorded.
+    assert "test-env" not in worker._BUILT_ORIGINS
+
+
+def test_an_origin_never_built_keeps_its_package(monkeypatch):
+    """The agent built only the slave. The master's package, if any, was
+    built from the baseline, and dropping it costs a rebuild for nothing."""
+    calls, fake = _make_exec_recorder()
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"multimedia/libx264"}
+
+    worker.reset_port("test-env", "multimedia/libx264",
+                      also=["multimedia/x264"])
+
+    (drop,) = [c for c in calls if c[2] == worker._DROP_PACKAGES_SH]
+    assert drop[3:] == ("_", worker.DSYNTH_REPO_DIR, "multimedia/libx264")
+
+
+def test_an_origin_built_outside_the_reset_set_is_dropped_too(monkeypatch):
+    """The relation can change under the agent; what it built from its
+    tree goes regardless."""
+    calls, fake = _make_exec_recorder()
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"devel/foo", "devel/old-master"}
+
+    worker.reset_port("test-env", "devel/foo")
+
+    (drop,) = [c for c in calls if c[2] == worker._DROP_PACKAGES_SH]
+    assert drop[3:] == ("_", worker.DSYNTH_REPO_DIR,
+                        "devel/foo", "devel/old-master")
+
+
+def test_another_envs_builds_are_left_alone(monkeypatch):
+    calls, fake = _make_exec_recorder()
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["other-env"] = {"devel/foo"}
+
+    worker.reset_port("test-env", "devel/foo")
+
+    assert not [c for c in calls if c[2] == worker._DROP_PACKAGES_SH]
+    assert worker._BUILT_ORIGINS == {"other-env": {"devel/foo"}}
+
+
+def test_the_dropped_packages_are_reported(monkeypatch):
+    _, fake = _make_exec_recorder(
+        drop_out="DROPPED=net/socketapi socketapi-2.2.28.pkg\nnoise\n",
+    )
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"net/socketapi"}
+
+    result = worker.reset_port("test-env", "net/socketapi")
+
+    assert result["packages_dropped"] == ["socketapi-2.2.28.pkg"]
+    assert "packages_drop_error" not in result
+
+
+def test_a_failed_drop_is_reported_and_the_compose_still_runs(monkeypatch):
+    calls, fake = _make_exec_recorder(drop_rc=1, drop_err="chroot gone")
+    monkeypatch.setattr(worker, "_exec", fake)
+    worker._BUILT_ORIGINS["test-env"] = {"devel/foo"}
+
+    result = worker.reset_port("test-env", "devel/foo")
+
+    assert result["ok"] is True
+    assert result["packages_dropped"] == []
+    assert "chroot gone" in result["packages_drop_error"]
+    assert result["baseline_compose_ok"] is True
+    assert " compose" in calls[-1][-1]
+
+
+def test_a_drop_that_cannot_start_does_not_stop_the_compose(monkeypatch):
+    """The compose is the stage that keeps the shared tree honest
+    (poly-at76); the new stage in front of it must not be able to skip it."""
+    calls, fake = _make_exec_recorder()
+
+    def _exec(env, *argv, **kwargs):
+        if len(argv) > 2 and argv[2] == worker._DROP_PACKAGES_SH:
+            raise FileNotFoundError("dportsv3: not found")
+        return fake(env, *argv, **kwargs)
+
+    monkeypatch.setattr(worker, "_exec", _exec)
+    worker._BUILT_ORIGINS["test-env"] = {"devel/foo"}
+
+    result = worker.reset_port("test-env", "devel/foo")
+
+    assert "not found" in result["packages_drop_error"]
+    assert result["baseline_compose_ok"] is True
+    assert " compose" in calls[-1][-1]
+
+
+def _build_ready(monkeypatch, rc):
+    """A dsynth_build that passes the stale-compose guard and returns rc."""
+    monkeypatch.setattr(worker, "_exec", lambda env, *argv, **kw:
+                        SimpleNamespace(returncode=rc, stdout="", stderr=""))
+    monkeypatch.setattr(worker, "_dsynth_log_path", lambda o: "/tmp/log")
+    monkeypatch.setitem(worker._MATERIALIZE_STATE,
+                        ("test-env", "multimedia/libx264"), "match")
+    monkeypatch.setattr(worker, "_port_subtree_hash",
+                        lambda env, origin: "match")
+
+
+@pytest.mark.parametrize("rc", [0, 1])
+def test_a_build_records_what_it_built(monkeypatch, rc):
+    """Failed or not: a run that fails part-way can still have built some
+    of its list, and every package it made came from the agent's tree."""
+    _build_ready(monkeypatch, rc)
+
+    worker.dsynth_build("test-env", "multimedia/libx264",
+                        also=["multimedia/x264"])
+
+    assert worker._BUILT_ORIGINS == {
+        "test-env": {"multimedia/libx264", "multimedia/x264"}}
+
+
+def test_a_refused_build_records_nothing(monkeypatch):
+    """No materialize, no dsynth run, nothing in the repository to drop."""
+    monkeypatch.setattr(worker, "_exec", lambda env, *argv, **kw:
+                        SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(worker, "_dsynth_log_path", lambda o: "/tmp/log")
+
+    result = worker.dsynth_build("test-env", "devel/foo", also=())
+
+    assert result["blocked_by"] == "stale_compose"
+    assert worker._BUILT_ORIGINS == {}

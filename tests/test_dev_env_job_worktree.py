@@ -95,6 +95,12 @@ def test_worker_layout_agrees_with_dev_env():
     assert worker.LOCK_DIR == layout.LOCK_DIR
     assert worker.TOOL_BIN == layout.TOOL_BIN
 
+    # reset_port's package drop (poly-jao2): the same script verify's
+    # cleanup runs, against the repository dsynth.ini names.
+    from dports_dev_env import dsynth
+    assert worker.DSYNTH_REPO_DIR == dsynth.DSYNTH_REPO_DIR
+    assert worker._DROP_PACKAGES_SH == dsynth.DROP_PACKAGES_SH
+
 
 def test_worktree_name_is_a_relative_sibling(monkeypatch):
     """The symlink target must be relative, so the worktree has to sit

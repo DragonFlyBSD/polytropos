@@ -1306,11 +1306,19 @@ def _reset_after_patch(
                 job_id=ctx.job_id,
             )
         else:
+            # Which packages went is what tells an operator their next
+            # build of the port will rebuild it (poly-jao2).
+            dropped = reset.get("packages_dropped") or []
+            drop_error = reset.get("packages_drop_error")
             services.activity_log(
                 queue_root, "patch_post_reset",
                 f"reset {', '.join(f'ports/{o}/' for o in [origin, *also])} "
                 f"to baseline after patch "
-                f"(baseline_compose_ok={reset.get('baseline_compose_ok')})",
+                f"(baseline_compose_ok={reset.get('baseline_compose_ok')}"
+                + (f"; dropped {', '.join(dropped)}" if dropped else "")
+                + (f"; package drop failed: {drop_error[:200]}"
+                   if drop_error else "")
+                + ")",
                 job_id=ctx.job_id,
             )
     except Exception:

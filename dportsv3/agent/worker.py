@@ -2543,13 +2543,15 @@ def assert_port_clean(
 
 
 def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
-    """Wipe the per-origin WRKDIR and recompose the origin from the main
-    checkout, so the env is left with a pristine WRKDIR and a composed tree
-    that matches the repository.
+    """Wipe the per-origin WRKDIR, drop the origin's packages and recompose
+    it from the main checkout, so the env is left with a pristine WRKDIR, no
+    package built from the job's tree, and a composed tree that matches the
+    repository.
 
-    Both of those live outside the job's worktree — ``/work/obj`` and
-    ``/work/artifacts/compose`` — and are shared across jobs, so destroying
-    the worktree does not clean them and this still has work to do.
+    All three live outside the job's worktree — ``/work/obj``, the dsynth
+    repository and ``/work/artifacts/compose`` — and are shared across jobs,
+    so destroying the worktree does not clean them and this still has work
+    to do.
 
     What it no longer does is reset the source checkout. That stage existed to
     stop one job's escaped writes reaching the next one through the shared
@@ -2566,7 +2568,17 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
        (or any .DragonFly fragments) still reflects the patched
        state ``make clean`` was authored against.
 
-    2. Compose each origin from ``PORTS_MAIN_DIR``, regenerating
+    2. Drop from the dsynth repository the packages of every origin a
+       ``dsynth_build`` built since the env's last reset
+       (``_BUILT_ORIGINS``, :func:`_drop_built_packages`). A build that
+       passed left one made from the agent's tree; kept, it has the version
+       dsynth compares, so an operator ``dsynth build`` of the reset port
+       builds nothing and reports no failure (poly-jao2). Before the
+       compose, because the package name is read from the tree that was
+       built. Surfaces as ``packages_dropped`` (and
+       ``packages_drop_error``) but does not flip ``ok``.
+
+    3. Compose each origin from ``PORTS_MAIN_DIR``, regenerating
        ``/work/artifacts/compose/<target>/<origin>/`` from the repository
        the job branched from.
 
@@ -2599,17 +2611,17 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     code path that holds a cached path/hash sees the cache miss and
     re-derives.
 
-    Both stages are best-effort: their failures surface as
-    ``workdir_clean_*`` / ``baseline_compose_*`` keys in the result but do
-    not flip ``ok``.
+    Every stage is best-effort: failures surface as ``workdir_clean_*`` /
+    ``packages_drop_error`` / ``baseline_compose_*`` keys in the result but
+    do not flip ``ok``.
     """
     # 1. Best-effort WRKDIR cleanup — runs against the still-patched
     # substrate (the in-tree Makefile/.DragonFly is what ``make clean``
     # was authored against). ok stays True even on failure.
     #
-    # poly-lt5q: ``also`` extends both stages to the port's patch
+    # poly-lt5q: ``also`` extends every stage to the port's patch
     # origin, so a master edited on the slave's behalf gets its WRKDIR
-    # cleaned and its compose tree re-composed too.
+    # cleaned, its packages dropped and its compose tree re-composed too.
     origins = origin_set(origin, also)
     workdir = _clean_port_workdir(env, origin)
     for extra in origins[1:]:
@@ -2623,11 +2635,19 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
     # shared checkout now: the job's tree is a worktree that is destroyed with
     # the job, so those writes cannot outlive it.
     #
-    # The other two stages stay. They clean the WRKDIR under /work/obj and the
-    # composed tree under /work/artifacts/compose, both of which live outside
-    # the worktree and are shared across jobs.
+    # The other stages stay. They clean the WRKDIR under /work/obj, the dsynth
+    # repository and the composed tree under /work/artifacts/compose, all of
+    # which live outside the worktree and are shared across jobs.
 
-    # 2. Compose each origin from the main checkout, not through
+    # 2. Drop the packages built from the job's tree (poly-jao2), while the
+    # composed tree still names them. Only what a dsynth_build built: the
+    # reset set first, then anything built outside it.
+    built = _BUILT_ORIGINS.pop(env, set())
+    drop = [o for o in origins if o in built] + sorted(built.difference(origins))
+    packages = (_drop_built_packages(env, drop) if drop
+                else {"ok": True, "dropped": []})
+
+    # 3. Compose each origin from the main checkout, not through
     # `reapply`: that reads PORTS_DIR, still this job's worktree
     # (poly-at76). Every origin is attempted, and the first failure is
     # the one reported.
@@ -2645,8 +2665,11 @@ def reset_port(env: str, origin: str, *, also: Sequence[str] = ()) -> dict:
         "ok": True,
         "origin": origin,
         "workdir_clean_ok": bool(workdir.get("ok")),
+        "packages_dropped": packages["dropped"],
         "baseline_compose_ok": failed is None,
     }
+    if not packages["ok"]:
+        result["packages_drop_error"] = packages["error"]
     if not workdir.get("ok"):
         # Surface diagnosis without flipping the overall result.
         # Prefer the actual stderr tail since the static ``error``
@@ -3007,6 +3030,40 @@ def _clean_port_workdir(env: str, origin: str) -> dict:
     }
 
 
+#: Origins a ``dsynth_build`` has built since the env's last ``reset_port``,
+#: per env (poly-jao2). The reset drops their packages and no one else's: an
+#: origin the agent never built holds at most a package built from the
+#: baseline, and dropping it would cost a rebuild for nothing. In-process,
+#: like ``_MATERIALIZE_STATE``: the tools run in the runner's process.
+_BUILT_ORIGINS: dict[str, set[str]] = {}
+
+
+def _drop_built_packages(env: str, origins: Sequence[str]) -> dict:
+    """Remove ``origins``' packages from the env's dsynth repository.
+
+    ``dsynth_build`` leaves a package there built from the agent's tree, and
+    after the reset dsynth would take it for the baseline's and skip the
+    port (poly-jao2). Used by :func:`reset_port` between its ``make clean``
+    and its compose, while the composed tree still names what was built.
+
+    ``dropped`` lists the files removed. ``ok`` is False only when the
+    script could not run — it exits 0 otherwise — and this never raises, so
+    the compose after it still runs.
+    """
+    try:
+        p = _exec(env, "/bin/sh", "-c", _DROP_PACKAGES_SH, "_",
+                  DSYNTH_REPO_DIR, *origins)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "dropped": [], "error": str(exc)[:300]}
+    dropped = [line.split(" ", 1)[-1]
+               for line in (p.stdout or "").splitlines()
+               if line.startswith("DROPPED=")]
+    if p.returncode != 0:
+        return {"ok": False, "dropped": dropped,
+                "error": ((p.stderr or "") or (p.stdout or ""))[-300:]}
+    return {"ok": True, "dropped": dropped}
+
+
 # --------------------------------------------------------------------
 # Per-bundle branches.
 #
@@ -3091,6 +3148,28 @@ PORTS_MAIN_DIR = "/work/ports-main"
 FREEBSD_DIR = "/work/freebsd-ports"
 LOCK_DIR = "/work/DPorts"
 TOOL_BIN = "/work/polytropos/bin/dportsv3"
+
+# dsynth's package repository in the env, and the script that drops a port's
+# packages from it — copies of ``dports_dev_env.dsynth``'s, pinned by the same
+# test. The script's comment there says what it does and why (poly-jao2).
+DSYNTH_REPO_DIR = "/work/dsynth/packages/All"
+_DROP_PACKAGES_SH = """\
+repo=$1
+shift
+for o in "$@"; do
+    cd "$DPORTS_COMPOSE_ROOT/$o" 2>/dev/null || continue
+    for f in "" $(make PORTSDIR="$DPORTS_COMPOSE_ROOT" -V FLAVORS); do
+        name=$(make PORTSDIR="$DPORTS_COMPOSE_ROOT" ${f:+FLAVOR=$f} -V PKGNAME) \\
+            || continue
+        [ -n "$name" ] || continue
+        for p in "$name.pkg" "$name.txz" "$name.tzst" "$name.tbz" "$name.tgz"; do
+            [ -e "$repo/$p" ] || continue
+            rm -f "$repo/$p" && echo "DROPPED=$o $p"
+        done
+    done
+done
+exit 0
+"""
 
 
 def _job_worktree_name(bundle_id: str, kind: str) -> str:
@@ -4617,6 +4696,9 @@ def _dsynth_run(env: str, origin: str, subcommand: str,
     # overlay so we can write/remove it freely from any in-chroot
     # process.
     build_origins = origin_set(origin, also)
+    # For reset_port's package drop (poly-jao2). Before the run, not after:
+    # one that fails or times out can still have built part of the list.
+    _BUILT_ORIGINS.setdefault(env, set()).update(build_origins)
     cmd = (
         'flag=/work/.dports-agent-hooks-disabled; '
         'trap "rm -f \\"$flag\\"" EXIT; '

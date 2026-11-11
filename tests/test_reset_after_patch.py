@@ -115,6 +115,41 @@ def test_the_log_row_says_whether_the_baseline_composed(tmp_path, monkeypatch):
                      "(baseline_compose_ok=False)")]
 
 
+def test_the_log_row_names_the_dropped_packages(tmp_path, monkeypatch):
+    """Which packages went tells the operator their next build of the port
+    rebuilds it (poly-jao2)."""
+    seen, rows = [], []
+    monkeypatch.setattr(worker, "reset_port", _fake_reset(
+        seen, {"ok": True, "baseline_compose_ok": True,
+               "packages_dropped": ["socketapi-2.2.28.pkg"]}))
+    monkeypatch.setattr(worker, "invariant_origins", lambda env, o: [o])
+
+    steps._reset_after_patch(
+        _services(rows), _ctx(tmp_path), env="main", origin="net/socketapi",
+    )
+
+    assert rows == [("patch_post_reset",
+                     "reset ports/net/socketapi/ to baseline after patch "
+                     "(baseline_compose_ok=True; dropped socketapi-2.2.28.pkg)")]
+
+
+def test_the_log_row_says_when_the_drop_failed(tmp_path, monkeypatch):
+    seen, rows = [], []
+    monkeypatch.setattr(worker, "reset_port", _fake_reset(
+        seen, {"ok": True, "baseline_compose_ok": True,
+               "packages_dropped": [], "packages_drop_error": "chroot gone"}))
+    monkeypatch.setattr(worker, "invariant_origins", lambda env, o: [o])
+
+    steps._reset_after_patch(
+        _services(rows), _ctx(tmp_path), env="main", origin="devel/foo",
+    )
+
+    assert rows == [("patch_post_reset",
+                     "reset ports/devel/foo/ to baseline after patch "
+                     "(baseline_compose_ok=True; package drop failed: "
+                     "chroot gone)")]
+
+
 def test_a_raising_reset_is_a_row_not_an_exception(tmp_path, monkeypatch):
     rows = []
 

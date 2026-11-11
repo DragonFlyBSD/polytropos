@@ -154,8 +154,10 @@ def test_no_diff_happy_path_returns_zero(fake_env, monkeypatch) -> None:
     assert "apply-and-build-devel_foo.log" in result["log_path"]
     # reapply + dtest, then post-build cleanup (WRKDIR clean +
     # baseline compose). No substrate reset: the worktree is thrown
-    # away instead.
+    # away instead. No package drop: without a diff the build was the
+    # baseline's own.
     assert len(fake_env.calls) == 4
+    assert result["packages_dropped"] == []
     reapply_script, reapply_args = _shell(fake_env.calls[0]["argv"])
     dtest_script, dtest_args = _shell(fake_env.calls[1]["argv"])
     assert 'reapply "$@"' in reapply_script
@@ -182,8 +184,8 @@ def test_diff_path_is_staged_into_writable_and_applied(fake_env, monkeypatch, tm
 
     assert rc == 0
     # dirty check, apply, reapply, dtest, then post-build cleanup
-    # (WRKDIR wipe + baseline compose).
-    assert len(fake_env.calls) == 6
+    # (WRKDIR wipe, package drop, baseline compose).
+    assert len(fake_env.calls) == 7
     assert "git status --porcelain" in " ".join(fake_env.calls[0]["argv"])
     apply_argv = " ".join(fake_env.calls[1]["argv"])
     assert "git apply --3way" in apply_argv
@@ -451,6 +453,7 @@ def test_cleanup_continues_past_a_sibling_that_cannot_compose(
         _sp.CompletedProcess([], 0, "", ""),   # reapply (build)
         _sp.CompletedProcess([], 0, "", ""),   # dtest
         _sp.CompletedProcess([], 0, "", ""),   # WRKDIR wipe
+        _sp.CompletedProcess([], 0, "", ""),   # package drop
         _sp.CompletedProcess(                  # baseline compose: master fails
             [], 2, "", "E_COMPOSE_SELECTED_ORIGIN_NOT_FOUND",
         ),
@@ -472,3 +475,140 @@ def test_cleanup_continues_past_a_sibling_that_cannot_compose(
     tail = result.get("stderr_tail") or ""
     assert "post-build baseline compose failed for devel/foo:" in tail
     assert "devel/foo-slave:" not in tail
+
+
+# --- the package drop (poly-jao2) ------------------------------------------
+
+
+def test_cleanup_drops_the_built_packages_before_the_compose(
+    fake_env, tmp_path,
+) -> None:
+    """dtest leaves the packages it built from the diff in the env's
+    repository; dsynth would take them for the baseline's and skip the
+    port. They go before the compose, which replaces the tree their names
+    are read from."""
+    from dports_dev_env.cli import apply_and_build
+    from dports_dev_env.dsynth import DROP_PACKAGES_SH, DSYNTH_REPO_DIR
+    import subprocess as _sp
+
+    diff = tmp_path / "fix.diff"
+    diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n")
+    fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),   # dirty check
+        _sp.CompletedProcess([], 0, "", ""),   # dirty check (sibling)
+        _sp.CompletedProcess([], 0, "", ""),   # git apply
+        _sp.CompletedProcess([], 0, "", ""),   # reapply (build)
+        _sp.CompletedProcess([], 0, "", ""),   # dtest
+        _sp.CompletedProcess([], 0, "", ""),   # WRKDIR wipe
+        _sp.CompletedProcess(                  # package drop
+            [], 0, "DROPPED=devel/foo foo-1.0.pkg\n"
+                   "DROPPED=devel/foo-slave foo-slave-1.0.pkg\n", ""),
+    ]
+
+    result = apply_and_build(
+        fake_env.env_name, "devel/foo",
+        diff_path=str(diff), also=["devel/foo-slave"],
+    )
+
+    calls = _post_build_calls(fake_env.calls)
+    drops = [i for i, c in enumerate(calls) if _shell(c)[0] == DROP_PACKAGES_SH]
+    composes = [i for i, c in enumerate(calls)
+                if "--delta-root /work/ports-main" in _shell(c)[0]]
+    assert len(drops) == 1
+    assert drops[0] < min(composes)
+    assert _shell(calls[drops[0]])[1] == [DSYNTH_REPO_DIR,
+                                          "devel/foo", "devel/foo-slave"]
+    assert result["packages_dropped"] == ["foo-1.0.pkg", "foo-slave-1.0.pkg"]
+    assert result["ok"] is True
+
+
+def _diff(tmp_path):
+    diff = tmp_path / "fix.diff"
+    diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n")
+    return str(diff)
+
+
+def _drops(calls):
+    from dports_dev_env.dsynth import DROP_PACKAGES_SH
+    return [c for c in _post_build_calls(calls)
+            if _shell(c)[0] == DROP_PACKAGES_SH]
+
+
+def test_a_failed_drop_warns_and_does_not_flip_ok(fake_env, tmp_path) -> None:
+    from dports_dev_env.cli import apply_and_build
+    import subprocess as _sp
+
+    fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),     # dirty check
+        _sp.CompletedProcess([], 0, "", ""),     # git apply
+        _sp.CompletedProcess([], 0, "", ""),     # reapply (build)
+        _sp.CompletedProcess([], 0, "", ""),     # dtest
+        _sp.CompletedProcess([], 0, "", ""),     # WRKDIR wipe
+        _sp.CompletedProcess([], 1, "", "rm: Permission denied"),  # drop
+    ]
+
+    result = apply_and_build(fake_env.env_name, "devel/foo",
+                             diff_path=_diff(tmp_path))
+
+    assert result["ok"] is True
+    assert result["packages_dropped"] == []
+    tail = result.get("stderr_tail") or ""
+    assert "post-build package drop failed: rc=1" in tail
+    assert "rm: Permission denied" in tail
+
+
+def test_no_drop_when_the_diff_does_not_apply(fake_env, tmp_path) -> None:
+    """Nothing was built from the diff, so the repository holds only
+    baseline packages — for a master, the whole sibling set's."""
+    from dports_dev_env.cli import apply_and_build
+    import subprocess as _sp
+
+    fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),                 # dirty check
+        _sp.CompletedProcess([], 1, "", "patch does not apply"),  # git apply
+    ]
+
+    result = apply_and_build(fake_env.env_name, "devel/foo",
+                             diff_path=_diff(tmp_path))
+
+    assert result["apply_exit"] == 1
+    assert _drops(fake_env.calls) == []
+    assert result["packages_dropped"] == []
+
+
+def test_no_drop_when_reapply_fails(fake_env, tmp_path) -> None:
+    from dports_dev_env.cli import apply_and_build
+    import subprocess as _sp
+
+    fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),                # dirty check
+        _sp.CompletedProcess([], 0, "", ""),                # git apply
+        _sp.CompletedProcess([], 2, "", "compose failed"),  # reapply
+    ]
+
+    result = apply_and_build(fake_env.env_name, "devel/foo",
+                             diff_path=_diff(tmp_path))
+
+    assert result["reapply_exit"] == 2
+    assert result["dsynth_exit"] is None
+    assert _drops(fake_env.calls) == []
+
+
+def test_a_failed_dtest_still_drops(fake_env, tmp_path) -> None:
+    """dtest over a sibling set can fail on one port and still have
+    built the others from the diff."""
+    from dports_dev_env.cli import apply_and_build
+    import subprocess as _sp
+
+    fake_env.runner.outcomes = [
+        _sp.CompletedProcess([], 0, "", ""),     # dirty check
+        _sp.CompletedProcess([], 0, "", ""),     # git apply
+        _sp.CompletedProcess([], 0, "", ""),     # reapply (build)
+        _sp.CompletedProcess([], 1, "", ""),     # dtest fails
+    ]
+
+    result = apply_and_build(fake_env.env_name, "devel/foo",
+                             diff_path=_diff(tmp_path))
+
+    assert result["ok"] is False
+    assert len(_drops(fake_env.calls)) == 1

@@ -6,6 +6,57 @@ from .config import DevEnvConfig
 from .names import sanitize_name
 from .state import EnvironmentState
 
+#: Where dsynth keeps the packages it builds, inside the chroot: the
+#: ``Directory_repository`` written below.
+DSYNTH_REPO_DIR = "/work/dsynth/packages/All"
+
+#: Removes a port's packages from the repository. ``$1`` is the repository,
+#: the rest are origins; each file removed is printed as
+#: ``DROPPED=<origin> <file>``.
+#:
+#: A build that proves a candidate fix, the agent's or verify's, runs in the
+#: env the operator builds in and leaves its package there. Once the tree is
+#: reset that package no longer matches it, but its version is the one dsynth
+#: compares, so the next ``dsynth build`` of the port builds nothing and the
+#: failure the fix was for goes unseen (poly-jao2).
+#:
+#: Run it only for origins such a build built: anything else in the
+#: repository was built from the baseline, and dropping it costs a rebuild
+#: for nothing. And run it before the baseline compose. The name comes from
+#: ``make -V PKGNAME`` in ``$DPORTS_COMPOSE_ROOT/<origin>``, which until then
+#: still holds the tree that was built, so a fix that bumped PORTREVISION is
+#: found under its own name. Every flavor is tried, and the default. So is
+#: every suffix pkg has used: on a builder the files end in ``.pkg`` although
+#: ``Package_suffix`` below says ``.txz``. It exits 0 unless the shell itself
+#: fails.
+#:
+#: The repository catalogue lists a dropped package until dsynth's next run,
+#: which regenerates it at the end.
+DROP_PACKAGES_SH = """\
+repo=$1
+shift
+for o in "$@"; do
+    cd "$DPORTS_COMPOSE_ROOT/$o" 2>/dev/null || continue
+    for f in "" $(make PORTSDIR="$DPORTS_COMPOSE_ROOT" -V FLAVORS); do
+        name=$(make PORTSDIR="$DPORTS_COMPOSE_ROOT" ${f:+FLAVOR=$f} -V PKGNAME) \\
+            || continue
+        [ -n "$name" ] || continue
+        for p in "$name.pkg" "$name.txz" "$name.tzst" "$name.tbz" "$name.tgz"; do
+            [ -e "$repo/$p" ] || continue
+            rm -f "$repo/$p" && echo "DROPPED=$o $p"
+        done
+    done
+done
+exit 0
+"""
+
+
+def dropped_packages(stdout: str | None) -> list[str]:
+    """The files ``DROP_PACKAGES_SH`` reported removing."""
+    return [line.split(" ", 1)[-1]
+            for line in (stdout or "").splitlines()
+            if line.startswith("DROPPED=")]
+
 
 def dsynth_profile_name(state: EnvironmentState) -> str:
     return sanitize_name(state.name)
@@ -52,7 +103,7 @@ profile_selected= {profile_name}
 [{profile_name}]
 Operating_system= DragonFly
 Directory_packages= /work/dsynth/packages
-Directory_repository= /work/dsynth/packages/All
+Directory_repository= {DSYNTH_REPO_DIR}
 Directory_portsdir= /work/artifacts/compose/{state.target}
 Directory_options= /work/dsynth/options
 Directory_distfiles= /usr/distfiles

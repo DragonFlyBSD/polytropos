@@ -368,12 +368,13 @@ def apply_and_build(
 
     Returns a dict with: ok, env, origin, built_origins,
     applied_diff_sha256, apply_exit, reapply_exit, dsynth_exit,
-    log_path, stderr_tail, replay_mode.
+    log_path, stderr_tail, replay_mode, packages_dropped.
     """
     import hashlib
     import json
 
     from .chroot import ChrootRunner, chroot_env
+    from .dsynth import DROP_PACKAGES_SH, DSYNTH_REPO_DIR, dropped_packages
     from .helpers import build_env_dict
 
     # De-duplicated, order preserved: the requested origin first so it
@@ -407,6 +408,7 @@ def apply_and_build(
         "log_path": None,
         "stderr_tail": None,
         "replay_mode": None,
+        "packages_dropped": [],
     }
 
     result["replay_mode"] = "diff" if diff_path is not None else "none"
@@ -443,24 +445,29 @@ def apply_and_build(
     # exit path — diff-apply failure, reapply failure, build success,
     # build failure.
     #
-    # Two stages, matching ``worker.reset_port``'s shape:
+    # Three stages, matching ``worker.reset_port``'s shape:
     #   1. ``make clean`` against the per-origin compose root — wipes
     #      the WRKDIR under ``$WRKDIRPREFIX/<origin>/`` along with
     #      ``.orig`` files / extracted-source edits dtest left behind.
     #      Runs first against the still-patched substrate (its in-tree
     #      Makefile is what the existing WRKDIR was authored against).
-    #   2. Re-compose the shared tree from the baseline checkout.
+    #   2. Drop the packages dtest built from the diff, if it ran.
+    #   3. Re-compose the shared tree from the baseline checkout.
     #
     # The substrate is not reset: since B1 the job owns its worktree
     # and it is destroyed with the job.
     #
-    # Both stages stay in this function rather than calling
+    # The stages stay in this function rather than calling
     # ``worker.reset_port`` because apply-and-build is a separate
     # package from the generator: importing across the boundary
     # would couple dev-env to the agent loop unnecessarily. The
     # cleanup logic is small enough to duplicate; the shape is
     # parallel to worker.reset_port so the two stay easy to keep
     # in sync.
+    #
+    # Set just before dtest runs; the package drop keys on it.
+    dtest_started = False
+
     def _post_build_cleanup() -> None:
 
         # 1. Best-effort WRKDIR wipe. Failure surfaces as a warning in
@@ -499,7 +506,33 @@ def apply_and_build(
         # worktree that is thrown away cannot leak onto any branch, which is
         # what test_verify_state_cannot_reach_the_base_branch pins.
 
-        # 2. Re-compose from the baseline checkout. Not via `reapply`:
+        # 2. Drop the packages dtest built from the diff (poly-jao2):
+        # dsynth would take them for the baseline's and skip the port.
+        # Before the compose, which replaces the tree their names are
+        # read from. Best-effort, like the stages either side.
+        #
+        # Only when a diff was applied and dtest started. A refused apply
+        # or reapply built nothing, and a run without --diff built the
+        # baseline itself; either way the repository holds only baseline
+        # packages, and dropping them — the whole sibling set, for a
+        # master — would cost a rebuild for nothing.
+        if diff_path is not None and dtest_started:
+            drop = runner.run_shell(
+                DROP_PACKAGES_SH, DSYNTH_REPO_DIR, *build_origins,
+                env=env, capture_output=True,
+            )
+            result["packages_dropped"] = dropped_packages(drop.stdout)
+            if drop.returncode != 0:
+                warn = (
+                    f"\n[post-build package drop failed: "
+                    f"rc={drop.returncode}; {DSYNTH_REPO_DIR} may still "
+                    f"hold packages built from the diff]\n"
+                    + (drop.stderr or "")[-512:]
+                )
+                existing = result.get("stderr_tail") or ""
+                result["stderr_tail"] = (existing + warn)[-2000:]
+
+        # 3. Re-compose from the baseline checkout. Not via `reapply`:
         # that helper composes --delta-root PORTS_DIR, the symlink
         # pointing at this job's worktree, so it would re-derive the
         # run's own state into the shared tree (poly-mdf7).
@@ -605,6 +638,7 @@ def apply_and_build(
         # guard lives here in the verify primitive, NOT in the
         # dtest/dbuild helper, so an operator running dbuild by hand
         # still feeds the loop on a genuine failure.
+        dtest_started = True
         build_proc = runner.run_shell(
             "flag=/work/.dports-agent-hooks-disabled; "
             "trap 'rm -f \"$flag\"' EXIT; : > \"$flag\"; "
