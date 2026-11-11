@@ -388,7 +388,10 @@ def _litellm_reasoning_kwargs(litellm, reasoning: str | None, model: str,
 
     litellm >= 1.93.2 maps that one parameter onto each provider's own
     control, so this path needs no dialect table. The off spellings all
-    become ``"none"``, which is the value litellm maps to "off".
+    become ``"none"``, which is the value litellm maps to "off". Meta is
+    the exception: litellm passes the value straight through, and
+    muse-spark answers "none" with a 400, so it gets _reasoning_meta's
+    answer here too.
 
     Two cases cannot carry it, and both send nothing and warn once per
     model. An older litellm rejects the parameter (1.65.0) or cannot
@@ -416,8 +419,10 @@ def _litellm_reasoning_kwargs(litellm, reasoning: str | None, model: str,
         except Exception:  # noqa: BLE001 — no answer is not a mapping
             supported = []
         if "reasoning_effort" in supported:
-            return {"reasoning_effort":
-                    "none" if value in _REASONING_OFF else value}
+            off = value in _REASONING_OFF
+            if provider == "meta":
+                return _reasoning_meta(value, off)
+            return {"reasoning_effort": "none" if off else value}
         why = "litellm has no reasoning control for this model"
     if model not in _litellm_reasoning_warned:
         _litellm_reasoning_warned.add(model)

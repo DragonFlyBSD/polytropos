@@ -241,6 +241,23 @@ def test_a_new_litellm_gets_reasoning_effort(monkeypatch, value, expected):
     )
 
 
+@pytest.mark.parametrize("value,expected", [
+    ("none", "minimal"), ("max", "xhigh"), ("low", "low"),
+])
+def test_meta_through_litellm_gets_the_meta_dialect(monkeypatch, value,
+                                                    expected):
+    """litellm passes reasoning_effort straight through to Meta, and
+    muse-spark answers "none" with a 400. Before litellm could carry the
+    setting this path dropped it and the request worked, so sending
+    "none" would turn the escape hatch into a failure on every triage
+    call (triage defaults to "none")."""
+    monkeypatch.setattr(llm, "_meta_off_warned", False)
+    sent = _litellm_call(monkeypatch, version=(1, 102, 1),
+                         model="meta/muse-spark-1.3-contributor",
+                         reasoning=value)
+    assert sent["reasoning_effort"] == expected
+
+
 def test_support_is_asked_for_the_resolved_provider(monkeypatch):
     """Asked about "deepseek/..." with no provider, litellm answers for
     openai (checked against 1.102.1). So the model is resolved first."""
