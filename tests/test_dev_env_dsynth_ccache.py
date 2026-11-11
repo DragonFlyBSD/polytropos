@@ -66,3 +66,10 @@ def test_ccache_setting_is_declared_without_an_env_var(cfg):
 def test_ccache_binary_is_provisioned(cfg):
     """dsynth wires the directory; the jail still needs the binary."""
     assert "ccache" in cfg.tool_pkgs_optional
+
+
+def test_dsynth_is_the_worlds_not_a_package(cfg):
+    """The world ships dsynth in /usr/bin. A package lands in /usr/local/bin,
+    ahead of it on PATH, and DPorts' 1.0.2 cannot create a Template
+    (poly-0nfd)."""
+    assert "dsynth" not in cfg.tool_pkgs_optional

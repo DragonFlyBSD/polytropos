@@ -80,8 +80,11 @@ SETTINGS: list[Setting] = [
     Setting("dev_env.tool_pkgs_required", "list",
             ["bash", "curl", "git", "patch", "jq"],
             "Must be present; provisioning fails without them."),
+    # No dsynth: the world ships it in /usr/bin. The DPorts package, once
+    # the repo had one (2026Q4), went to /usr/local/bin ahead of it on
+    # PATH, and its 1.0.2 cannot create a Template (poly-0nfd).
     Setting("dev_env.tool_pkgs_optional", "list",
-            ["dsynth", "python311", "python312", "python313",
+            ["python311", "python312", "python313",
              "py311-pip", "py312-pip", "py313-pip", "genpatch", "ccache"],
             "Installed when available; absence is not fatal."),
     Setting("dev_env.tool_cmds_required", "list",
