@@ -214,9 +214,18 @@ pip builds them from source and wants a Rust toolchain the base system
 does not have. It is built with the default runtime profile's Python
 (`python3.12`), or `python3` when that is missing, and only when the venv
 does not exist: an install upgrades the software in place and keeps the
-venv's Python. To move a host from 3.11 to 3.12, install the py312
-packages from `docs/OPERATOR_SETUP.md`, remove the venv, and run
-`deploy install` again.
+venv's Python. To move a host from 3.11 to 3.12:
+
+1. Stop both services, with the queue empty and no dsynth running.
+2. Install the py312 packages from `docs/OPERATOR_SETUP.md`.
+3. Remove the venv, and the checkout's `.venv` and `dev-env/.venv`.
+4. Run `deploy install` again.
+5. Run `hooks-install` for every env, and start the services.
+
+The checkout venvs have to be removed by hand: `bin/dportsv3` does not
+notice that `python3` changed version, and execs a venv that cannot
+import `dportsv3` (poly-5b2c). Remove them as root, because earlier
+`sudo` runs left root-owned files in them.
 
 `--no-software` skips all of that and only wires the host, for the case
 where a port owns the software.

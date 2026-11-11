@@ -24,6 +24,26 @@ the DPorts package set builds modules for: 3.12 since 2026Q4. A host
 already running 3.11 keeps working, because `bin/dportsv3` checks the
 profile that matches its `python3`.
 
+Four more that nothing checks for:
+
+```sh
+pkg install py312-tomli-w py312-Jinja2 py312-pyyaml py312-litellm
+```
+
+`tomli-w` is the generator's one dependency outside the profile, and
+`Jinja2` and `PyYAML` come with the tracker extra (`uvicorn[standard]`).
+Without their packages pip fetches them from PyPI. `py312-litellm` is
+the agent's model client, and brings openai, tiktoken and tokenizers.
+pip never installs it (`deploy install` installs only the tracker extra),
+so without the package the runner starts and its first model call fails.
+With all fourteen installed, pip installs only polytropos itself.
+
+On a 3.11 host, installing these replaces packages the services run on.
+A py312 package removes its py311 twin when both install the same command
+into `/usr/local/bin`, as litellm, fastapi, uvicorn and watchfiles do.
+Move such a host to 3.12 in one sitting, with the services stopped
+(`deploy/README.md`).
+
 You also need `dsynth` itself, of course, and a profile set up
 (`/usr/local/etc/dsynth/<profile>-make.conf` etc).
 
