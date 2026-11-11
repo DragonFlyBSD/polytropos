@@ -114,8 +114,8 @@ be known when the file is written.
 | `$DPORTSV3_TRACKER_URL` | has to cross into a build chroot, where nothing is importable |
 | `$DPORTSV3_DELIVERY_TOKEN` | a secret store may inject it |
 | `$DP_HARNESS_DUMP_SESSION` | a per-run debug switch |
-| `$DP_HARNESS_LLM_BACKEND` | documented escape hatch, temporary (poly-r1g) |
-| `$DP_HARNESS_{TRIAGE,PATCH}_REASONING` | temporary, tied to a litellm version (poly-r1g) |
+| `$DP_HARNESS_LLM_BACKEND` | documented escape hatch; let in as temporary, and whether it stays is poly-dw2v |
+| `$DP_HARNESS_{TRIAGE,PATCH}_REASONING` | let in as temporary, tied to a litellm version that has arrived; whether they stay is poly-dw2v |
 
 Separately, six are inter-process arguments that happen to be spelled as
 environment — `$DPORTSV3_CMD`, `$DPORTS_DEV_ENV_CMD`,

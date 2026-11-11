@@ -428,8 +428,9 @@ SETTINGS: list[Setting] = [
     Setting(
         "llm.backend", "str", "auto",
         "'auto' uses the openai SDK for providers that speak the OpenAI\n"
-        "wire format and litellm otherwise. 'litellm' forces the old path.\n"
-        "TEMPORARY escape hatch — see poly-r1g.",
+        "wire format and litellm otherwise. 'litellm' forces litellm for\n"
+        "every provider, the escape hatch if the SDK path misbehaves;\n"
+        "'openai' forces the SDK.",
         env="DP_HARNESS_LLM_BACKEND",
     ),
     Setting("llm.triage.model", "str", "",
@@ -447,7 +448,8 @@ SETTINGS: list[Setting] = [
     Setting(
         "llm.triage.reasoning", "str", "none",
         "none | low | high | max. Triage classifies against a fixed schema\n"
-        "and does not need to think. TEMPORARY — see poly-r1g.",
+        "and does not need to think. A provider served through litellm\n"
+        "gets it only with litellm >= 1.93.2; older ones warn and think.",
         env="DP_HARNESS_TRIAGE_REASONING",
     ),
     Setting("llm.patch.model", "str", "",
@@ -501,7 +503,8 @@ SETTINGS: list[Setting] = [
     Setting(
         "llm.patch.reasoning", "str", "low",
         "low rather than off, so a quality regression is a smaller step to\n"
-        "walk back. TEMPORARY — see poly-r1g.",
+        "walk back. Through litellm it needs litellm >= 1.93.2, as for\n"
+        "triage.",
         env="DP_HARNESS_PATCH_REASONING",
     ),
     Setting(

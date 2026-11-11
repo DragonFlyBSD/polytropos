@@ -1,11 +1,9 @@
-"""Thinking mode is reachable through the openai SDK (poly-r1g).
+"""Thinking mode is reachable on both backends (poly-r1g).
 
-TEMPORARY, along with the code it covers. DragonFly pins py311-litellm
-at 1.65.0 and newer versions cannot build here (fastuuid → maturin →
-rustc >= 1.89, poly-170). 1.65.0 rejects ``thinking`` and
-``reasoning_effort`` for deepseek outright, and sends ``extra_body`` as
-a literal top-level JSON key instead of unpacking it — captured off the
-wire against a local sink::
+The SDK path came first, because py311-litellm is 1.65.0. That version
+rejects ``thinking`` and ``reasoning_effort`` for deepseek outright, and
+sends ``extra_body`` as a literal top-level JSON key instead of
+unpacking it — captured off the wire against a local sink::
 
     {"model": "deepseek-v4-pro", "messages": [...],
      "extra_body": {"thinking": {"type": "disabled"}}}
@@ -22,9 +20,11 @@ Measured on the live API, same prompt, deepseek-v4-pro:
     thinking disabled      completion=  350  reasoning=     0 chars
 
 Output is billed at full rate and is never cached at generation, so this
-is a direct saving. Once py311-litellm reaches >= 1.93.2 — the first
-release mapping ``reasoning_effort="none"`` to thinking disabled — the
-SDK path and this file should both go away.
+is a direct saving. litellm 1.93.2 is the first release that maps
+``reasoning_effort="none"`` to thinking disabled, and py312-litellm is
+1.102.1, so the litellm path sends it too where litellm has a mapping.
+The SDK path stays for the dialects litellm's mapping loses (see the
+llm module docstring).
 """
 
 from __future__ import annotations
@@ -184,15 +184,29 @@ def test_cached_tokens_survive_the_sdk_path(monkeypatch):
     assert r.usage.billable_tokens == (100 - 7) + 5
 
 
-# --- the litellm path must not regress --------------------------------------
+# --- the litellm path -------------------------------------------------------
 
-def test_litellm_path_never_sees_reasoning(monkeypatch):
-    """1.65.0 rejects the params outright, so passing them through would
-    turn a request that works today into an UnsupportedParamsError.
-    Dropping is deliberate."""
+def _litellm_call(monkeypatch, *, version, supported=("reasoning_effort",),
+                  model="deepseek/deepseek-v4-pro", reasoning="none"):
+    """Run complete() down the litellm path and return what it sent.
+
+    The fake resolves providers the way litellm does: the prefix names
+    the provider and the rest is the model.
+    """
     sent: dict = {}
+    asked: dict = {}
 
     class _FakeLitellm:
+        @staticmethod
+        def get_llm_provider(model, custom_llm_provider=None):
+            provider, _, bare = model.partition("/")
+            return bare, custom_llm_provider or provider, None, None
+
+        @staticmethod
+        def get_supported_openai_params(model, custom_llm_provider=None):
+            asked.update(model=model, provider=custom_llm_provider)
+            return list(supported)
+
         @staticmethod
         def completion(**kwargs):
             sent.update(kwargs)
@@ -201,32 +215,93 @@ def test_litellm_path_never_sees_reasoning(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "litellm", _FakeLitellm)
     monkeypatch.setenv("DP_HARNESS_LLM_BACKEND", "litellm")
+    monkeypatch.setattr(llm, "_litellm_version", lambda: version)
+    monkeypatch.setattr(llm, "_litellm_reasoning_warned", set())
 
     with pytest.raises(RuntimeError):
         llm.complete([{"role": "user", "content": "x"}],
-                     model="deepseek/deepseek-v4-pro", api_key="k",
-                     reasoning="none")
+                     model=model, api_key="k", reasoning=reasoning)
+    sent["_asked"] = asked
+    return sent
 
-    assert "reasoning" not in sent
-    assert "reasoning_effort" not in sent
+
+@pytest.mark.parametrize("value,expected", [
+    ("none", "none"), ("off", "none"), ("disabled", "none"),
+    ("low", "low"), ("high", "high"),
+])
+def test_a_new_litellm_gets_reasoning_effort(monkeypatch, value, expected):
+    """1.93.2 maps reasoning_effort onto each provider's own control, so
+    the one OpenAI-style parameter is all this path sends. The off
+    spellings become "none", the value litellm maps to off."""
+    sent = _litellm_call(monkeypatch, version=(1, 102, 1), reasoning=value)
+    assert sent["reasoning_effort"] == expected
     assert "extra_body" not in sent
     assert sent["model"] == "deepseek/deepseek-v4-pro", (
         "the litellm path keeps the prefixed model name it routes on"
     )
 
 
-# --- the temporary framing stays visible ------------------------------------
+def test_support_is_asked_for_the_resolved_provider(monkeypatch):
+    """Asked about "deepseek/..." with no provider, litellm answers for
+    openai (checked against 1.102.1). So the model is resolved first."""
+    sent = _litellm_call(monkeypatch, version=(1, 102, 1))
+    assert sent["_asked"] == {"model": "deepseek-v4-pro",
+                              "provider": "deepseek"}
 
-def test_the_code_says_it_is_temporary():
-    """Whoever upgrades py311-litellm needs to find this without
-    archaeology — the removal condition is a version number, not a
-    judgement call."""
-    import inspect
 
-    src = inspect.getsource(llm)
-    assert "1.93.2" in src
-    assert "TEMPORARY" in src
-    assert "poly-170" in src
+@pytest.mark.parametrize("version", [(1, 65, 0), (1, 92, 9), ()])
+def test_an_old_litellm_sends_nothing_and_says_so(monkeypatch, caplog,
+                                                  version):
+    """1.65.0 rejects the params outright, so passing them through would
+    turn a request that works into an UnsupportedParamsError, and up to
+    1.92.x "none" is silently dropped. An unknown version counts as old.
+    Saying so matters: the operator turned thinking off and is paying for
+    it anyway."""
+    with caplog.at_level("WARNING", logger="dportsv3.agent.llm"):
+        sent = _litellm_call(monkeypatch, version=version)
+    assert "reasoning_effort" not in sent
+    assert "extra_body" not in sent
+    assert "1.93.2" in caplog.text
+
+
+def test_a_provider_without_a_mapping_sends_nothing(monkeypatch, caplog):
+    """litellm raises UnsupportedParamsError for a parameter the provider
+    has no mapping for, which would fail every request (nvidia_nim, in
+    1.102.1)."""
+    with caplog.at_level("WARNING", logger="dportsv3.agent.llm"):
+        sent = _litellm_call(monkeypatch, version=(1, 102, 1),
+                             supported=("temperature",),
+                             model="nvidia_nim/nvidia/nemotron-x")
+    assert "reasoning_effort" not in sent
+    assert "no reasoning control" in caplog.text
+
+
+def test_the_warning_is_once_per_model(monkeypatch, caplog):
+    with caplog.at_level("WARNING", logger="dportsv3.agent.llm"):
+        _litellm_call(monkeypatch, version=(1, 65, 0))
+        warned = set(llm._litellm_reasoning_warned)
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                llm.complete([{"role": "user", "content": "x"}],
+                             model="deepseek/deepseek-v4-pro", api_key="k",
+                             reasoning="none")
+    assert warned == {"deepseek/deepseek-v4-pro"}
+    assert caplog.text.count("cannot send it") == 1
+
+
+def test_unset_reasoning_sends_nothing_and_warns_nothing(monkeypatch, caplog):
+    with caplog.at_level("WARNING", logger="dportsv3.agent.llm"):
+        sent = _litellm_call(monkeypatch, version=(1, 65, 0), reasoning=None)
+    assert "reasoning_effort" not in sent
+    assert caplog.text == ""
+
+
+def test_the_installed_version_parses():
+    """Whatever is installed here, it reads as a tuple of ints (or ()
+    when absent), never raising."""
+    found = llm._litellm_version()
+    assert isinstance(found, tuple)
+    assert all(isinstance(part, int) for part in found)
 
 
 # --- per-role defaults ------------------------------------------------------

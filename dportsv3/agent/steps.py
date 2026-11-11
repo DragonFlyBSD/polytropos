@@ -875,15 +875,12 @@ class TriageStep:
         shutil.rmtree(materialized_tmp, ignore_errors=True)
 
 
-# --- thinking-mode control (TEMPORARY) --------------------------------
+# --- thinking-mode control --------------------------------------------
 #
-# Reasoning is ~50% of billable spend and the API can turn it down, but
-# our pinned litellm 1.65.0 cannot deliver the parameter. These knobs
-# exist so the openai-SDK backend in llm.py can, and should be REMOVED
-# once py311-litellm reaches >= 1.93.2 (the first release that maps
-# reasoning_effort="none" to thinking disabled) — at which point the
-# ordinary `reasoning_effort` parameter covers every provider and this
-# per-role plumbing is redundant. Blocked on poly-170 (rustc >= 1.89).
+# Reasoning is ~50% of billable spend and the API can turn it down
+# (poly-r1g). llm.complete() delivers the setting on both backends: the
+# openai SDK in a per-provider dialect, and litellm through its own
+# reasoning_effort mapping, where litellm is >= 1.93.2 and has one.
 #
 # Values: "none" (off), "low", "high", "max", or unset for the
 # provider default.

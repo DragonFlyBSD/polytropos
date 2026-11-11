@@ -306,8 +306,9 @@
 #sdk_max_retries = 0
 
 # 'auto' uses the openai SDK for providers that speak the OpenAI
-# wire format and litellm otherwise. 'litellm' forces the old path.
-# TEMPORARY escape hatch — see poly-r1g.
+# wire format and litellm otherwise. 'litellm' forces litellm for
+# every provider, the escape hatch if the SDK path misbehaves;
+# 'openai' forces the SDK.
 # Override for one run with $DP_HARNESS_LLM_BACKEND.
 #backend = "auto"
 
@@ -327,7 +328,8 @@
 #timeout = 120
 
 # none | low | high | max. Triage classifies against a fixed schema
-# and does not need to think. TEMPORARY — see poly-r1g.
+# and does not need to think. A provider served through litellm
+# gets it only with litellm >= 1.93.2; older ones warn and think.
 # Override for one run with $DP_HARNESS_TRIAGE_REASONING.
 #reasoning = "none"
 
@@ -380,7 +382,8 @@
 #free_tier = false
 
 # low rather than off, so a quality regression is a smaller step to
-# walk back. TEMPORARY — see poly-r1g.
+# walk back. Through litellm it needs litellm >= 1.93.2, as for
+# triage.
 # Override for one run with $DP_HARNESS_PATCH_REASONING.
 #reasoning = "low"
 

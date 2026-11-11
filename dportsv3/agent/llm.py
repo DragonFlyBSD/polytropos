@@ -3,36 +3,38 @@
 Two backends behind one ``complete()``: the ``openai`` SDK for providers
 that speak the OpenAI wire format, and litellm for everything else.
 
-THE SPLIT IS TEMPORARY. It exists only because this platform cannot run
-a litellm new enough to do the job:
+The split began as a workaround (poly-r1g). py311-litellm was 1.65.0,
+which rejects `thinking` and `reasoning_effort` for deepseek and sends
+`extra_body` as a literal top-level JSON key, so no thinking control
+could reach the API. That is ~50% of billable spend. Newer versions
+could not build here (poly-170). litellm first learned to DISABLE
+deepseek thinking in 1.93.2 (2026-08-09).
 
-  * DragonFly ships py311-litellm 1.65.0 (2025-03-28) and that is the
-    newest package. Upgrading by pip fails — newer litellm pulls
-    fastuuid, which needs maturin, which needs rustc >= 1.89 against a
-    base with 1.85.1 (poly-170).
-  * 1.65.0 rejects `thinking` and `reasoning_effort` outright for
-    deepseek, and sends `extra_body` as a literal top-level JSON key
-    rather than unpacking it — verified by capturing the wire. So no
-    provider-specific parameter can reach the API, and thinking mode
-    cannot be turned off. That is ~50% of billable spend.
-  * litellm gained the ability to DISABLE deepseek thinking only in
-    1.93.2 (2026-08-09). 1.80.10 through 1.92.x added the parameters
-    but enable-only.
+py312-litellm is 1.102.1, so that reason is gone on 3.12 hosts. The
+SDK path stays anyway, because it carries what litellm still does not
+(checked against 1.102.1, 2026-11-11):
 
-REMOVE THIS SPLIT once py311-litellm is >= 1.93.2. At that point
-`reasoning_effort` is an ordinary parameter litellm maps for every
-provider, `_complete_openai` and the `_OPENAI_COMPATIBLE` /
-`_PROVIDER_API_BASE` / `_REASONING_DIALECTS` tables stop earning their
-keep, and `complete()` goes back to one backend. Tracked on poly-r1g.
+  * NVIDIA NIM: litellm has no reasoning control for nvidia_nim, and
+    nemotron's switch is `chat_template_kwargs` (_reasoning_nvidia).
+  * DeepSeek: litellm turns `reasoning_effort` into thinking on or off
+    and drops the level, so the patch role's "low" would become the
+    API default, high.
+  * Meta: litellm passes `reasoning_effort` straight through, and
+    muse-spark answers "none" with a 400 (_reasoning_meta).
 
-The tokenizers stub (needed on DragonFly) is in dportsv3.agent.__init__,
-which runs before any module here is loaded.
+The litellm path honours `reasoning` as well, through litellm's own
+mapping, where litellm is new enough and has one for the provider
+(_litellm_reasoning_kwargs).
+
+The tokenizers stub (needed with py311-tokenizers) is in
+dportsv3.agent.__init__, which runs before any module here is loaded.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -89,9 +91,6 @@ class Response:
 #: for providers that speak the OpenAI wire format and litellm for the
 #: rest; "litellm" forces the old path for every provider, which is the
 #: escape hatch if the SDK path ever misbehaves.
-#:
-#: TEMPORARY, with the module docstring: once litellm >= 1.93.2 is
-#: installable this knob and the SDK path both go away.
 def _backend() -> str:
     from dportsv3 import settings  # noqa: PLC0415 — avoids an import cycle
     return settings.get_str("llm.backend").lower()
@@ -275,7 +274,7 @@ def _cache_meta(model: str) -> dict:
     across a longer gap — a later batch, the next session — should be
     assumed absent.
 
-    Sent through ``extra_body`` because the SDK on this platform (1.70.0)
+    Sent through ``extra_body`` because the SDK on 3.11 hosts (1.70.0)
     predates both parameters and rejects them as keyword arguments. That
     is what makes the merge in ``_merge_call_kwargs`` load-bearing rather
     than tidy.
@@ -347,12 +346,11 @@ _REASONING_DIALECTS = {"nvidia": _reasoning_nvidia, "meta": _reasoning_meta}
 
 
 def _reasoning_kwargs(reasoning: str | None, provider: str = "") -> dict:
-    """Provider knobs for thinking mode. TEMPORARY — see module docstring.
+    """Provider knobs for thinking mode, on the SDK path.
 
-    Hand-rolled because litellm 1.65.0 cannot express this. litellm
-    >= 1.93.2 maps ``reasoning_effort="none"`` to
-    ``thinking={"type": "disabled"}`` itself, so this function is
-    exactly what that version makes redundant.
+    Hand-rolled, and kept now that litellm can map ``reasoning_effort``
+    itself, because its mapping loses what these dialects keep: see the
+    module docstring.
 
     ``"none"`` disables it; ``"low"``/``"high"``/``"max"`` set the
     effort. Providers do not agree on how to say that, so the wire form
@@ -364,6 +362,70 @@ def _reasoning_kwargs(reasoning: str | None, provider: str = "") -> dict:
     value = reasoning.strip().lower()
     dialect = _REASONING_DIALECTS.get(provider, _reasoning_deepseek)
     return dialect(value, value in _REASONING_OFF)
+
+
+#: The first litellm that can switch deepseek thinking OFF. 1.80.10
+#: through 1.92.x take ``reasoning_effort`` but only ever enable it, and
+#: 1.65.0, which 3.11 hosts still have, rejects it outright.
+_LITELLM_REASONING_MIN = (1, 93, 2)
+
+_litellm_reasoning_warned: set[str] = set()
+
+
+def _litellm_version() -> tuple[int, ...]:
+    """The installed litellm as a comparable tuple; () when unknown."""
+    from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+    try:
+        raw = version("litellm")
+    except PackageNotFoundError:
+        return ()
+    return tuple(int(part) for part in re.findall(r"\d+", raw)[:3])
+
+
+def _litellm_reasoning_kwargs(litellm, reasoning: str | None, model: str,
+                              custom_llm_provider: str | None) -> dict:
+    """``reasoning_effort`` for litellm to map, or {} where it cannot.
+
+    litellm >= 1.93.2 maps that one parameter onto each provider's own
+    control, so this path needs no dialect table. The off spellings all
+    become ``"none"``, which is the value litellm maps to "off".
+
+    Two cases cannot carry it, and both send nothing and warn once per
+    model. An older litellm rejects the parameter (1.65.0) or cannot
+    turn thinking off (up to 1.92.x). And a provider litellm has no
+    mapping for would raise UnsupportedParamsError. Failing the request
+    would break a provider this path otherwise serves. Staying silent
+    would bill the reasoning an operator switched off, which is the
+    cost surprise poly-r1g was about.
+    """
+    if not reasoning:
+        return {}
+    value = reasoning.strip().lower()
+    installed = _litellm_version()
+    if installed < _LITELLM_REASONING_MIN:
+        found = ".".join(map(str, installed)) or "unknown"
+        why = f"litellm {found} cannot send it (1.93.2 is the first that can)"
+    else:
+        # Resolved first: asked about a prefixed name with no provider,
+        # litellm answers for openai, whatever the prefix says.
+        try:
+            bare, provider, _key, _base = litellm.get_llm_provider(
+                model=model, custom_llm_provider=custom_llm_provider)
+            supported = litellm.get_supported_openai_params(
+                model=bare, custom_llm_provider=provider) or []
+        except Exception:  # noqa: BLE001 — no answer is not a mapping
+            supported = []
+        if "reasoning_effort" in supported:
+            return {"reasoning_effort":
+                    "none" if value in _REASONING_OFF else value}
+        why = "litellm has no reasoning control for this model"
+    if model not in _litellm_reasoning_warned:
+        _litellm_reasoning_warned.add(model)
+        _LOG.warning(
+            "reasoning is set to %r for %s, but %s; sending none, so the "
+            "provider's default thinking applies", value, model, why,
+        )
+    return {}
 
 
 # --- which failures are worth trying again -----------------------------------
@@ -651,8 +713,8 @@ def complete(
     effort. Measured on deepseek-v4-pro with one prompt, thinking on
     cost 4,601 completion tokens against 350 with it off. Output is
     billed at full rate and is never cached at generation, so this is a
-    direct saving rather than a caching artifact. Only the openai-SDK
-    backend can deliver it — see the module docstring.
+    direct saving rather than a caching artifact. The litellm backend
+    delivers it only with litellm >= 1.93.2 (_litellm_reasoning_kwargs).
 
     A transient failure is retried in place on the staged schedule (see
     ``_retry_waits``) so that one unlucky request does not discard the
@@ -768,10 +830,9 @@ def _complete_litellm(
 ) -> Response:
     """Talk to any provider through litellm.
 
-    ``reasoning`` is accepted and ignored here. The pinned 1.65.0 cannot
-    deliver it for any provider (it rejects the params outright and sends
-    extra_body as a literal key), so silently dropping it is honest —
-    raising would break providers this backend otherwise serves fine.
+    ``reasoning`` goes out as ``reasoning_effort`` for litellm to map,
+    where the installed litellm can do that for this provider; see
+    _litellm_reasoning_kwargs for the cases where it cannot.
     """
     import litellm
 
@@ -788,6 +849,8 @@ def _complete_litellm(
         kwargs["timeout"] = timeout
     if temperature is not None:
         kwargs["temperature"] = temperature
+    kwargs.update(_litellm_reasoning_kwargs(litellm, reasoning, model,
+                                            custom_llm_provider))
 
     return _response_from(litellm.completion(**kwargs))
 
