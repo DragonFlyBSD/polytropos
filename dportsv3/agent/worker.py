@@ -2329,7 +2329,8 @@ PORT="$DELTAPORTS_ROOT/ports/$1"
 echo MISSING=0
 [ -e "$PORT/overlay.dops" ] && echo DOPS=1 || echo DOPS=0
 for f in "$PORT"/Makefile.DragonFly "$PORT"/Makefile.DragonFly.@any; do
-    [ -e "$f" ] && echo MKDFLY=${f##*/}
+    [ -e "$f" ] || continue
+    echo MKDFLY=${f##*/}
 done
 for f in "$PORT"/Makefile.DragonFly.*; do
     [ -e "$f" ] || continue
@@ -2344,8 +2345,12 @@ if [ -d "$PORT/diffs" ]; then
         | sed "s|^$PORT/||; s|^|DIFF_FILE=|"
 fi
 [ -d "$PORT/newport" ] && echo NEWPORT=1 || echo NEWPORT=0
+# `|| continue`, not `&& echo`: an unmatched glob makes the test false,
+# and as the last command that was the script's exit status. Every port
+# without newport/ failed the probe (poly-6mpg).
 for f in "$PORT"/newport/*; do
-    [ -e "$f" ] && echo NEWPORT_ENTRY=${f##*/}
+    [ -e "$f" ] || continue
+    echo NEWPORT_ENTRY=${f##*/}
 done
 '''
     p = _exec(env, "/bin/sh", "-c", cmd, "_", origin)
